@@ -28,6 +28,59 @@ def dft2D(f, k0, k1):
   return F
 
 #--------------------------------------------------------------
+def apodized_fft_2d(f, readout_inds, apo_images):
+  """ Calculate 2D apodized FFT of an image (e.g. caused by T2* decay during readout
+  
+  Parameters
+  ----------
+
+  f : 2d numpy array of shape (n0,n1)
+
+  readout_inds : list of array indices (nr elements)
+    containing the 2D array indicies that read out at every time point
+
+  apo_images : 3d numpt array of shape(nr,n0n,1)
+    containing the nultiplicative apodization images at each readout time point
+  """
+
+  F = np.zeros(f.shape, dtype = np.complex)
+
+  for i in range(apo_images.shape[0]):
+    tmp = np.fft.fft2(apo_images[i,...] * f)
+    F[readout_inds[i]] = tmp[readout_inds[i]]
+
+  return F
+
+#--------------------------------------------------------------
+def adjoint_apodized_fft_2d(F, readout_inds, apo_images):
+  """ Calculate 2D apodized FFT of an image (e.g. caused by T2* decay during readout
+  
+  Parameters
+  ----------
+
+  F : 2d numpy array of shape (n0,n1)
+
+  readout_inds : list of array indices (nr elements)
+    containing the 2D array indicies that read out at every time point
+
+  apo_images : 3d numpt array of shape(nr,n0n,1)
+    containing the nultiplicative apodization images at each readout time point
+  """
+
+  n0, n1 = F.shape
+  f      = np.zeros(F.shape, dtype = np.complex)
+
+  for i in range(apo_images.shape[0]):
+    tmp = np.zeros(f.shape, dtype = np.complex)
+    tmp[readout_inds[i]] = F[readout_inds[i]]
+
+    f += apo_images[i,...] * np.fft.ifft2(tmp)
+
+  f *= (n0*n1)
+
+  return f
+
+#--------------------------------------------------------------
 
 # load the brain web labels
 data = np.load('54.npz')
@@ -65,16 +118,91 @@ abs_k  = np.sqrt(k0**2 + k1**2)
 n_readout_bins     = 32
 readout_ind_array  = (abs_k * (n_readout_bins**2) / abs_k.max()) // n_readout_bins
 read_out_times     = 400*abs_k[readout_ind_array == (n_readout_bins-1)].mean() * np.linspace(0,1,n_readout_bins)
-read_out_inds      = []
+readout_inds       = []
 
 # generate the signal apodization images
 apo_images = np.zeros((n_readout_bins,) + f.shape)
 
 for i, t_read in enumerate(read_out_times):
   apo_images[i,...] = np.exp(-t_read / T2star)
-  read_out_inds.append(np.where(readout_ind_array == i))
+  readout_inds.append(np.where(readout_ind_array == i))
 
-F = np.zeros(f.shape, dtype = np.complex)
-for i in range(apo_images.shape[0]):
-  tmp = np.fft.fft2(apo_images[i,...] * f)
-  F[read_out_inds[i]] = tmp[read_out_inds[i]]
+#----------------------------------------------------------
+#--- simulate the signal
+
+signal = apodized_fft_2d(f, readout_inds, apo_images)
+
+#----------------------------------------------------------
+#--- do the recon
+
+niter = 250
+step  = 1.8/np.prod(f.shape)
+
+recon = np.fft.ifft2(signal)
+
+recons = np.zeros((niter + 1,) + f.shape, dtype = np.complex)
+recons[0,...] = recon
+
+cost = np.zeros(niter)
+
+for it in range(niter):
+  exp_data = apodized_fft_2d(recon, readout_inds, apo_images)
+  diff     = exp_data - signal
+  recon    = recon - step*adjoint_apodized_fft_2d(diff, readout_inds, apo_images)
+  recons[it + 1, ...] = recon
+  cost[it] = 0.5*(diff*diff.conj()).sum().real
+  print(it + 1, niter, round(cost[it],4))
+
+
+#----------------------------------------------------------
+#--- plot the results
+
+vmax = max(f.max(),np.abs(recon).max())
+
+fig, ax = py.subplots(2,3,figsize = (12,8))
+ax[0,0].imshow(f, vmin = 0, vmax = vmax)
+ax[0,1].imshow(np.abs(recons[0,:]), vmin = 0, vmax = vmax)
+ax[0,2].imshow(np.abs(recon), vmin = 0, vmax = vmax)
+ax[1,0].imshow(np.abs(recon) - f, vmin = -0.1*vmax, vmax = 0.1*vmax, cmap = py.cm.bwr)
+ax[1,1].plot(f[:,128],'k')
+ax[1,1].plot(np.abs(recons[0,...])[:,128],'b:')
+ax[1,1].plot(np.abs(recon)[:,128],'r:')
+ax[1,2].plot(f[128,:],'k')
+ax[1,2].plot(np.abs(recons[0,...])[128,:],'b:')
+ax[1,2].plot(np.abs(recon)[128,:],'r:')
+
+ax[0,0].set_title('ground truth')
+ax[0,1].set_title('ifft of signal')
+ax[0,2].set_title('iterative inverse crime')
+
+fig.tight_layout()
+fig.show()
+
+
+
+##----------------------------------------------------------
+##--- adjoint test
+#n = 256
+#f = np.random.rand(n,n) + np.random.rand(n,n)*1j
+#F = np.random.rand(n,n) + np.random.rand(n,n)*1j
+#
+#f_fwd  = apodized_fft_2d(f, readout_inds, apo_images)
+#F_back = adjoint_apodized_fft_2d(F, readout_inds, apo_images)
+#
+#print((f_fwd * F.conj()).sum())
+#print((f * F_back.conj()).sum())
+
+#----------------------------------------------------------
+#--- power iterations : largest eigenvalue is n0*n1
+#b = f.copy()
+#for it in range(25):
+#  b_fwd = apodized_fft_2d(b, readout_inds, apo_images)
+#  norm  = np.sqrt((b_fwd * b_fwd.conj()).sum().real)
+#  b     = b_fwd / norm
+#  print(norm)
+
+
+#F = apodized_fft_2d(f, readout_inds, apo_images)
+#r = np.fft.ifft2(F)
+
+
