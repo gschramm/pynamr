@@ -49,6 +49,9 @@ def apodized_fft_2d(f, readout_inds, apo_images):
     tmp = np.fft.fft2(apo_images[i,...] * f)
     F[readout_inds[i]] = tmp[readout_inds[i]]
 
+  # we normalize to get the norm of the operator to approx. 1
+  F /= np.sqrt(np.prod(f.shape))
+
   return F
 
 #--------------------------------------------------------------
@@ -76,7 +79,7 @@ def adjoint_apodized_fft_2d(F, readout_inds, apo_images):
 
     f += apo_images[i,...] * np.fft.ifft2(tmp)
 
-  f *= (n0*n1)
+  f *= np.sqrt(np.prod(f.shape))
 
   return f
 
@@ -147,12 +150,13 @@ noise_level = 0 # 1e0
 signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,256)*1j)
 
 #----------------------------------------------------------
+#----------------------------------------------------------
+#----------------------------------------------------------
 #--- do the recon
 
-niter = 250
-step  = 1.8/np.prod(f.shape)
-
-recon        = np.fft.ifft2(signal)
+alg          = 'landweber'
+niter        = 500
+recon        = np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape))
 T2star_recon = T2star.copy()
 #T2star_recon = np.zeros(T2star.shape) + T2star.max()
 
@@ -163,14 +167,55 @@ recons[0,...] = recon
 
 cost = np.zeros(niter)
 
-for it in range(niter):
-  exp_data = apodized_fft_2d(recon, readout_inds, apo_imgs_recon)
-  diff     = exp_data - signal
-  recon    = recon - step*adjoint_apodized_fft_2d(diff, readout_inds, apo_imgs_recon)
-  recons[it + 1, ...] = recon
-  cost[it] = 0.5*(diff*diff.conj()).sum().real
-  print(it + 1, niter, round(cost[it],4))
+#----------------------------------------------------------
+#--- power iterations : largest eigenvalue is n0*n1
+n0, n1 = recon.shape
+b = np.random.rand(n0,n1) + np.random.rand(n0,n1)*1j
+for it in range(25):
+  b_fwd = apodized_fft_2d(b, readout_inds, apo_imgs)
+  L     = np.sqrt((b_fwd * b_fwd.conj()).sum().real)
+  b     = b_fwd / L
+  print(L)
+#----------------------------------------------------------
 
+if alg == 'landweber':
+  step  = 1.8
+
+  for it in range(niter):
+    exp_data = apodized_fft_2d(recon, readout_inds, apo_imgs_recon)
+    diff     = exp_data - signal
+    recon    = recon - step*adjoint_apodized_fft_2d(diff, readout_inds, apo_imgs_recon)
+    recons[it + 1, ...] = recon
+    cost[it] = 0.5*(diff*diff.conj()).sum().real
+    print(it + 1, niter, round(cost[it],4))
+
+elif alg == 'pdhg':
+  #L     = np.sqrt(recon.ndim*4)
+  sigma = 1./L
+  tau   = 1./(sigma*(L**2))
+  lam   = 1.
+
+  # convexity parameter of cost function
+  gam   = lam
+ 
+  recon_bar  = recon.copy()
+  recon_dual = np.zeros(signal.shape, dtype = signal.dtype)
+
+  for it in range(niter):
+    diff        = apodized_fft_2d(recon_bar, readout_inds, apo_imgs_recon) - signal
+    recon_dual += sigma * diff / (1 + sigma*lam)
+    recon_old   = recon.copy()
+    recon      += tau*(-1*adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
+ 
+    # update step sizes
+    theta  = 1 / np.sqrt(1 + 2*gam*tau)
+    tau   *= theta
+    sigma /= theta
+
+    recon_bar   = recon + theta*(recon - recon_old)
+ 
+    cost[it] = 0.5*(diff*diff.conj()).sum().real
+    print(it + 1, niter, round(cost[it],4))
 
 #----------------------------------------------------------
 #--- plot the results
@@ -190,12 +235,14 @@ ax[1,2].plot(np.abs(recons[0,...])[128,:],'b:')
 ax[1,2].plot(np.abs(recon)[128,:],'r:')
 ax[2,0].imshow(T2star, vmin = 0, vmax = T2star.max())
 ax[2,1].imshow(T2star_recon, vmin = 0, vmax = T2star.max())
+ax[2,2].semilogy(cost)
 
 ax[0,0].set_title('ground truth')
-ax[0,1].set_title('ifft of signal')
+ax[0,1].set_title('init recon')
 ax[0,2].set_title('iterative recon')
 ax[2,0].set_title('ground truth T2*')
 ax[2,1].set_title('recon T2*')
+ax[2,2].set_title('cost')
 
 fig.tight_layout()
 fig.show()
@@ -213,18 +260,5 @@ fig.show()
 #
 #print((f_fwd * F.conj()).sum())
 #print((f * F_back.conj()).sum())
-
-#----------------------------------------------------------
-#--- power iterations : largest eigenvalue is n0*n1
-#b = f.copy()
-#for it in range(25):
-#  b_fwd = apodized_fft_2d(b, readout_inds, apo_imgs)
-#  norm  = np.sqrt((b_fwd * b_fwd.conj()).sum().real)
-#  b     = b_fwd / norm
-#  print(norm)
-
-
-#F = apodized_fft_2d(f, readout_inds, apo_imgs)
-#r = np.fft.ifft2(F)
-
+#
 
