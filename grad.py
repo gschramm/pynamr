@@ -234,3 +234,36 @@ def div(g):
   elif ndim == 3: return div3d(g)
   elif ndim == 4: return div4d(g)
   else          : raise TypeError('Invalid dimension of input') 
+
+
+def complex_div(g):
+  """
+  Calculate the divergence of 2d, 3d, or 4d "complex" array via the finite backward diffence
+
+  Arguments
+  ---------
+  
+  g ... a gradient array of size (2*(x.ndim,), x.shape)
+
+  Returns
+  -------
+
+  a complex array of size g.shape[1:]
+
+  Note
+  ----
+
+  This implementation uses the numba stencil decorators in combination with
+  jit in parallel nopython mode
+
+  See also
+  --------
+
+  pynucmed.misc.grad
+  """
+
+  ndim = g.shape[0] // 2
+  if   ndim == 2: return div2d(g[:ndim,...]) + div2d(g[ndim:,...])*1j
+  if   ndim == 3: return div3d(g[:ndim,...]) + div3d(g[ndim:,...])*1j
+  if   ndim == 4: return div4d(g[:ndim,...]) + div4d(g[ndim:,...])*1j
+  else          : raise TypeError('Invalid dimension of input') 
