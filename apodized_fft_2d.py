@@ -1,14 +1,30 @@
 # small demo script to verify implementation of discrete FT (with FFT)
 
+import math
 import numpy as np
 from   numba import njit, prange
 import matplotlib.pyplot as py
 from   matplotlib.colors import LogNorm
 
-from pymirc.image_operations import zoom3d
+from pymirc.image_operations import zoom3d, complex_grad, complex_div
 
 py.ion()
 py.rc('image', cmap='gray')
+
+#--------------------------------------------------------------
+@njit(parallel = True)
+def prox_tv(x,beta):
+  for i in prange(x.shape[1]):
+    for j in range(x.shape[2]):
+      norm = 0
+      for k in range(x.shape[0]):
+        norm += x[k,i,j]**2 
+
+      norm = math.sqrt(norm) / beta
+
+      if norm > 1:
+        for k in range(x.shape[0]):
+          x[k,i,j] /= norm
 
 #--------------------------------------------------------------
 # this is the super naiv direct implementation of the DFT is 
@@ -49,8 +65,8 @@ def apodized_fft_2d(f, readout_inds, apo_images):
     tmp = np.fft.fft2(apo_images[i,...] * f)
     F[readout_inds[i]] = tmp[readout_inds[i]]
 
-  # we normalize to get the norm of the operator to approx. 1
-  F /= np.sqrt(np.prod(f.shape))
+  # we normalize to get the norm of the operator to the norm of the gradient op
+  F *= np.sqrt(4*f.ndim) / np.sqrt(np.prod(f.shape))
 
   return F
 
@@ -79,7 +95,7 @@ def adjoint_apodized_fft_2d(F, readout_inds, apo_images):
 
     f += apo_images[i,...] * np.fft.ifft2(tmp)
 
-  f *= np.sqrt(np.prod(f.shape))
+  f *=  (np.sqrt(np.prod(F.shape)) * np.sqrt(4*F.ndim))
 
   return f
 
@@ -154,9 +170,11 @@ signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,25
 #----------------------------------------------------------
 #--- do the recon
 
-alg          = 'landweber'
-niter        = 500
-recon        = np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape))
+alg   = 'pdhg'
+niter = 500
+lam   = 1e-2
+
+recon        = np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape)) / np.sqrt(4*signal.ndim)
 T2star_recon = T2star.copy()
 #T2star_recon = np.zeros(T2star.shape) + T2star.max()
 
@@ -165,10 +183,12 @@ apo_imgs_recon = apo_images(readout_times, T2star_recon)
 recons = np.zeros((niter + 1,) + f.shape, dtype = np.complex)
 recons[0,...] = recon
 
-cost = np.zeros(niter)
+cost  = np.zeros(niter)
+cost1 = np.zeros(niter)
+cost2 = np.zeros(niter)
 
 #----------------------------------------------------------
-#--- power iterations : largest eigenvalue is n0*n1
+#--- power iterations to get norm of MR operator
 n0, n1 = recon.shape
 b = np.random.rand(n0,n1) + np.random.rand(n0,n1)*1j
 for it in range(25):
@@ -190,32 +210,50 @@ if alg == 'landweber':
     print(it + 1, niter, round(cost[it],4))
 
 elif alg == 'pdhg':
-  #L     = np.sqrt(recon.ndim*4)
-  sigma = 1./L
+  L     = np.sqrt(2*recon.ndim*4)
+  sigma = (1e1)/L
   tau   = 1./(sigma*(L**2))
-  lam   = 1.
 
-  # convexity parameter of cost function
-  gam   = lam
+  # convexity parameter of data fidelity F*
+  gam = lam
  
   recon_bar  = recon.copy()
   recon_dual = np.zeros(signal.shape, dtype = signal.dtype)
+
+  grad_dual  = np.zeros((2*recon.ndim,) + recon.shape)
 
   for it in range(niter):
     diff        = apodized_fft_2d(recon_bar, readout_inds, apo_imgs_recon) - signal
     recon_dual += sigma * diff / (1 + sigma*lam)
     recon_old   = recon.copy()
-    recon      += tau*(-1*adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
+
+    # forward step for complex gradient
+    tmp = np.zeros((2*recon.ndim,) + recon.shape)
+    complex_grad(recon_bar, tmp)
+    grad_dual += sigma * tmp
+    prox_tv(grad_dual, 1.)
+
+    #recon += tau*(-1*adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
+    recon += tau*(complex_div(grad_dual) - adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
  
     # update step sizes
-    theta  = 1 / np.sqrt(1 + 2*gam*tau)
-    tau   *= theta
-    sigma /= theta
+    theta  = 1.
+    #theta  = 1 / np.sqrt(1 + 2*gam*tau)
+    #tau   *= theta
+    #sigma /= theta
 
     recon_bar   = recon + theta*(recon - recon_old)
- 
-    cost[it] = 0.5*(diff*diff.conj()).sum().real
-    print(it + 1, niter, round(cost[it],4))
+
+    # calculate the cost
+    tmp = np.zeros((2*recon.ndim,) + recon.shape)
+    complex_grad(recon, tmp)
+    tmp2 = apodized_fft_2d(recon, readout_inds, apo_imgs_recon) - signal
+    cost[it] = (0.5/lam)*(tmp2*tmp2.conj()).sum().real + np.linalg.norm(tmp, axis=0).sum()
+    cost1[it] = (tmp2*tmp2.conj()).sum().real
+    cost2[it] = np.linalg.norm(tmp, axis=0).sum()
+    print(it + 1, niter, round(cost1[it],4), round(cost2[it],4), round(cost[it],4))
+
+    recons[it + 1, ...] = recon
 
 #----------------------------------------------------------
 #--- plot the results
@@ -235,7 +273,7 @@ ax[1,2].plot(np.abs(recons[0,...])[128,:],'b:')
 ax[1,2].plot(np.abs(recon)[128,:],'r:')
 ax[2,0].imshow(T2star, vmin = 0, vmax = T2star.max())
 ax[2,1].imshow(T2star_recon, vmin = 0, vmax = T2star.max())
-ax[2,2].semilogy(cost)
+ax[2,2].plot(cost[10:])
 
 ax[0,0].set_title('ground truth')
 ax[0,1].set_title('init recon')
@@ -260,5 +298,5 @@ fig.show()
 #
 #print((f_fwd * F.conj()).sum())
 #print((f * F_back.conj()).sum())
-#
+
 

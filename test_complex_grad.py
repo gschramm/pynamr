@@ -1,19 +1,28 @@
 import numpy as np
-from grad import *
+import pymirc.image_operations as pymi
 
-n    = 16
-ndim = 4
+n    = 256
+ndim = 2
 
 x = np.pad(np.random.random(ndim*(n-4,)) + np.random.random(ndim*(n-4,))*1j, (2,2), 'constant')
 
 x_fwd = np.zeros((2*x.ndim,) + x.shape)
-complex_grad(x,x_fwd)
+pymi.complex_grad(x,x_fwd)
 
 y      = np.random.random((2*x.ndim,) + x.shape)
-y_back = complex_div(y)  
+y_back = -pymi.complex_div(y)  
 
-print((x.real*y_back.real).sum())
-print((x_fwd[:ndim,...]*y[:ndim,...]).sum())
+print((y.conj()*x_fwd).sum().real)
+print((y_back.conj()*x).sum().real)
 
-print((x.imag*y_back.imag).sum())
-print((x_fwd[ndim:,...]*y[ndim:,...]).sum())
+print("")
+
+# power iterations
+b = x.copy()
+for it in range(200):
+  tmp = np.zeros((2*ndim,) + ndim*(n,))
+  pymi.complex_grad(b, tmp)
+  b_fwd = -pymi.complex_div(tmp)
+  L     = np.sqrt((b_fwd.real**2 + b_fwd.imag**2).sum())
+  b     = b_fwd / L
+  print(L)
