@@ -149,7 +149,7 @@ signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,25
 #--- do the recon
 
 alg   = 'landweber'
-niter = 500
+niter = 5000
 lam   = 1e-2
 
 tmp   = (np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape[:-1])) / np.sqrt(4*signal.ndim))
@@ -167,14 +167,13 @@ cost  = np.zeros(niter)
 cost1 = np.zeros(niter)
 cost2 = np.zeros(niter)
 
-#----------------------------------------------------------
-#--- power iterations to get norm of MR operator
-b = np.random.random(recon.shape)
-for it in range(50):
-  b_fwd = apodized_fft_2d(b, readout_inds, apo_imgs)
-  L     = np.sqrt((b_fwd * b_fwd.conj()).sum().real)
-  b     = b_fwd.view(dtype=np.float64).reshape(b_fwd.shape + (2,)) / L
-
+##----------------------------------------------------------
+##--- power iterations to get norm of MR operator
+#b = np.random.random(recon.shape)
+#for it in range(50):
+#  b_fwd = apodized_fft_2d(b, readout_inds, apo_imgs)
+#  L     = np.sqrt((b_fwd * b_fwd.conj()).sum().real)
+#  b     = b_fwd.view(dtype=np.float64).reshape(b_fwd.shape + (2,)) / L
 
 #----------------------------------------------------------
 if alg == 'landweber':
@@ -188,6 +187,29 @@ if alg == 'landweber':
     cost[it] = 0.5*(diff*diff.conj()).sum().real
     print(it + 1, niter, round(cost[it],4))
 
+#----------------------------------------------------------
+elif alg == 'pdhg':
+  L     = np.sqrt(2*recon.ndim*4)
+  sigma = (1e0)/L
+  tau   = 1./(sigma*(L**2))
+
+  recon_bar  = recon.copy()
+  recon_dual = np.zeros(signal.shape, dtype = signal.dtype)
+
+  for it in range(niter):
+    diff        = apodized_fft_2d(recon_bar, readout_inds, apo_imgs_recon) - signal
+    recon_dual += sigma * diff / (1 + sigma*lam)
+    recon_old   = recon.copy()
+
+    recon += tau*(-adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
+ 
+    # update step sizes
+    theta      = 1.
+    recon_bar  = recon + theta*(recon - recon_old)
+
+    recons[it + 1, ...] = recon
+    cost[it] = 0.5*(diff*diff.conj()).sum().real
+    print(it + 1, niter, round(cost[it],4))
 
 
 
