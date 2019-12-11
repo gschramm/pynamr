@@ -9,6 +9,22 @@ from pymirc.image_operations import zoom3d, complex_grad, complex_div
 py.ion()
 py.rc('image', cmap='gray')
 
+#--------------------------------------------------------------
+@njit(parallel = True)
+def prox_tv(x,beta):
+  for i in prange(x.shape[1]):
+    for j in range(x.shape[2]):
+      norm = 0
+      for k in range(x.shape[0]):
+        norm += x[k,i,j]**2 
+
+      norm = math.sqrt(norm) / beta
+
+      if norm > 1:
+        for k in range(x.shape[0]):
+          x[k,i,j] /= norm
+
+
 
 #--------------------------------------------------------------
 def apodized_fft_2d(f, readout_inds, apo_images):
@@ -148,9 +164,9 @@ signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,25
 #----------------------------------------------------------
 #--- do the recon
 
-alg   = 'landweber'
-niter = 5000
-lam   = 1e-2
+alg   = 'pdhg'
+niter = 10000
+lam   = 1e-3
 
 tmp   = (np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape[:-1])) / np.sqrt(4*signal.ndim))
 recon = tmp.view(dtype=np.float64).reshape(tmp.shape + (2,))
@@ -160,8 +176,8 @@ T2star_recon = T2star.copy()
 
 apo_imgs_recon = apo_images(readout_times, T2star_recon)
 
-recons = np.zeros((niter + 1,) + recon.shape)
-recons[0,...] = recon
+#recons = np.zeros((niter + 1,) + recon.shape)
+#recons[0,...] = recon
 
 cost  = np.zeros(niter)
 cost1 = np.zeros(niter)
@@ -196,20 +212,35 @@ elif alg == 'pdhg':
   recon_bar  = recon.copy()
   recon_dual = np.zeros(signal.shape, dtype = signal.dtype)
 
+  grad_dual  = np.zeros((2*recon[...,0].ndim,) + recon.shape[:-1])
+
   for it in range(niter):
     diff        = apodized_fft_2d(recon_bar, readout_inds, apo_imgs_recon) - signal
     recon_dual += sigma * diff / (1 + sigma*lam)
     recon_old   = recon.copy()
 
-    recon += tau*(-adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
+    tmp  = np.zeros((2*recon[...,0].ndim,) + recon.shape[:-1])
+    complex_grad(recon_bar, tmp)
+    grad_dual += sigma * tmp
+    prox_tv(grad_dual, 1.)
+
+    recon += tau*(complex_div(grad_dual) - adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
  
-    # update step sizes
     theta      = 1.
     recon_bar  = recon + theta*(recon - recon_old)
 
-    recons[it + 1, ...] = recon
-    cost[it] = 0.5*(diff*diff.conj()).sum().real
-    print(it + 1, niter, round(cost[it],4))
+    #recons[it + 1, ...] = recon
+
+    # calculate the cost
+    tmp  = np.zeros((2*recon[...,0].ndim,) + recon.shape[:-1])
+    complex_grad(recon, tmp)
+    tmp2 = apodized_fft_2d(recon, readout_inds, apo_imgs_recon) - signal
+    cost[it]  = (0.5/lam)*(tmp2*tmp2.conj()).sum().real + np.linalg.norm(tmp, axis=0).sum()
+    cost1[it] = (0.5/lam)*(tmp2*tmp2.conj()).sum().real
+    cost2[it] = np.linalg.norm(tmp, axis=0).sum()
+    print(it + 1, niter, round(cost1[it],4), round(cost2[it],4), round(cost[it],4))
+
+
 
 
 
