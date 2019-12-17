@@ -3,6 +3,7 @@ import numpy as np
 from   numba import njit, prange
 import matplotlib.pyplot as py
 from   matplotlib.colors import LogNorm
+from scipy.ndimage import gaussian_filter
 
 from pymirc.image_operations import zoom3d, complex_grad, complex_div
 
@@ -180,7 +181,7 @@ apo_imgs  = apo_images(readout_times, T2star)
 signal = apodized_fft_2d(f, readout_inds, apo_imgs)
 
 # add noise to signal
-noise_level = 1e-2 # 1e-2
+noise_level = 0 # 1e-2
 signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,256)*1j)
 
 
@@ -190,20 +191,21 @@ signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,25
 #--- do the recon
 
 alg   = 'pdhg'
-niter = 500
-lam   = 1e-2
+niter = 5000
+lam   = 1e-1
 
 tmp   = (np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape[:-1])) / np.sqrt(4*signal.ndim))
 recon = tmp.view(dtype=np.float64).reshape(tmp.shape + (2,))
 init_recon = recon.copy()
 
-T2star_recon = T2star.copy()
-#T2star_recon = np.zeros(T2star.shape) + T2star.max()
+#T2star_recon = T2star.copy()
+T2star_recon = np.zeros(T2star.shape) + T2star.max()
 
 apo_imgs_recon = apo_images(readout_times, T2star_recon)
 
 xi = np.zeros((2*recon[...,0].ndim,) + recon.shape[:-1])
 complex_grad(-2*f, xi)
+#complex_grad(-2*f + gaussian_filter(0.001*f.max()*np.random.random(f.shape),0.5), xi)
 
 #recons = np.zeros((niter + 1,) + recon.shape)
 #recons[0,...] = recon
@@ -270,6 +272,15 @@ elif alg == 'pdhg':
     cost2[it] = np.linalg.norm(tmp, axis=0).sum()
     print(it + 1, niter, round(cost1[it],4), round(cost2[it],4), round(cost[it],4))
 
+#----------------------------------------------------------
+# make some plots
+
+fig, ax = py.subplots(1,3, figsize = (12,4))
+ax[0].imshow(np.linalg.norm(init_recon, axis=-1), vmax = 1.1*f.max())
+ax[1].imshow(np.linalg.norm(recon, axis=-1), vmax = 1.1*f.max())
+ax[2].imshow(np.linalg.norm(f, axis=-1), vmax = 1.1*f.max())
+fig.tight_layout()
+fig.show()
 
 
 
