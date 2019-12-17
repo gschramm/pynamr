@@ -1,56 +1,14 @@
-import math
 import numpy as np
-from   numba import njit, prange
 import matplotlib.pyplot as py
 from   matplotlib.colors import LogNorm
 from scipy.ndimage import gaussian_filter
 
 from pymirc.image_operations import zoom3d, complex_grad, complex_div
 
+from prox import prox_tv, prox_pls
+
 py.ion()
 py.rc('image', cmap='gray')
-
-#--------------------------------------------------------------
-@njit(parallel = True)
-def prox_tv(x, beta):
-  for i in prange(x.shape[1]):
-    for j in range(x.shape[2]):
-      norm = 0
-      for k in range(x.shape[0]):
-        norm += x[k,i,j]**2 
-
-      norm = math.sqrt(norm) / beta
-
-      if norm > 1:
-        for k in range(x.shape[0]):
-          x[k,i,j] /= norm
-
-#--------------------------------------------------------------
-@njit(parallel = True)
-def prox_pls2(x, xi, beta):
-  for i in prange(x.shape[1]):
-    for j in range(x.shape[2]):
-
-      # calculate the norm of the joint vector field
-      norm_xi = (xi[:,i,j]**2).sum()
-
-      if norm_xi > 0:
-        sp     = (x[:,i,j] * xi[:,i,j]).sum() / norm_xi
-        x_perp = x[:,i,j] - sp*xi[:,i,j]
-      else: 
-        x_perp = x[:,i,j].copy()
-     
-      norm_ratio = (x_perp*x_perp).sum()
-
-      # PLS2
-      norm_ratio = math.sqrt(norm_ratio) / beta
-
-      if norm_ratio > 1:
-        x[:,i,j] = x_perp / norm_ratio
-      else:
-        x[:,i,j] = x_perp
-
-
 
 #--------------------------------------------------------------
 def apodized_fft_2d(f, readout_inds, apo_images):
@@ -191,21 +149,21 @@ signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,25
 #--- do the recon
 
 alg   = 'pdhg'
-niter = 5000
-lam   = 1e-1
+niter = 500
+lam   = 1e-2
+prior = 'PLS2'
 
 tmp   = (np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape[:-1])) / np.sqrt(4*signal.ndim))
 recon = tmp.view(dtype=np.float64).reshape(tmp.shape + (2,))
 init_recon = recon.copy()
 
-#T2star_recon = T2star.copy()
-T2star_recon = np.zeros(T2star.shape) + T2star.max()
+T2star_recon = T2star.copy()
+#T2star_recon = np.zeros(T2star.shape) + T2star.max()
 
 apo_imgs_recon = apo_images(readout_times, T2star_recon)
 
 xi = np.zeros((2*recon[...,0].ndim,) + recon.shape[:-1])
 complex_grad(-2*f, xi)
-#complex_grad(-2*f + gaussian_filter(0.001*f.max()*np.random.random(f.shape),0.5), xi)
 
 #recons = np.zeros((niter + 1,) + recon.shape)
 #recons[0,...] = recon
@@ -253,8 +211,12 @@ elif alg == 'pdhg':
     tmp  = np.zeros((2*recon[...,0].ndim,) + recon.shape[:-1])
     complex_grad(recon_bar, tmp)
     grad_dual += sigma * tmp
-    #prox_tv(grad_dual, 1.)
-    prox_pls2(grad_dual, xi, 1.)
+    if prior == 'TV':
+      prox_tv(grad_dual, 1.)
+    elif prior == 'PLS1':
+      prox_pls(grad_dual, xi, 1., 1)
+    elif prior == 'PLS2':
+      prox_pls(grad_dual, xi, 1., 2)
 
     recon += tau*(complex_div(grad_dual) - adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
  
