@@ -150,8 +150,8 @@ signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,25
 
 alg   = 'pdhg'
 niter = 500
-lam   = 1e-2
-prior = 'PLS2'
+beta  = 1e-3
+prior = 'TV'
 
 tmp   = (np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape[:-1])) / np.sqrt(4*signal.ndim))
 recon = tmp.view(dtype=np.float64).reshape(tmp.shape + (2,))
@@ -205,20 +205,23 @@ elif alg == 'pdhg':
 
   for it in range(niter):
     diff        = apodized_fft_2d(recon_bar, readout_inds, apo_imgs_recon) - signal
-    recon_dual += sigma * diff / (1 + sigma*lam)
+    recon_dual += sigma * diff / (1 + sigma)
     recon_old   = recon.copy()
 
-    tmp  = np.zeros((2*recon[...,0].ndim,) + recon.shape[:-1])
-    complex_grad(recon_bar, tmp)
-    grad_dual += sigma * tmp
-    if prior == 'TV':
-      prox_tv(grad_dual, 1.)
-    elif prior == 'PLS1':
-      prox_pls(grad_dual, xi, 1., 1)
-    elif prior == 'PLS2':
-      prox_pls(grad_dual, xi, 1., 2)
+    if beta > 0:
+      tmp  = np.zeros((2*recon[...,0].ndim,) + recon.shape[:-1])
+      complex_grad(recon_bar, tmp)
+      grad_dual += sigma * tmp
+      if prior == 'TV':
+        prox_tv(grad_dual, beta)
+      elif prior == 'PLS1':
+        prox_pls(grad_dual, xi, beta, 1)
+      elif prior == 'PLS2':
+        prox_pls(grad_dual, xi, beta, 2)
 
-    recon += tau*(complex_div(grad_dual) - adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
+      recon += tau*(complex_div(grad_dual) - adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon))
+    else:
+      recon -= tau*adjoint_apodized_fft_2d(recon_dual, readout_inds, apo_imgs_recon)
  
     theta      = 1.
     recon_bar  = recon + theta*(recon - recon_old)
@@ -229,10 +232,12 @@ elif alg == 'pdhg':
     tmp  = np.zeros((2*recon[...,0].ndim,) + recon.shape[:-1])
     complex_grad(recon, tmp)
     tmp2 = apodized_fft_2d(recon, readout_inds, apo_imgs_recon) - signal
-    cost[it]  = (0.5/lam)*(tmp2*tmp2.conj()).sum().real + np.linalg.norm(tmp, axis=0).sum()
-    cost1[it] = (0.5/lam)*(tmp2*tmp2.conj()).sum().real
-    cost2[it] = np.linalg.norm(tmp, axis=0).sum()
-    print(it + 1, niter, round(cost1[it],4), round(cost2[it],4), round(cost[it],4))
+    cost[it]  = 0.5*(tmp2*tmp2.conj()).sum().real + beta*np.linalg.norm(tmp, axis=0).sum()
+    cost1[it] = 0.5*(tmp2*tmp2.conj()).sum().real
+    cost2[it] = beta*np.linalg.norm(tmp, axis=0).sum()
+
+    print(f"{it+1:.2E} {niter:.2E} {cost1[it]:.2E} {cost2[it]:.2E} {cost[it]:.2E}")
+
 
 #----------------------------------------------------------
 # make some plots
