@@ -3,6 +3,23 @@
 import numpy as np
 from   numba import jit, njit
 
+@njit()
+def ravel_multi_index(multi_index, dims):
+
+  flat_index = 0
+
+  for i in range(len(multi_index)):
+    offset = 1
+    if i > 0:
+      for j in range(i):
+        offset *= dims[-(j+1)]
+
+    flat_index += offset*multi_index[-(i+1)]
+
+  return flat_index
+
+#-------------------------------------------------------------------------------------
+
 #@njit()
 def nearest_neighbors(img, s, nnearest, ninds):
   ndim  = s.ndim
@@ -10,6 +27,8 @@ def nearest_neighbors(img, s, nnearest, ninds):
   
   nmask  = sinds[0].shape[0] 
   offset = (np.array(s.shape) // 2)
+
+  shape  = np.array(img.shape)
 
   for voxindex, voxvalue in np.ndenumerate(img):
     inds      = np.zeros(nmask, dtype = np.uint32)
@@ -23,21 +42,21 @@ def nearest_neighbors(img, s, nnearest, ninds):
     
         if tmp[i] < 0:  
           is_inside[j] = 0
-        elif tmp[i] >= img.shape[i]: 
+        elif tmp[i] >= shape[i]: 
           is_inside[j] = 0
     
       if is_inside[j] == 1:
-        inds[j] = np.ravel_multi_index(tmp,img.shape)
+        inds[j] = ravel_multi_index(tmp, shape)
 
     inds = inds[is_inside == 1]
     # inds now contains the flattened indicies of the neighbors defined by the mask
     # around our given voxel
 
     # calculate absolute intensity difference to central voxel
-    absdiff = np.abs(img[np.unravel_index(inds, img.shape)] - voxvalue)
+    absdiff = np.abs(img[np.unravel_index(inds, shape)] - voxvalue)
 
     # contruct the nearest neighbor indices in the mask neighborhood
-    ninds[np.ravel_multi_index(voxindex, img.shape),:] = inds[np.argsort(absdiff)][:nnearest]
+    ninds[np.ravel_multi_index(voxindex, shape),:] = inds[np.argsort(absdiff)][:nnearest]
 
 #--------------------------------------------------------------------------------------
 
