@@ -90,9 +90,31 @@ np.random.seed(0)
 #nnearest = 2
 
 # 3D test
-img = np.random.rand(200,200,100)
+img = np.random.rand(8,7,6)
 s   = np.array([[[0,1,0],[1,1,1],[0,1,0]], [[1,1,1],[1,0,1],[1,1,1]], [[0,1,0],[1,1,1],[0,1,0]]])
-nnearest = 4
+nnearest = 2
 
 ninds = np.zeros((np.prod(img.shape), nnearest), dtype = np.uint32)
 nearest_neighbors(img, s, nnearest, ninds)
+
+# do some testing
+offset = np.array(s.shape)//2 
+for vox, voxvalue in np.ndenumerate(img):
+  #vox    = (2,2,2)
+  start0 = vox[0] - offset[0]
+  end0   = vox[0] + offset[0] + 1
+  start1 = vox[1] - offset[1]
+  end1   = vox[1] + offset[1] + 1
+  start2 = vox[2] - offset[2]
+  end2   = vox[2] + offset[2] + 1
+
+  if start0 >= 0 and start1 >= 0 and start2 >= 0: 
+    if end0 <= img.shape[0] and end1 <= img.shape[1] and end2 <= img.shape[2]: 
+      crop   = img[start0:end0,start1:end1,start2:end2]
+      vals    = crop[s==1]
+      absdiff = np.abs(vals - voxvalue)
+      print(vals[np.argsort(absdiff)[:nnearest]])
+      print(img.flatten()[ninds[np.ravel_multi_index(vox,img.shape),:]])
+      print("")
+
+
