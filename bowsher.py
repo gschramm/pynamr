@@ -20,7 +20,26 @@ def ravel_multi_index(multi_index, dims):
 
 #-------------------------------------------------------------------------------------
 
-#@njit()
+@njit()
+def unravel_index(index, dims):
+
+  multi_index  = np.zeros(dims.shape, dtype = np.uint32)
+  to_subtract = 0
+
+  for i in range(len(dims) - 1):
+    denom = 1
+    for j in np.arange(i+1, len(dims)): 
+      denom *= dims[j]
+
+    multi_index[i] = (index - to_subtract) // denom
+    to_subtract   += multi_index[i] * denom
+
+  multi_index[-1] = index - to_subtract
+
+  return multi_index
+
+#-------------------------------------------------------------------------------------
+@njit()
 def nearest_neighbors(img, s, nnearest, ninds):
   ndim  = s.ndim
   sinds = np.where(s == 1)
@@ -29,6 +48,8 @@ def nearest_neighbors(img, s, nnearest, ninds):
   offset = (np.array(s.shape) // 2)
 
   shape  = np.array(img.shape)
+
+  img_flattened = img.flatten()
 
   for voxindex, voxvalue in np.ndenumerate(img):
     inds      = np.zeros(nmask, dtype = np.uint32)
@@ -53,18 +74,25 @@ def nearest_neighbors(img, s, nnearest, ninds):
     # around our given voxel
 
     # calculate absolute intensity difference to central voxel
-    absdiff = np.abs(img[np.unravel_index(inds, shape)] - voxvalue)
+    absdiff = np.abs(img_flattened[inds] - voxvalue)
 
     # contruct the nearest neighbor indices in the mask neighborhood
-    ninds[np.ravel_multi_index(voxindex, shape),:] = inds[np.argsort(absdiff)][:nnearest]
+    ninds[ravel_multi_index(np.array(voxindex), shape),:] = inds[np.argsort(absdiff)][:nnearest]
 
 #--------------------------------------------------------------------------------------
 
 np.random.seed(0)
-img = np.random.rand(4,4)
-s   = np.array([[0,1,0],[1,0,1],[0,1,0]])
+
+# 2D test
+#img = np.random.rand(200,200)
+#s   = np.array([[0,1,0],[1,0,1],[0,1,0]])
 #s        = np.array([[0,0,1,0,0],[0,1,1,1,0],[1,1,0,1,1],[0,1,1,1,0],[0,0,1,0,0]])
-nnearest = 2
+#nnearest = 2
+
+# 3D test
+img = np.random.rand(200,200,100)
+s   = np.array([[[0,1,0],[1,1,1],[0,1,0]], [[1,1,1],[1,0,1],[1,1,1]], [[0,1,0],[1,1,1],[0,1,0]]])
+nnearest = 4
 
 ninds = np.zeros((np.prod(img.shape), nnearest), dtype = np.uint32)
 nearest_neighbors(img, s, nnearest, ninds)
