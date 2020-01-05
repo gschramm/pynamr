@@ -1,8 +1,35 @@
 import numpy as np
 from numba import njit, prange
 
+#-------------------------------------------------------------------------------
 @njit(parallel = True)
-def nearest_neighbors_3d(img,s,nnearest):
+def nearest_neighbors_3d(img,s,nnearest,ninds):
+  """ Calculate the n nearest neighbors for all voxels in a 3D array
+
+  Parameters
+  ----------
+  img : 3d numpy array
+    containing the image
+
+  s : 3d binary (uint) numpy array
+    containing the neighborhood definition.
+    1 -> voxel is in neighborhood
+    0 -> voxel is not in neighnorhood
+    The dimensions of s have to be odd.
+
+  nnearest : uint
+    number of nearest neighbors
+    Make sure that nnearest is small enough for the "corner" voxels given s.
+
+  ninds: 2d numpy array used for output
+    of shape (np.prod(img.shape), nnearest).
+    ninds[i,:] contains the indicies of the nearest neighbors of voxel i
+
+  Note
+  ----
+  All voxel indices are "flattened". It is assumed that the numpy arrays
+  are in 'C' order.
+  """
   offsets = np.array(s.shape) // 2
   maxdiff = img.max() - img.min() + 1 
   
@@ -10,9 +37,7 @@ def nearest_neighbors_3d(img,s,nnearest):
   d2  = img.shape[2]
   
   mask_center_offset = s.shape[0]*s.shape[1]*s.shape[2] // 2
-  
-  ninds = np.zeros((img.shape[0]*img.shape[1]*img.shape[2],nnearest), dtype = np.uint32)
-  
+
   for i0 in prange(img.shape[0]):
     for i1 in range(img.shape[1]):
       for i2 in range(img.shape[2]):
@@ -20,7 +45,7 @@ def nearest_neighbors_3d(img,s,nnearest):
         absdiff = np.zeros(s.shape)  
         val     = img[i0,i1,i2]
         
-        i_flattened = np.zeros(s.shape, dtype = np.uint32)
+        i_flattened = np.zeros(s.shape, dtype = ninds.dtype)
   
         for j0 in range(s.shape[0]):
           for j1 in range(s.shape[1]):
@@ -41,15 +66,117 @@ def nearest_neighbors_3d(img,s,nnearest):
         vox = i_flattened[offsets[0],offsets[1],offsets[2]]
         ninds[vox,:] = i_flattened.flatten()[np.argsort(absdiff.flatten())[:nnearest]]
 
-  return ninds
+#-------------------------------------------------------------------------------
+def nearest_neighbors_2d(img,s,nnearest,ninds):
+  """ Calculate the n nearest neighbors for all voxels in a 2D array
+
+  Parameters
+  ----------
+  img : 2d numpy array
+    containing the image
+
+  s : 2d binary (uint) numpy array
+    containing the neighborhood definition.
+    1 -> voxel is in neighborhood
+    0 -> voxel is not in neighnorhood
+    The dimensions of s have to be odd.
+
+  nnearest : uint
+    number of nearest neighbors
+    Make sure that nnearest is small enough for the "corner" voxels given s.
+
+  ninds: 2d numpy array used for output
+    of shape (np.prod(img.shape), nnearest).
+    ninds[i,:] contains the indicies of the nearest neighbors of voxel i
+
+  Note
+  ----
+  (1) All voxel indices are "flattened". It is assumed that the numpy arrays
+  are in 'C' order.
+  (2) the input 2D arrays are converted to 3D arrays and passed to nearest_neighbors_3d
+  """
+  z  = np.zeros(s.shape, dtype = s.dtype)
+  s2 = np.array([z,s,z]) 
+
+  nearest_neighbors_3d(np.expand_dims(img,0), s2, nnearest, ninds)
+
+#-------------------------------------------------------------------------------
+def nearest_neighbors(img,s,nnearest,ninds):
+  """ Calculate the n nearest neighbors for all voxels in a 2D or 3D array
+
+  Parameters
+  ----------
+  img : 2d or 3d numpy array
+    containing the image
+
+  s : 2d or 3d binary (uint) numpy array
+    containing the neighborhood definition.
+    1 -> voxel is in neighborhood
+    0 -> voxel is not in neighnorhood
+    The dimensions of s have to be odd.
+
+  nnearest : uint
+    number of nearest neighbors
+    Make sure that nnearest is small enough for the "corner" voxels given s.
+
+  ninds: 2d numpy array used for output
+    of shape (np.prod(img.shape), nnearest).
+    ninds[i,:] contains the indicies of the nearest neighbors of voxel i
+
+  Note
+  ----
+  (1) All voxel indices are "flattened". It is assumed that the numpy arrays
+  are in 'C' order.
+  (2) depending on the number of dimension of the input image,
+      nearest_neighbors_2d or nearest_neighbors_3d is called.
+  """
+  if img.ndim == 2:
+    nearest_neighbors_2d(img,s,nnearest,ninds)
+  elif img.ndim == 3:
+    nearest_neighbors_3d(img,s,nnearest,ninds)
+  else:
+    raise ValueError("input image must be 2d or 3d")
+
+#-------------------------------------------------------------------------------
+def is_nearest_neighbor_of(ninds):
+  """ Given an 2d array of nearest neighbors for each voxel, calculate
+      for which voxels the voxel is a nearest neighbor
+
+  Parameters
+  ----------
+  ninds : 2d numpy array
+    ninds[i,:] contains the nearest neighbors of voxel i
+
+
+  Returns
+  -------
+  A 2d array of shape (2, ninds.flatten().shape[0]).
+  output_array[0,:] contains a voxel number and j
+  output_array[0,:] contains a voxel for which j is a nearest neighbor
+  """
+  sinds              = np.argsort(ninds.flatten())
+  ninds_adjoint      = np.zeros((2, sinds.shape[0]), dtype = ninds.dtype)
+  ninds_adjoint[0,:] = ninds.flatten()[sinds]
+  ninds_adjoint[1,:] = sinds // ninds.shape[1]
+
+  return ninds_adjoint
 
 #-------------------------------------------------------------------------------
 
-np.random.seed(0)
-img      = np.random.rand(2,3,4)
-s        = np.array([[[0,1,0],[1,1,1],[0,1,0]], 
-                     [[1,1,1],[1,0,1],[1,1,1]], 
-                     [[0,1,0],[1,1,1],[0,1,0]]])
-nnearest = 3
-
-ninds = nearest_neighbors_3d(img,s,nnearest)
+if __name__ == "__main__":
+  np.random.seed(0)
+  nnearest = 2
+  img      = np.random.rand(4,4,4)
+  
+  if img.ndim == 2:
+    s   = np.array([[0,1,0], 
+                    [1,0,1], 
+                    [0,1,0]])
+  else:   
+    s   = np.array([[[0,1,0],[1,1,1],[0,1,0]], 
+                    [[1,1,1],[1,0,1],[1,1,1]], 
+                    [[0,1,0],[1,1,1],[0,1,0]]])
+  
+  ninds  = np.zeros((np.prod(img.shape),nnearest), dtype = np.uint32)
+  nearest_neighbors(img,s,nnearest,ninds)
+  ninds2 = is_nearest_neighbor_of(ninds)
