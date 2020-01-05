@@ -1,120 +1,36 @@
-#TODO: get rid of unravel / ravel_multi_index to allow njit
-
 import numpy as np
-from   numba import jit, njit
+from numba import njit
+from nearest_neighbors import *
 
 @njit()
-def ravel_multi_index(multi_index, dims):
+def bowsher_prior_cost(img, ninds):
+  img_shape = img.shape
+  img       = img.flatten()
+  cost      = 0.
 
-  flat_index = 0
-
-  for i in range(len(multi_index)):
-    offset = 1
-    if i > 0:
-      for j in range(i):
-        offset *= dims[-(j+1)]
-
-    flat_index += offset*multi_index[-(i+1)]
-
-  return flat_index
-
-#-------------------------------------------------------------------------------------
-
-@njit()
-def unravel_index(index, dims):
-
-  multi_index  = np.zeros(dims.shape, dtype = np.uint32)
-  to_subtract = 0
-
-  for i in range(len(dims) - 1):
-    denom = 1
-    for j in np.arange(i+1, len(dims)): 
-      denom *= dims[j]
-
-    multi_index[i] = (index - to_subtract) // denom
-    to_subtract   += multi_index[i] * denom
-
-  multi_index[-1] = index - to_subtract
-
-  return multi_index
-
-#-------------------------------------------------------------------------------------
-@njit()
-def nearest_neighbors(img, s, nnearest, ninds):
-  ndim  = s.ndim
-  sinds = np.where(s == 1)
+  for i in range(ninds.shape[0]):
+    cost += ((img[ninds[i,:]] - img[i])**2).sum()
   
-  nmask  = sinds[0].shape[0] 
-  offset = (np.array(s.shape) // 2)
+  img = img.reshape(img_shape)
 
-  shape  = np.array(img.shape)
+  return cost
 
-  img_flattened = img.flatten()
-
-  for voxindex, voxvalue in np.ndenumerate(img):
-    inds      = np.zeros(nmask, dtype = np.uint32)
-    is_inside = np.ones(nmask, dtype = np.uint8)
-
-    for j in range(nmask):
-      tmp       = np.zeros(ndim, dtype = np.uint16)
-    
-      for i in range(ndim):
-        tmp[i] = sinds[i][j] + voxindex[i] - offset[i]
-    
-        if tmp[i] < 0:  
-          is_inside[j] = 0
-        elif tmp[i] >= shape[i]: 
-          is_inside[j] = 0
-    
-      if is_inside[j] == 1:
-        inds[j] = ravel_multi_index(tmp, shape)
-
-    inds = inds[is_inside == 1]
-    # inds now contains the flattened indicies of the neighbors defined by the mask
-    # around our given voxel
-
-    # calculate absolute intensity difference to central voxel
-    absdiff = np.abs(img_flattened[inds] - voxvalue)
-
-    # contruct the nearest neighbor indices in the mask neighborhood
-    ninds[ravel_multi_index(np.array(voxindex), shape),:] = inds[np.argsort(absdiff)][:nnearest]
-
-#--------------------------------------------------------------------------------------
+#--------------------------------------------------------------------
 
 np.random.seed(0)
-
-# 2D test
-#img = np.random.rand(200,200)
-#s   = np.array([[0,1,0],[1,0,1],[0,1,0]])
-#s        = np.array([[0,0,1,0,0],[0,1,1,1,0],[1,1,0,1,1],[0,1,1,1,0],[0,0,1,0,0]])
-#nnearest = 2
-
-# 3D test
-img = np.random.rand(8,7,6)
-s   = np.array([[[0,1,0],[1,1,1],[0,1,0]], [[1,1,1],[1,0,1],[1,1,1]], [[0,1,0],[1,1,1],[0,1,0]]])
 nnearest = 2
+aimg     = np.random.rand(200,200,200)
 
-ninds = np.zeros((np.prod(img.shape), nnearest), dtype = np.uint32)
-nearest_neighbors(img, s, nnearest, ninds)
+s = np.array([[[0,1,0],[1,1,1],[0,1,0]], 
+              [[1,1,1],[1,0,1],[1,1,1]], 
+              [[0,1,0],[1,1,1],[0,1,0]]])
 
-# do some testing
-offset = np.array(s.shape)//2 
-for vox, voxvalue in np.ndenumerate(img):
-  #vox    = (2,2,2)
-  start0 = vox[0] - offset[0]
-  end0   = vox[0] + offset[0] + 1
-  start1 = vox[1] - offset[1]
-  end1   = vox[1] + offset[1] + 1
-  start2 = vox[2] - offset[2]
-  end2   = vox[2] + offset[2] + 1
+ninds  = np.zeros((np.prod(aimg.shape),nnearest), dtype = np.uint32)
+nearest_neighbors(aimg,s,nnearest,ninds)
+ninds2 = is_nearest_neighbor_of(ninds)
 
-  if start0 >= 0 and start1 >= 0 and start2 >= 0: 
-    if end0 <= img.shape[0] and end1 <= img.shape[1] and end2 <= img.shape[2]: 
-      crop   = img[start0:end0,start1:end1,start2:end2]
-      vals    = crop[s==1]
-      absdiff = np.abs(vals - voxvalue)
-      print(vals[np.argsort(absdiff)[:nnearest]])
-      print(img.flatten()[ninds[np.ravel_multi_index(vox,img.shape),:]])
-      print("")
+#---
 
+img = np.random.random(aimg.shape)
 
+p = bowsher_prior_cost(img, ninds)
