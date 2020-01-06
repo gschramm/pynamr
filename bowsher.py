@@ -5,38 +5,85 @@ from nearest_neighbors import *
 
 #--------------------------------------------------------------------
 @njit()
-def bowsher_prior_cost(img, ninds):
+def rel_diff(a,b):
+  if (a+b) != 0:
+    f = ((a-b)**2) / (a+b)
+  else:
+    f = 0
+
+  return f
+
+#--------------------------------------------------------------------
+@njit()
+def grad0_rel_diff(a,b):
+  if (a+b) != 0:
+    g = (a**2 + 2*a*b - 3*(b**2))/((a+b)**2)
+  else:
+    g = -1
+
+  return g
+
+#--------------------------------------------------------------------
+@njit()
+def grad1_rel_diff(a,b):
+  if (a+b) != 0:
+    g = (b**2 + 2*a*b - 3*(a**2))/((a+b)**2)
+  else:
+    g = -1
+
+  return g
+
+#--------------------------------------------------------------------
+@njit()
+def bowsher_prior_cost(img, ninds, method):
   img_shape = img.shape
   img       = img.flatten()
   cost      = 0.
 
-  for i in range(ninds.shape[0]):
-    # quadratic penalty
-    cost += ((img[i] - img[ninds[i,:]])**2).sum()
+  if method == 0:
+    for i in range(ninds.shape[0]):
+      for j in range(ninds.shape[1]):
+        cost += (img[i] - img[ninds[i,j]])**2
+  elif method == 1:
+    for i in range(ninds.shape[0]):
+      for j in range(ninds.shape[1]):
+        cost += rel_diff(img[i], img[ninds[i,j]])
   
   img = img.reshape(img_shape)
 
   return cost
 
 #--------------------------------------------------------------------
-@njit()
-def bowsher_prior_grad(img, ninds, ninds2):
+@njit(parallel = True)
+def bowsher_prior_grad(img, ninds, ninds2, method):
   img_shape = img.shape
   img       = img.flatten()
   grad      = np.zeros(img.shape, dtype = img.dtype)
 
   counter = 0
 
-  for i in range(ninds.shape[0]):
-    # first term
-    # quadratic penalty
-    grad[i] = 2*((img[i] - img[ninds[i,:]])).sum()
+  if method == 0:
+    for i in range(ninds.shape[0]):
+      # first term
+      for j in range(ninds.shape[1]):
+        grad[i] += 2*(img[i] - img[ninds[i,j]])
  
-    # 2nd term
-    while (counter < ninds2.shape[1]) and (ninds2[0,counter] == i):
-      # quadratic penalty
-      grad[i] +=  -2*(img[ninds2[1,counter]] - img[i])
-      counter += 1
+      # 2nd term
+      while (counter < ninds2.shape[1]) and (ninds2[0,counter] == i):
+        grad[i] += -2*(img[ninds2[1,counter]] - img[i])
+
+        counter += 1
+  elif method == 1:
+    for i in range(ninds.shape[0]):
+      # first term
+      for j in range(ninds.shape[1]):
+        grad[i] += grad0_rel_diff(img[i], img[ninds[i,j]])
+ 
+      # 2nd term
+      while (counter < ninds2.shape[1]) and (ninds2[0,counter] == i):
+        grad[i] += grad1_rel_diff(img[ninds2[1,counter]], img[i])
+
+        counter += 1
 
   img  = img.reshape(img_shape)
   grad = grad.reshape(img_shape)
@@ -44,22 +91,22 @@ def bowsher_prior_grad(img, ninds, ninds2):
   return grad
 
 #--------------------------------------------------------------------
-def bowsher_denoising_cost(img, noisy_img, beta, ninds, ninds2):
+def bowsher_denoising_cost(img, noisy_img, beta, ninds, ninds2, method):
   # ninds2 is a dummy argument to have the same arguments for
   # cost and its gradient
 
   data_fidelity = 0.5*((img - noisy_img)**2).sum()
-  prior         = bowsher_prior_cost(img, ninds)
+  prior         = bowsher_prior_cost(img, ninds, method)
 
   cost = data_fidelity + beta*prior
 
   return cost
 
 #--------------------------------------------------------------------
-def bowsher_denoising_grad(img, noisy_img, beta, ninds, ninds2):
+def bowsher_denoising_grad(img, noisy_img, beta, ninds, ninds2, method):
 
   data_fidelity_grad = img - noisy_img
-  prior_grad         = bowsher_prior_grad(img, ninds, ninds2)
+  prior_grad         = bowsher_prior_grad(img, ninds, ninds2, method)
 
   grad = data_fidelity_grad + prior_grad
 
@@ -94,15 +141,34 @@ img        = 2*(1 - aimg) + 1
 noisy_img  = img + 0.5*np.random.random(aimg.shape)
 init_img   = noisy_img.copy()
 
-beta = 1e2
+##---
+##---
+#x0 = noisy_img.copy()
+#x1 = x0.copy()
+#tmp      = (16,16)
+#eps      = 1e-5
+#x1[tmp] += eps
+#
+#method = 1
+#
+#p0 = bowsher_prior_cost(x0, ninds, method)
+#p1 = bowsher_prior_cost(x1, ninds, method)
+#
+#g  = bowsher_prior_grad(x0, ninds, ninds2, method)
+#
+##---
+##---
+
+method = 0
+beta   = 1e0
 
 res = fmin_bfgs(bowsher_denoising_cost, init_img.flatten(), fprime = bowsher_denoising_grad, 
-                args = (noisy_img.flatten(), beta, ninds, ninds2), gtol = 1e-5, maxiter = 100,
+                args = (noisy_img.flatten(), beta, ninds, ninds2, method), maxiter = 100,
                 retall = True)
 
 denoised_img = res[0].reshape(aimg.shape)
 
-cost = [bowsher_denoising_cost(x, noisy_img.flatten(), beta, ninds, ninds2) for x in res[1]]
+cost = [bowsher_denoising_cost(x, noisy_img.flatten(), beta, ninds, ninds2, method) for x in res[1]]
 
 import matplotlib.pyplot as py
 fig, ax = py.subplots(2,2,figsize=(7,7))
