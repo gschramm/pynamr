@@ -1,5 +1,6 @@
 import numpy as np
 from numba import njit
+from scipy.optimize    import fmin_bfgs
 from nearest_neighbors import *
 
 #--------------------------------------------------------------------
@@ -43,10 +44,35 @@ def bowsher_prior_grad(img, ninds, ninds2):
   return grad
 
 #--------------------------------------------------------------------
+def bowsher_denoising_cost(img, noisy_img, beta, ninds, ninds2):
+  # ninds2 is a dummy argument to have the same arguments for
+  # cost and its gradient
+
+  data_fidelity = 0.5*((img - noisy_img)**2).sum()
+  prior         = bowsher_prior_cost(img, ninds)
+
+  cost = data_fidelity + beta*prior
+
+  return cost
+
+#--------------------------------------------------------------------
+def bowsher_denoising_grad(img, noisy_img, beta, ninds, ninds2):
+
+  data_fidelity_grad = img - noisy_img
+  prior_grad         = bowsher_prior_grad(img, ninds, ninds2)
+
+  grad = data_fidelity_grad + prior_grad
+
+  return grad
+
+#--------------------------------------------------------------------
+#--------------------------------------------------------------------
+#--------------------------------------------------------------------
 
 np.random.seed(0)
 nnearest = 2 
-aimg     = np.random.rand(50,50,50)
+aimg     = np.pad(np.ones((20,20)),7,'constant')
+aimg    += 0.01*np.random.random(aimg.shape)
 
 if aimg.ndim == 3:
   s = np.array([[[0,1,0],[1,1,1],[0,1,0]], 
@@ -64,11 +90,31 @@ ninds2 = is_nearest_neighbor_of(ninds)
 
 #---
 
-img  = np.random.random(aimg.shape)
-img2 = img.copy()
-eps  = 1e-5
-img2[-1,-1,-1] += eps
+img        = 2*(1 - aimg) + 1
+noisy_img  = img + 0.5*np.random.random(aimg.shape)
+init_img   = noisy_img.copy()
 
-p  = bowsher_prior_cost(img, ninds)
-p2 = bowsher_prior_cost(img2, ninds)
-g = bowsher_prior_grad(img, ninds, ninds2)
+beta = 1e2
+
+res = fmin_bfgs(bowsher_denoising_cost, init_img.flatten(), fprime = bowsher_denoising_grad, 
+                args = (noisy_img.flatten(), beta, ninds, ninds2), gtol = 1e-5, maxiter = 100,
+                retall = True)
+
+denoised_img = res[0].reshape(aimg.shape)
+
+cost = [bowsher_denoising_cost(x, noisy_img.flatten(), beta, ninds, ninds2) for x in res[1]]
+
+import matplotlib.pyplot as py
+fig, ax = py.subplots(2,2,figsize=(7,7))
+im_kwargs = {'vmin':0, 'vmax':noisy_img.max(), 'cmap':py.cm.Greys}
+ax[0,0].imshow(img, **im_kwargs )
+ax[0,1].imshow(aimg, **im_kwargs)
+ax[1,0].imshow(noisy_img, **im_kwargs)
+ax[1,1].imshow(denoised_img, **im_kwargs)
+fig.tight_layout()
+fig.show()
+
+fig2, ax2 = py.subplots(1,1)
+ax2.loglog(cost)
+fig2.tight_layout()
+fig2.show()
