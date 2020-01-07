@@ -1,7 +1,7 @@
 # small demo script to verify implementation of discrete FT (with FFT)
 
 import numpy as np
-from scipy.optimize import fmin_bfgs
+from scipy.optimize import fmin_l_bfgs_b
 
 import matplotlib.pyplot as py
 from   matplotlib.colors import LogNorm
@@ -129,8 +129,8 @@ signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,25
 #----------------------------------------------------------
 #--- do the recon
 
-alg   = 'bfgs'
-niter = 1000
+alg   = 'lbfgs'
+niter = 2000
 lam   = 1e-2
 
 T2star_recon = T2star.copy()
@@ -139,33 +139,23 @@ T2star_recon = T2star.copy()
 apo_imgs_recon = apo_images(readout_times, T2star_recon)
 
 recon  = np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape)) / np.sqrt(4*signal.ndim)
-#recons = np.zeros((niter + 1,) + f.shape, dtype = np.complex)
-#recons[0,...] = recon
 
-#cost  = np.zeros(niter)
-#cost1 = np.zeros(niter)
-#cost2 = np.zeros(niter)
-
-if alg == 'bfgs':
+if alg == 'lbfgs':
   print('starting bfgs')
   recon = complex2d_to_flat_real(recon)
 
-  res = fmin_bfgs(mr_data_fidelity, recon, fprime = mr_data_fidelity_grad, 
-                  args = (readout_inds, apo_imgs_recon), maxiter = 3,
-                  retall = True)
+  res = fmin_l_bfgs_b(mr_data_fidelity, recon, fprime = mr_data_fidelity_grad, 
+                      args = (readout_inds, apo_imgs_recon), maxfun = niter, maxiter = niter, disp = 1)
 
-  #inds = (0,)
-  #eps  = 1e-5
-  #recon2 = recon.copy()
-  #recon2[inds] += eps
-  #
-  #c  = mr_data_fidelity(recon, readout_inds, apo_imgs_recon)
-  #c2 = mr_data_fidelity(recon2, readout_inds, apo_imgs_recon)
+  recon = flat_real_to_complex2d(res[0])
+elif alg == 'landweber':
+  step  = 0.2
 
-  #g = mr_data_fidelity_grad(recon, readout_inds, apo_imgs_recon)
+  for it in range(niter):
+    recon = recon - step*mr_data_fidelity_grad(recon, readout_inds, apo_imgs_recon)
+    cost  = mr_data_fidelity(recon, readout_inds, apo_imgs_recon)
+    print(it + 1, niter, round(cost,5))
 
-  #print((c2-c)/eps)
-  #print(g[inds])
 
 
 ##----------------------------------------------------------
@@ -179,17 +169,6 @@ if alg == 'bfgs':
 #  print(L)
 ##----------------------------------------------------------
 #
-#if alg == 'landweber':
-#  step  = 0.2
-#
-#  recon = recon.flatten()
-#
-#  for it in range(niter):
-#    recon    = recon - step*mr_data_fidelity_grad(recon, readout_inds, apo_imgs_recon)
-#    #recons[it + 1, ...] = recon
-#    cost[it] = mr_data_fidelity(recon, readout_inds, apo_imgs_recon)
-#    print(it + 1, niter, round(cost[it],4))
-
 #elif alg == 'pdhg':
 #  L     = np.sqrt(2*recon.ndim*4)
 #  sigma = (1e1)/L
