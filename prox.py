@@ -51,7 +51,3 @@ def prox_pls(x, xi, beta, method):
           x[:,i,j] = x_perp / norm_ratio
         else:
           x[:,i,j] = x_perp
-
-
-
-
