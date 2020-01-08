@@ -1,6 +1,6 @@
 import numpy as np
 
-from scipy.optimize    import fmin_l_bfgs_b
+from scipy.optimize    import fmin_l_bfgs_b, fmin_cg
 from scipy.ndimage     import gaussian_filter
 from nearest_neighbors import *
 from bowsher           import *
@@ -55,12 +55,17 @@ def bowsher_deblurring_grad(img, noisy_img, img_shape, sig, beta, ninds, ninds2,
 np.random.seed(0)
 
 sig         = 2.
-noise_level = 0.05
-beta        = 1e-1
+noise_level = 0.03
+beta        = 1e0
+alg         = 'lbfgs'
+maxiter     = 1000
+nnearest    = 3 
+method      = 0
 
+#-----------------------------------------------------------------------------------------------
 # load the brain web labels
 data  = np.load('54.npz')
-gt    = data['arr_0'][...,65:75]
+gt    = data['arr_0'][...,70:75]
 #gt    = data['arr_0'][...,75]
 aimg  = (gt.max() - gt)**0.5
 aimg += 0.001*aimg.max()*np.random.randn(*gt.shape)
@@ -68,10 +73,8 @@ img   = gaussian_filter(gt,sig) + noise_level*gt.max()*np.random.randn(*gt.shape
 
 img_shape = img.shape
 
-# parameter for the bowsher prior
-nnearest = 3 
-method   = 0
-
+#-----------------------------------------------------------------------------------------------
+# set up the parameter for the Bowsher prior
 if aimg.ndim == 3:
   s = np.array([[[0,1,0],[1,1,1],[0,1,0]], 
                 [[1,1,1],[1,0,1],[1,1,1]], 
@@ -86,22 +89,56 @@ ninds  = np.zeros((np.prod(aimg.shape),nnearest), dtype = np.uint32)
 nearest_neighbors(aimg,s,nnearest,ninds)
 ninds2 = is_nearest_neighbor_of(ninds)
 
+#-----------------------------------------------------------------------------------------------
+#--- do the recon
+
 cost = []
+
 cb   = lambda x: cost.append(bowsher_deblurring_cost(x, img.flatten(), img_shape, sig, beta, ninds, ninds2, method))
-#cb   = lambda x: cost.append(((x-gt.flatten())**2).sum())
 
-bounds = [(None,None)] * len(img.flatten())
+if alg == 'lbfgs':
+  res = fmin_l_bfgs_b(bowsher_deblurring_cost, 
+                      img.flatten(), 
+                      fprime = bowsher_deblurring_grad, 
+                      args = (img.flatten(), img_shape, sig, beta, ninds, ninds2, method),
+                      callback = cb,
+                      maxiter = maxiter,
+                      disp = 1)
+  
+  recon = res[0].reshape(aimg.shape)
+elif alg == 'cg':
+  res = fmin_cg(bowsher_deblurring_cost, 
+                img.flatten(), 
+                fprime = bowsher_deblurring_grad, 
+                args = (img.flatten(), img_shape, sig, beta, ninds, ninds2, method),
+                callback = cb,
+                maxiter = maxiter,
+                disp = 1)
 
-res = fmin_l_bfgs_b(bowsher_deblurring_cost, 
-                    img.flatten(), 
-                    fprime = bowsher_deblurring_grad, 
-                    args = (img.flatten(), img_shape, sig, beta, ninds, ninds2, method),
-                    bounds = bounds,
-                    callback = cb,
-                    maxiter = 200,
-                    disp = 1)
+  recon = res.reshape(aimg.shape)
+elif alg == 'gd':
+  gamma0 = 0.1
+  recon  = img.copy()
+  gammas = []
 
-denoised_img = res[0].reshape(aimg.shape)
+  for i in range(maxiter):
+    if i == 0:
+      grad      = bowsher_deblurring_grad(recon, img, img_shape, sig, beta, ninds, ninds2, method)
+      recon_old = recon.copy()
+      recon     = recon_old - gamma0*grad
+      grad_old  = grad.copy()
+    else:
+      grad   = bowsher_deblurring_grad(recon, img, img_shape, sig, beta, ninds, ninds2, method)
+      dgrad  = grad-grad_old
+      gamma  = ((recon - recon_old)*dgrad).sum() / (dgrad**2).sum()
+      gammas.append(gamma)
+
+      recon_old = recon.copy()
+      recon     = recon_old - gamma*grad
+      grad_old  = grad.copy()
+
+    cost.append(bowsher_deblurring_cost(recon, img, img_shape, sig, beta, ninds, ninds2, method))
+    print(i, cost[i])
 
 
 #-----------------------------------------------------------------------------------------------
@@ -118,13 +155,13 @@ if gt.ndim == 2:
   ax[0,0].imshow(gt.transpose(), **im_kwargs )
   ax[0,1].imshow(aimg.transpose())
   ax[1,0].imshow(img.transpose(), **im_kwargs)
-  ax[1,1].imshow(denoised_img.transpose(), **im_kwargs)
+  ax[1,1].imshow(recon.transpose(), **im_kwargs)
 else: 
   sl = gt.shape[-1]//2
   ax[0,0].imshow(gt[...,sl].transpose(), **im_kwargs )
   ax[0,1].imshow(aimg[...,sl].transpose())
   ax[1,0].imshow(img[...,sl].transpose(), **im_kwargs)
-  ax[1,1].imshow(denoised_img[...,sl].transpose(), **im_kwargs)
+  ax[1,1].imshow(recon[...,sl].transpose(), **im_kwargs)
 fig.tight_layout()
 fig.show()
 
