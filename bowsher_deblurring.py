@@ -2,6 +2,7 @@ import numpy as np
 
 from scipy.optimize    import fmin_l_bfgs_b, fmin_cg
 from scipy.ndimage     import gaussian_filter
+from time              import time
 from nearest_neighbors import *
 from bowsher           import *
 
@@ -57,8 +58,8 @@ np.random.seed(0)
 sig         = 2.
 noise_level = 0.03
 beta        = 1e0
-alg         = 'lbfgs'
-maxiter     = 1000
+alg         = 'cg'
+maxiter     = 150
 nnearest    = 3 
 method      = 0
 
@@ -97,6 +98,7 @@ cost = []
 cb   = lambda x: cost.append(bowsher_deblurring_cost(x, img.flatten(), img_shape, sig, beta, ninds, ninds2, method))
 
 if alg == 'lbfgs':
+  t0 = time()
   res = fmin_l_bfgs_b(bowsher_deblurring_cost, 
                       img.flatten(), 
                       fprime = bowsher_deblurring_grad, 
@@ -104,18 +106,22 @@ if alg == 'lbfgs':
                       callback = cb,
                       maxiter = maxiter,
                       disp = 1)
+  print('opt time : ', time() - t0)
   
   recon = res[0].reshape(aimg.shape)
 elif alg == 'cg':
+  t0 = time()
   res = fmin_cg(bowsher_deblurring_cost, 
                 img.flatten(), 
                 fprime = bowsher_deblurring_grad, 
                 args = (img.flatten(), img_shape, sig, beta, ninds, ninds2, method),
                 callback = cb,
+                full_output = True,
                 maxiter = maxiter,
                 disp = 1)
+  print('opt time : ', time() - t0)
 
-  recon = res.reshape(aimg.shape)
+  recon = res[0].reshape(aimg.shape)
 elif alg == 'gd':
   gamma0 = 0.1
   recon  = img.copy()

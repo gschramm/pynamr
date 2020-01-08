@@ -1,4 +1,5 @@
 # small demo script to verify implementation of discrete FT (with FFT)
+# TODO: correct k-space sampling (not distance from center ...)
 
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
@@ -28,11 +29,11 @@ def flat_real_to_complex2d(x):
   return np.squeeze(y.view('complex'))
 
 #--------------------------------------------------------------
-def apo_images(readout_times, T2star):
-  apo_imgs = np.zeros((n_readout_bins,) + T2star.shape)
+def apo_images(readout_times, T2star_short, Tstar_long, C_short = 0.6, C_long = 0.4):
+  apo_imgs = np.zeros((n_readout_bins,) + T2star_short.shape)
 
   for i, t_read in enumerate(readout_times):
-    apo_imgs[i,...] = np.exp(-t_read / T2star)
+    apo_imgs[i,...] = C_short*np.exp(-t_read / T2star_short) + C_long*np.exp(-t_read / T2star_long)
 
   return apo_imgs
 
@@ -138,14 +139,20 @@ f[gm_inds]  = 0.8
 f[wm_inds]  = 0.7
 
 # set up array for T2* times
-T2star = np.ones(lab.shape)
-T2star[csf_inds] = 48.
-T2star[gm_inds]  = 12.
-T2star[wm_inds]  = 15.
+T2star_short = np.ones(lab.shape)
+T2star_short[csf_inds] = 50.
+T2star_short[gm_inds]  = 8.
+T2star_short[wm_inds]  = 8.
+
+T2star_long = np.ones(lab.shape)
+T2star_long[csf_inds] = 50.
+T2star_long[gm_inds]  = 15.
+T2star_long[wm_inds]  = 15.
 
 # regrid to a 256 grid
-f      = zoom3d(np.expand_dims(f,-1),(256/434,256/434,1))[...,0]
-T2star = zoom3d(np.expand_dims(T2star,-1),(256/434,256/434,1))[...,0]
+f            = zoom3d(np.expand_dims(f,-1),(256/434,256/434,1))[...,0]
+T2star_short = zoom3d(np.expand_dims(T2star_short,-1),(256/434,256/434,1))[...,0]
+T2star_long  = zoom3d(np.expand_dims(T2star_long,-1),(256/434,256/434,1))[...,0]
 
 # setup the frequency array as used in numpy fft
 tmp    = np.fft.fftfreq(f.shape[0])
@@ -153,16 +160,16 @@ k0, k1 = np.meshgrid(tmp, tmp, indexing = 'ij')
 abs_k  = np.sqrt(k0**2 + k1**2)
 
 # generate array of k-space readout times
-n_readout_bins     = 32
+n_readout_bins     = 50
 readout_ind_array  = (abs_k * (n_readout_bins**2) / abs_k.max()) // n_readout_bins
-readout_times      = 400*abs_k[readout_ind_array == (n_readout_bins-1)].mean() * np.linspace(0,1,n_readout_bins)
+readout_times      = 100*abs_k[readout_ind_array == (n_readout_bins-1)].mean() * np.linspace(0,1,n_readout_bins)
 readout_inds       = []
 
 for i, t_read in enumerate(readout_times):
   readout_inds.append(np.where(readout_ind_array == i))
 
 # generate the signal apodization images
-apo_imgs  = apo_images(readout_times, T2star)
+apo_imgs  = apo_images(readout_times, T2star_short, T2star_long)
 
 #----------------------------------------------------------
 #--- simulate the signal
@@ -178,14 +185,15 @@ signal = signal + noise_level*(np.random.randn(256,256) + np.random.randn(256,25
 #----------------------------------------------------------
 #--- do the recon
 
-alg   = 'lbfgs'
-niter = 500
+alg    = 'lbfgs'
+niter  = 100
+beta   = 1e1
+method = 0
 
-T2star_recon = T2star.copy()
-#T2star_recon = np.zeros(T2star.shape) + T2star.max()
-#T2star_recon = np.zeros(T2star.shape) + 12
+T2star_short_recon = T2star_short.copy()
+T2star_long_recon  = T2star_long.copy()
 
-apo_imgs_recon = apo_images(readout_times, T2star_recon)
+apo_imgs_recon = apo_images(readout_times, T2star_short_recon, T2star_long_recon)
 
 init_recon  = np.fft.ifft2(signal) * np.sqrt(np.prod(f.shape)) / np.sqrt(4*signal.ndim)
 
@@ -194,17 +202,18 @@ aimg  = (f.max() - f.copy())
 aimg += 0.001*aimg.max()*np.random.random(aimg.shape)
 
 # beta = 1e-4 reasonable for inverse crime
-beta = 1e-4
 s    = np.array([[1,1,1], 
                  [1,0,1], 
                  [1,1,1]])
 nnearest = 3 
-method   = 0
 
 ninds  = np.zeros((np.prod(aimg.shape),nnearest), dtype = np.uint32)
 nearest_neighbors(aimg,s,nnearest,ninds)
 ninds2 = is_nearest_neighbor_of(ninds)
 
+cost = []
+
+cb = lambda x: cost.append(mr_bowsher_cost(x,readout_inds, apo_imgs_recon, beta, ninds, ninds2, method))
 
 if alg == 'lbfgs':
   print('starting bfgs')
@@ -215,20 +224,12 @@ if alg == 'lbfgs':
                       recon, 
                       fprime = mr_bowsher_grad, 
                       args = (readout_inds, apo_imgs_recon, beta, ninds, ninds2, method), 
-                      maxfun = niter, maxiter = niter, disp = 1)
+                      callback = cb,
+                      maxfun = niter, 
+                      maxiter = niter, 
+                      disp = 1)
 
   recon = flat_real_to_complex2d(res[0])
-elif alg == 'gradient_descent':
-  step  = 0.2
-  recon = init_recon.copy()
-
-  for it in range(niter):
-    #recon = recon - step*mr_data_fidelity_grad(recon, readout_inds, apo_imgs_recon)
-    recon = recon - step*mr_bowsher_grad(recon, readout_inds, apo_imgs_recon, beta, ninds, ninds2, method)
-    #cost  = mr_data_fidelity(recon, readout_inds, apo_imgs_recon)
-    cost  = mr_bowsher_cost(recon, readout_inds, apo_imgs_recon, beta, ninds, ninds2, method)
-    print(it + 1, niter, round(cost,5))
-
 
 
 ##----------------------------------------------------------
@@ -307,9 +308,9 @@ ax[1,1].plot(np.abs(recon)[:,128],'r:')
 ax[1,2].plot(f[128,:],'k')
 ax[1,2].plot(np.abs(init_recon)[128,:],'b:')
 ax[1,2].plot(np.abs(recon)[128,:],'r:')
-ax[2,0].imshow(T2star, vmin = 0, vmax = T2star.max())
-ax[2,1].imshow(T2star_recon, vmin = 0, vmax = T2star.max())
-#ax[2,2].plot(cost[10:])
+ax[2,0].imshow(T2star_long, vmin = 0, vmax = T2star_long.max())
+ax[2,1].imshow(T2star_long_recon, vmin = 0, vmax = T2star_long_recon.max())
+ax[2,2].semilogy(np.arange(1,len(cost)+1), cost)
 
 ax[0,0].set_title('ground truth')
 ax[0,1].set_title('init recon')
