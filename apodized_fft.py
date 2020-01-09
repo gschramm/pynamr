@@ -1,7 +1,7 @@
 import numpy as np
 
 #--------------------------------------------------------------
-def apodized_fft(f, readout_inds, apo_images):
+def apodized_fft(f, readout_inds, apo_imgs):
   """ Calculate apodized FFT of an image (e.g. caused by T2* decay during readout
   
   Parameters
@@ -14,7 +14,7 @@ def apodized_fft(f, readout_inds, apo_images):
   readout_inds : list of array indices (nr elements)
     containing the 2D array indicies that read out at every time point
 
-  apo_images : 3d numpy array of shape(nr,n0,n1,...,nn)
+  apo_imgs : 3d numpy array of shape(nr,n0,n1,...,nn)
     containing the multiplicative apodization images at each readout time point
 
   Returns
@@ -27,8 +27,8 @@ def apodized_fft(f, readout_inds, apo_images):
 
   F = np.zeros(f.shape, dtype = np.complex128)
 
-  for i in range(apo_images.shape[0]):
-    tmp = np.fft.fft2(apo_images[i,...] * f, axes = -np.arange(f.ndim,0,-1))
+  for i in range(apo_imgs.shape[0]):
+    tmp = np.fft.fft2(apo_imgs[i,...] * f, axes = -np.arange(f.ndim,0,-1))
     F[readout_inds[i]] = tmp[readout_inds[i]]
 
   
@@ -42,7 +42,7 @@ def apodized_fft(f, readout_inds, apo_images):
   return F
 
 #--------------------------------------------------------------
-def adjoint_apodized_fft(F, readout_inds, apo_images):
+def adjoint_apodized_fft(F, readout_inds, apo_imgs):
   """ Calculate apodized FFT of an image (e.g. caused by T2* decay during readout)
   
   Parameters
@@ -55,7 +55,7 @@ def adjoint_apodized_fft(F, readout_inds, apo_images):
   readout_inds : list of array indices (nr elements)
     containing the 2D array indicies that read out at every time point
 
-  apo_images : 3d numpt array of shape(nr,n0,n1,...,nn)
+  apo_imgs : 3d numpt array of shape(nr,n0,n1,...,nn)
     containing the nultiplicative apodization images at each readout time point
 
   Returns
@@ -68,11 +68,11 @@ def adjoint_apodized_fft(F, readout_inds, apo_images):
 
   f = np.zeros(F.shape, dtype = np.complex128)
 
-  for i in range(apo_images.shape[0]):
+  for i in range(apo_imgs.shape[0]):
     tmp = np.zeros(f.shape, dtype = np.complex128)
     tmp[readout_inds[i]] = F[readout_inds[i]]
 
-    f += apo_images[i,...] * np.fft.ifft2(tmp, axes = -np.arange(F.ndim,0,-1))
+    f += apo_imgs[i,...] * np.fft.ifft2(tmp, axes = -np.arange(F.ndim,0,-1))
 
   f *=  (np.sqrt(np.prod(F.shape)) * np.sqrt(4*F.ndim))
 
