@@ -127,7 +127,7 @@ abs_k  = np.sqrt(k0**2 + k1**2)
 # generate array of k-space readout times
 n_readout_bins     = 50
 readout_ind_array  = (abs_k * (n_readout_bins**2) / abs_k.max()) // n_readout_bins
-readout_times      = 100*abs_k[readout_ind_array == (n_readout_bins-1)].mean() * np.linspace(0,1,n_readout_bins)
+readout_times      = 200*abs_k[readout_ind_array == (n_readout_bins-1)].mean() * np.linspace(0,1,n_readout_bins)
 readout_inds       = []
 
 for i, t_read in enumerate(readout_times):
@@ -150,13 +150,16 @@ signal += noise_level*(np.random.randn(*signal.shape))
 #----------------------------------------------------------
 #--- do the recon
 
-alg    = 'cg'
-niter  = 10
+alg    = 'lbfgs'
+niter  = 50
 beta   = 0
 method = 0
 
-T2star_short_recon = T2star_short.copy()
-T2star_long_recon  = T2star_long.copy()
+#T2star_short_recon = T2star_short.copy()
+#T2star_long_recon  = T2star_long.copy()
+
+T2star_short_recon = np.zeros(T2star_short.shape) + T2star_short.max()
+T2star_long_recon  = np.zeros(T2star_long.shape) + T2star_long.max()
 
 apo_imgs_recon = apo_images(readout_times, T2star_short_recon, T2star_long_recon)
 
@@ -207,69 +210,7 @@ if alg == 'lbfgs' or alg == 'cg':
                   disp = 1)
 
     recon = res.reshape(recon_shape)
-#
-#
-#
-###----------------------------------------------------------
-###--- power iterations to get norm of MR operator
-##n0, n1 = recon.shape
-##b = np.random.rand(n0,n1) + np.random.rand(n0,n1)*1j
-##for it in range(25):
-##  b_fwd = apodized_fft(b, readout_inds, apo_imgs)
-##  L     = np.sqrt((b_fwd * b_fwd.conj()).sum().real)
-##  b     = b_fwd / L
-##  print(L)
-###----------------------------------------------------------
-##
-##elif alg == 'pdhg':
-##  L     = np.sqrt(2*recon.ndim*4)
-##  sigma = (1e1)/L
-##  tau   = 1./(sigma*(L**2))
-##
-##  # convexity parameter of data fidelity F*
-##  gam = lam
-## 
-##  recon_bar  = recon.copy()
-##  recon_dual = np.zeros(signal.shape, dtype = signal.dtype)
-##
-##  grad_dual  = np.zeros((2*recon.ndim,) + recon.shape)
-##
-##  for it in range(niter):
-##    diff        = apodized_fft(recon_bar, readout_inds, apo_imgs_recon) - signal
-##    recon_dual += sigma * diff / (1 + sigma*lam)
-##    recon_old   = recon.copy()
-##
-##    # forward step for complex gradient
-##    tmp = np.zeros((2*recon.ndim,) + recon.shape)
-##    complex_grad(recon_bar, tmp)
-##    grad_dual += sigma * tmp
-##    prox_tv(grad_dual, 1.)
-##
-##    #recon += tau*(-1*adjoint_apodized_fft(recon_dual, readout_inds, apo_imgs_recon))
-##    recon += tau*(complex_div(grad_dual) - adjoint_apodized_fft(recon_dual, readout_inds, apo_imgs_recon))
-## 
-##    # update step sizes
-##    theta  = 1.
-##    #theta  = 1 / np.sqrt(1 + 2*gam*tau)
-##    #tau   *= theta
-##    #sigma /= theta
-##
-##    recon_bar   = recon + theta*(recon - recon_old)
-##
-##    # calculate the cost
-##    tmp = np.zeros((2*recon.ndim,) + recon.shape)
-##    complex_grad(recon, tmp)
-##    tmp2 = apodized_fft(recon, readout_inds, apo_imgs_recon) - signal
-##    cost[it] = (0.5/lam)*(tmp2*tmp2.conj()).sum().real + np.linalg.norm(tmp, axis=0).sum()
-##    cost1[it] = (tmp2*tmp2.conj()).sum().real
-##    cost2[it] = np.linalg.norm(tmp, axis=0).sum()
-##    print(it + 1, niter, round(cost1[it],4), round(cost2[it],4), round(cost[it],4))
-##
-##    recons[it + 1, ...] = recon
-##
-#
-#
-#
+
 #----------------------------------------------------------
 #--- plot the results
 
@@ -279,7 +220,7 @@ abs_init_recon = np.linalg.norm(init_recon,axis=-1)
 abs_recon      = np.linalg.norm(recon,axis=-1)
 abs_f          = np.linalg.norm(f,axis=-1)
 
-fig, ax = py.subplots(3,3,figsize = (9,9))
+fig, ax = py.subplots(3,4,figsize = (12,9))
 ax[0,0].imshow(abs_f, vmin = 0, vmax = vmax)
 ax[0,1].imshow(abs_init_recon, vmin = 0, vmax = vmax)
 ax[0,2].imshow(abs_recon, vmin = 0, vmax = vmax)
@@ -290,16 +231,24 @@ ax[1,1].plot(abs_recon[:,128],'r:')
 ax[1,2].plot(abs_f[128,:],'k')
 ax[1,2].plot(abs_init_recon[128,:],'b:')
 ax[1,2].plot(abs_recon[128,:],'r:')
-ax[2,0].imshow(T2star_long, vmin = 0, vmax = T2star_long.max())
-ax[2,1].imshow(T2star_long_recon, vmin = 0, vmax = T2star_long_recon.max())
-ax[2,2].loglog(np.arange(1,len(cost)+1), cost)
+ax[1,3].loglog(np.arange(1,len(cost)+1), cost)
+
+ax[2,0].imshow(T2star_short,       vmin = T2star_short.min(), vmax = T2star_short.max())
+ax[2,1].imshow(T2star_long,        vmin = T2star_long.min(),  vmax = T2star_long.max())
+ax[2,2].imshow(T2star_short_recon, vmin = T2star_short.min(), vmax = T2star_short.max())
+ax[2,3].imshow(T2star_long_recon,  vmin = T2star_long.min(),  vmax = T2star_long.max())
 
 ax[0,0].set_title('ground truth')
-ax[0,1].set_title('init recon')
+ax[0,1].set_title('init recon (ifft)')
 ax[0,2].set_title('iterative recon')
-ax[2,0].set_title('ground truth T2*')
-ax[2,1].set_title('recon T2*')
-ax[2,2].set_title('cost')
+ax[0,3].set_axis_off()
+
+ax[1,3].set_title('cost')
+
+ax[2,0].set_title('gt short T2*')
+ax[2,1].set_title('gt long T2*')
+ax[2,2].set_title('recon short T2*')
+ax[2,3].set_title('recon long T2*')
 
 fig.tight_layout()
 fig.show()
