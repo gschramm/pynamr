@@ -11,7 +11,8 @@ from apodized_fft      import *
 from nearest_neighbors import *
 from bowsher           import *
 
-from pymirc.image_operations import zoom3d, complex_grad, complex_div
+from scipy.ndimage import zoom
+from pymirc.image_operations import complex_grad, complex_div
 
 #--------------------------------------------------------------
 def mr_data_fidelity(recon, signal, readout_inds, apo_imgs):
@@ -77,8 +78,19 @@ def mr_bowsher_grad(recon, recon_shape, signal, readout_inds, apo_imgs, beta, ni
 #--------------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------------
+n = 128
 
+alg    = 'lbfgs'
+niter  = 20
+beta   = 1e-1
+method = 0
 
+time_fac = 3.
+
+T2short = -1   # -1 -> inverse crime, float -> constant value
+T2long  = -1   # -1 -> inverse crime, float -> constant value
+
+#--------------------------------------------------------------------------------------
 
 py.ion()
 py.rc('image', cmap='gray')
@@ -87,7 +99,9 @@ py.rc('image', cmap='gray')
 data = np.load('54.npz')
 t1     = data['arr_0']
 labels = data['arr_1']
-lab = np.pad(labels[:,:,132].transpose(), ((0,0),(36,36)),'constant')
+lab    = np.pad(labels[:,:,132].transpose(), ((0,0),(36,36)),'constant')
+
+#===========================================================================================
 
 # CSF = 1, GM = 2, WM = 3
 csf_inds = np.where(lab == 1) 
@@ -100,21 +114,23 @@ f[csf_inds] = 1.1
 f[gm_inds]  = 0.8
 f[wm_inds]  = 0.7
 
-# set up array for T2* times
-T2star_short = np.ones(lab.shape)
-T2star_short[csf_inds] = 50.
-T2star_short[gm_inds]  = 8.
-T2star_short[wm_inds]  = 8.
-
-T2star_long = np.ones(lab.shape)
-T2star_long[csf_inds] = 50.
-T2star_long[gm_inds]  = 15.
-T2star_long[wm_inds]  = 15.
-
 # regrid to a 256 grid
-f            = zoom3d(np.expand_dims(f,-1),(256/434,256/434,1))[...,0]
-T2star_short = zoom3d(np.expand_dims(T2star_short,-1),(256/434,256/434,1))[...,0]
-T2star_long  = zoom3d(np.expand_dims(T2star_long,-1),(256/434,256/434,1))[...,0]
+f          = zoom(np.expand_dims(f,-1),(n/434,n/434,1), order = 1, prefilter = False)[...,0]
+lab_regrid = zoom(lab, (n/434,n/434), order = 0, prefilter = False) 
+
+# set up array for T2* times
+T2star_short = np.zeros((n,n)) + 1e5
+T2star_short[lab_regrid == 1] = 50.
+T2star_short[lab_regrid == 2] = 3.
+T2star_short[lab_regrid == 3] = 3.
+
+T2star_long = np.zeros((n,n)) + 1e5
+T2star_long[lab_regrid == 1] = 50.
+T2star_long[lab_regrid == 2] = 15.
+T2star_long[lab_regrid == 3] = 15.
+
+
+#===========================================================================================
 
 # add imag part to
 f = np.stack((f,np.zeros(f.shape)), axis = -1)
@@ -125,10 +141,13 @@ k0, k1 = np.meshgrid(tmp, tmp, indexing = 'ij')
 abs_k  = np.sqrt(k0**2 + k1**2)
 
 # generate array of k-space readout times
-n_readout_bins     = 50
+# this is contains the readout time as a function of |k|
+n_readout_bins = 100
+tmp            = time_fac*np.loadtxt('readout_times.csv', delimiter = ',')
+readout_times  = np.interp(np.linspace(0,tmp.max(),n_readout_bins), np.linspace(0,tmp.max(),len(tmp)), tmp)
 readout_ind_array  = (abs_k * (n_readout_bins**2) / abs_k.max()) // n_readout_bins
-readout_times      = 200*abs_k[readout_ind_array == (n_readout_bins-1)].mean() * np.linspace(0,1,n_readout_bins)
-readout_inds       = []
+
+readout_inds = []
 
 for i, t_read in enumerate(readout_times):
   readout_inds.append(np.where(readout_ind_array == i))
@@ -150,20 +169,21 @@ signal += noise_level*(np.random.randn(*signal.shape))
 #----------------------------------------------------------
 #--- do the recon
 
-alg    = 'lbfgs'
-niter  = 50
-beta   = 0
-method = 0
+if T2short == -1:
+  T2star_short_recon = T2star_short.copy()
+else :
+  T2star_short_recon = np.zeros((n,n)) + T2short
 
-#T2star_short_recon = T2star_short.copy()
-#T2star_long_recon  = T2star_long.copy()
+if T2long == -1:
+  T2star_long_recon = T2star_long.copy()
+else :
+  T2star_long_recon = np.zeros((n,n)) + T2long
 
-T2star_short_recon = np.zeros(T2star_short.shape) + T2star_short.max()
-T2star_long_recon  = np.zeros(T2star_long.shape) + T2star_long.max()
 
 apo_imgs_recon = apo_images(readout_times, T2star_short_recon, T2star_long_recon)
 
 init_recon  = np.fft.ifft2(np.squeeze(signal.view(dtype = np.complex128))) * np.sqrt(np.prod(f.shape)) / np.sqrt(4*signal.ndim)
+
 init_recon  = init_recon.view('(2,)float')
 
 # --- set up stuff for the prior
@@ -214,34 +234,38 @@ if alg == 'lbfgs' or alg == 'cg':
 #----------------------------------------------------------
 #--- plot the results
 
-vmax = min(1.5*f.max(),max(f.max(),np.abs(recon).max()))
+vmax = 1.2*f.max()
 
-abs_init_recon = np.linalg.norm(init_recon,axis=-1)
+abs_f           = np.linalg.norm(f,axis=-1)
+abs_init_recon  = np.linalg.norm(init_recon,axis=-1)
+abs_init_recon *= abs_f.sum() / abs_init_recon.sum()
+
 abs_recon      = np.linalg.norm(recon,axis=-1)
-abs_f          = np.linalg.norm(f,axis=-1)
 
 fig, ax = py.subplots(3,4,figsize = (12,9))
 ax[0,0].imshow(abs_f, vmin = 0, vmax = vmax)
 ax[0,1].imshow(abs_init_recon, vmin = 0, vmax = vmax)
 ax[0,2].imshow(abs_recon, vmin = 0, vmax = vmax)
+ax[0,3].plot(readout_times)
+
 ax[1,0].imshow(abs_recon - abs_f, vmin = -0.1*vmax, vmax = 0.1*vmax, cmap = py.cm.bwr)
-ax[1,1].plot(abs_f[:,128],'k')
-ax[1,1].plot(abs_init_recon[:,128],'b:')
-ax[1,1].plot(abs_recon[:,128],'r:')
-ax[1,2].plot(abs_f[128,:],'k')
-ax[1,2].plot(abs_init_recon[128,:],'b:')
-ax[1,2].plot(abs_recon[128,:],'r:')
+ax[1,1].plot(abs_f[:,n//2],'k')
+ax[1,1].plot(abs_init_recon[:,n//2],'b:')
+ax[1,1].plot(abs_recon[:,n//2],'r:')
+ax[1,2].plot(abs_f[n//2,:],'k')
+ax[1,2].plot(abs_init_recon[n//2,:],'b:')
+ax[1,2].plot(abs_recon[n//2,:],'r:')
 ax[1,3].loglog(np.arange(1,len(cost)+1), cost)
 
-ax[2,0].imshow(T2star_short,       vmin = T2star_short.min(), vmax = T2star_short.max())
-ax[2,1].imshow(T2star_long,        vmin = T2star_long.min(),  vmax = T2star_long.max())
-ax[2,2].imshow(T2star_short_recon, vmin = T2star_short.min(), vmax = T2star_short.max())
-ax[2,3].imshow(T2star_long_recon,  vmin = T2star_long.min(),  vmax = T2star_long.max())
+ax[2,0].imshow(T2star_short,       vmin = 0,  vmax = 15)
+ax[2,1].imshow(T2star_long,        vmin = 0,  vmax = 65)
+ax[2,2].imshow(T2star_short_recon, vmin = 0,  vmax = 15)
+ax[2,3].imshow(T2star_long_recon,  vmin = 0,  vmax = 65)
 
 ax[0,0].set_title('ground truth')
 ax[0,1].set_title('init recon (ifft)')
 ax[0,2].set_title('iterative recon')
-ax[0,3].set_axis_off()
+ax[0,3].set_title('readout times (|k|)')
 
 ax[1,3].set_title('cost')
 
