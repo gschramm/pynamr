@@ -82,10 +82,17 @@ n = 128
 
 alg    = 'lbfgs'
 niter  = 20
-beta   = 1e-1
+beta   = 0
 method = 0
 
-time_fac = 3.
+T2star_csf_short = 50
+T2star_csf_long  = 50
+T2star_gm_short  = 3
+T2star_gm_long   = 15
+T2star_wm_short  = 4
+T2star_wm_long   = 18
+
+time_fac = 1.
 
 T2short = -1   # -1 -> inverse crime, float -> constant value
 T2long  = -1   # -1 -> inverse crime, float -> constant value
@@ -120,14 +127,14 @@ lab_regrid = zoom(lab, (n/434,n/434), order = 0, prefilter = False)
 
 # set up array for T2* times
 T2star_short = np.zeros((n,n)) + 1e5
-T2star_short[lab_regrid == 1] = 50.
-T2star_short[lab_regrid == 2] = 3.
-T2star_short[lab_regrid == 3] = 3.
+T2star_short[lab_regrid == 1] = T2star_csf_short
+T2star_short[lab_regrid == 2] = T2star_gm_short
+T2star_short[lab_regrid == 3] = T2star_wm_short
 
 T2star_long = np.zeros((n,n)) + 1e5
-T2star_long[lab_regrid == 1] = 50.
-T2star_long[lab_regrid == 2] = 15.
-T2star_long[lab_regrid == 3] = 15.
+T2star_long[lab_regrid == 1] = T2star_csf_long 
+T2star_long[lab_regrid == 2] = T2star_gm_long
+T2star_long[lab_regrid == 3] = T2star_wm_long
 
 
 #===========================================================================================
@@ -248,7 +255,9 @@ ax[0,1].imshow(abs_init_recon, vmin = 0, vmax = vmax)
 ax[0,2].imshow(abs_recon, vmin = 0, vmax = vmax)
 ax[0,3].plot(readout_times)
 
-ax[1,0].imshow(abs_recon - abs_f, vmin = -0.1*vmax, vmax = 0.1*vmax, cmap = py.cm.bwr)
+ax[1,0].plot(0.6*np.exp(-readout_times/T2star_csf_short) + 0.4*np.exp(-readout_times/T2star_csf_long), label = 'csf')
+ax[1,0].plot(0.6*np.exp(-readout_times/T2star_gm_short) +  0.4*np.exp(-readout_times/T2star_gm_long), label = 'gm')
+ax[1,0].plot(0.6*np.exp(-readout_times/T2star_wm_short) +  0.4*np.exp(-readout_times/T2star_wm_long), label = 'wm')
 ax[1,1].plot(abs_f[:,n//2],'k')
 ax[1,1].plot(abs_init_recon[:,n//2],'b:')
 ax[1,1].plot(abs_recon[:,n//2],'r:')
@@ -257,16 +266,18 @@ ax[1,2].plot(abs_init_recon[n//2,:],'b:')
 ax[1,2].plot(abs_recon[n//2,:],'r:')
 ax[1,3].loglog(np.arange(1,len(cost)+1), cost)
 
-ax[2,0].imshow(T2star_short,       vmin = 0,  vmax = 15)
-ax[2,1].imshow(T2star_long,        vmin = 0,  vmax = 65)
-ax[2,2].imshow(T2star_short_recon, vmin = 0,  vmax = 15)
-ax[2,3].imshow(T2star_long_recon,  vmin = 0,  vmax = 65)
+ax[2,0].imshow(T2star_short,       vmin = 0,  vmax = 55)
+ax[2,1].imshow(T2star_long,        vmin = 0,  vmax = 55)
+ax[2,2].imshow(T2star_short_recon, vmin = 0,  vmax = 55)
+ax[2,3].imshow(T2star_long_recon,  vmin = 0,  vmax = 55)
 
 ax[0,0].set_title('ground truth')
 ax[0,1].set_title('init recon (ifft)')
 ax[0,2].set_title('iterative recon')
 ax[0,3].set_title('readout times (|k|)')
 
+ax[1,0].set_title('signal decay (|k|)')
+ax[1,0].legend()
 ax[1,3].set_title('cost')
 
 ax[2,0].set_title('gt short T2*')
