@@ -4,7 +4,7 @@ def Gamma(k, eta, c1, c2):
   return c1*np.exp(-eta*(k**3)) + c2
 
 def readout_time(k, eta = 0.5387, c1 = 0.54, c2 = 0.46, 
-                    p = 0.4, G = 0.16, gamma = 0.16, Km = 1.8):
+                    p = 0.4, G = 0.16, gamma = 1126, Km = 1.8):
 
   A = c2*(k**3) - (c1/eta)*np.exp(-eta*(k**3)) + (c1/eta)*np.exp(-eta*((p*Km)**3)) - c2*(p*Km)**3
   B = 3*Gamma(p*Km, eta, c1, c2)*(p**2)*(Km**3)
@@ -16,15 +16,15 @@ if __name__ == '__main__':
   import matplotlib.pyplot as py
 
   nk  = 64
-  T2s = 30
-  T2f = 8 
+  T2s = 0.030
+  T2f = 0.008 
 
   rkwargs = {'eta'   : 0.5387, 
              'c1'    : 0.54, 
              'c2'    : 0.46, 
              'p'     : 0.4, 
              'G'     : 0.16, 
-             'gamma' : 0.16, 
+             'gamma' : 1126., 
              'Km'    : 1.8}
 
 
@@ -36,10 +36,10 @@ if __name__ == '__main__':
   fig, ax = py.subplots(1,3, figsize = (9,3))
   ax[0].plot(t,k,'.')
   ax[0].set_xlim((0,None))
-  ax[0].axvline(44, color = 'k')
+  #ax[0].axvline(44, color = 'k')
 
   ax[1].plot(k,t,'.')
-  ax[1].axhline(44, color = 'k')
+  #ax[1].axhline(44, color = 'k')
 
   ax[2].plot(k,decay_env,'.')
 
