@@ -10,9 +10,9 @@ from   matplotlib.colors import LogNorm
 from apodized_fft      import *
 from nearest_neighbors import *
 from bowsher           import *
+from readout_time      import readout_time
 
 from scipy.ndimage import zoom
-from pymirc.image_operations import complex_grad, complex_div
 
 #--------------------------------------------------------------
 def mr_data_fidelity(recon, signal, readout_inds, apo_imgs):
@@ -92,7 +92,7 @@ T2star_gm_long   = 15
 T2star_wm_short  = 4
 T2star_wm_long   = 18
 
-time_fac = 1.
+Kmax     = 1.8     
 
 T2short = -1   # -1 -> inverse crime, float -> constant value
 T2long  = -1   # -1 -> inverse crime, float -> constant value
@@ -147,20 +147,47 @@ tmp    = np.fft.fftfreq(f.shape[0])
 k0, k1 = np.meshgrid(tmp, tmp, indexing = 'ij')
 abs_k  = np.sqrt(k0**2 + k1**2)
 
-# generate array of k-space readout times
-# this is contains the readout time as a function of |k|
-n_readout_bins = 100
-tmp            = time_fac*np.loadtxt('readout_times.csv', delimiter = ',')
-readout_times  = np.interp(np.linspace(0,tmp.max(),n_readout_bins), np.linspace(0,tmp.max(),len(tmp)), tmp)
-readout_ind_array  = (abs_k * (n_readout_bins**2) / abs_k.max()) // n_readout_bins
+# normalize the absolute value of the the k space vector
+# needed for the calculation of the apo images from the read out times
+
+abs_k *= Kmax/abs_k.max()
+
+t_read_2d = 1000*readout_time(abs_k)
+
+n_readout_bins = 64
+dt             = ((t_read_2d.max() - t_read_2d.min()) / n_readout_bins)
+t_read_1d      = t_read_2d.min()  + dt*np.arange(n_readout_bins)
+
+t_read_2d_binned = np.zeros(t_read_2d.shape)
 
 readout_inds = []
 
-for i, t_read in enumerate(readout_times):
-  readout_inds.append(np.where(readout_ind_array == i))
+for i in range(n_readout_bins):
+  t_start = t_read_1d[i]
+  t_end   = t_start + dt
+  if i == (n_readout_bins - 1):
+    rinds   = np.where(np.logical_and(t_read_2d >= t_start,t_read_2d <= t_end))
+  else:
+    rinds   = np.where(np.logical_and(t_read_2d >= t_start,t_read_2d <  t_end))
 
-# generate the signal apodization images
-apo_imgs  = apo_images(readout_times, T2star_short, T2star_long)
+  t_read_2d_binned[rinds] = t_read_1d[i]
+
+  readout_inds.append(rinds)
+
+apo_imgs  = apo_images(t_read_1d, T2star_short, T2star_long)
+
+
+## generate array of k-space readout times
+## this is contains the readout time as a function of |k|
+#tmp            = time_fac*np.loadtxt('readout_times.csv', delimiter = ',')
+#readout_times  = np.interp(np.linspace(0,tmp.max(),n_readout_bins), np.linspace(0,tmp.max(),len(tmp)), tmp)
+#readout_ind_array  = (abs_k * (n_readout_bins**2) / abs_k.max()) // n_readout_bins
+#
+#
+#for i, t_read in enumerate(readout_times):
+#  readout_inds.append(np.where(readout_ind_array == i))
+#
+## generate the signal apodization images
 
 #----------------------------------------------------------
 #--- simulate the signal
@@ -186,8 +213,7 @@ if T2long == -1:
 else :
   T2star_long_recon = np.zeros((n,n)) + T2long
 
-
-apo_imgs_recon = apo_images(readout_times, T2star_short_recon, T2star_long_recon)
+apo_imgs_recon = apo_images(t_read_1d, T2star_short_recon, T2star_long_recon)
 
 init_recon  = np.fft.ifft2(np.squeeze(signal.view(dtype = np.complex128))) * np.sqrt(np.prod(f.shape)) / np.sqrt(4*signal.ndim)
 
@@ -253,11 +279,11 @@ fig, ax = py.subplots(3,4,figsize = (12,9))
 ax[0,0].imshow(abs_f, vmin = 0, vmax = vmax)
 ax[0,1].imshow(abs_init_recon, vmin = 0, vmax = vmax)
 ax[0,2].imshow(abs_recon, vmin = 0, vmax = vmax)
-ax[0,3].plot(readout_times)
+ax[0,3].plot(t_read_1d)
 
-ax[1,0].plot(0.6*np.exp(-readout_times/T2star_csf_short) + 0.4*np.exp(-readout_times/T2star_csf_long), label = 'csf')
-ax[1,0].plot(0.6*np.exp(-readout_times/T2star_gm_short) +  0.4*np.exp(-readout_times/T2star_gm_long), label = 'gm')
-ax[1,0].plot(0.6*np.exp(-readout_times/T2star_wm_short) +  0.4*np.exp(-readout_times/T2star_wm_long), label = 'wm')
+ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_csf_short) + 0.4*np.exp(-t_read_1d/T2star_csf_long), label = 'csf')
+ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_gm_short) +  0.4*np.exp(-t_read_1d/T2star_gm_long), label = 'gm')
+ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_wm_short) +  0.4*np.exp(-t_read_1d/T2star_wm_long), label = 'wm')
 ax[1,1].plot(abs_f[:,n//2],'k')
 ax[1,1].plot(abs_init_recon[:,n//2],'b:')
 ax[1,1].plot(abs_recon[:,n//2],'r:')
