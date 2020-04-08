@@ -80,26 +80,24 @@ def mr_bowsher_grad(recon, recon_shape, signal, readout_inds, apo_imgs, beta, ni
 #--------------------------------------------------------------------------------------
 n = 128
 
-alg    = 'lbfgs'
-niter  = 20
+niter  = 250
 beta   = 0
 method = 0
 
 T2star_csf_short = 50
 T2star_csf_long  = 50
-T2star_gm_short  = 3
+T2star_gm_short  = 8
 T2star_gm_long   = 15
-T2star_wm_short  = 4
+T2star_wm_short  = 9
 T2star_wm_long   = 18
 
-Kmax     = 1.8     
+Kmax = 2.*1.8     
 
-T2short = -1   # -1 -> inverse crime, float -> constant value
-T2long  = -1   # -1 -> inverse crime, float -> constant value
+T2short = 50    # -1 -> inverse crime, float -> constant value
+T2long  = 50   # -1 -> inverse crime, float -> constant value
 
 #--------------------------------------------------------------------------------------
 
-py.ion()
 py.rc('image', cmap='gray')
 
 # load the brain web labels
@@ -177,18 +175,6 @@ for i in range(n_readout_bins):
 apo_imgs  = apo_images(t_read_1d, T2star_short, T2star_long)
 
 
-## generate array of k-space readout times
-## this is contains the readout time as a function of |k|
-#tmp            = time_fac*np.loadtxt('readout_times.csv', delimiter = ',')
-#readout_times  = np.interp(np.linspace(0,tmp.max(),n_readout_bins), np.linspace(0,tmp.max(),len(tmp)), tmp)
-#readout_ind_array  = (abs_k * (n_readout_bins**2) / abs_k.max()) // n_readout_bins
-#
-#
-#for i, t_read in enumerate(readout_times):
-#  readout_inds.append(np.where(readout_ind_array == i))
-#
-## generate the signal apodization images
-
 #----------------------------------------------------------
 #--- simulate the signal
 
@@ -219,6 +205,11 @@ init_recon  = np.fft.ifft2(np.squeeze(signal.view(dtype = np.complex128))) * np.
 
 init_recon  = init_recon.view('(2,)float')
 
+abs_f           = np.linalg.norm(f,axis=-1)
+abs_init_recon  = np.linalg.norm(init_recon,axis=-1)
+abs_init_recon *= abs_f.sum() / abs_init_recon.sum()
+
+#----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
 aimg  = f.max() - f[...,0]
 aimg += 0.001*aimg.max()*np.random.random(aimg.shape)
@@ -233,86 +224,155 @@ ninds  = np.zeros((np.prod(aimg.shape),nnearest), dtype = np.uint32)
 nearest_neighbors(aimg,s,nnearest,ninds)
 ninds2 = is_nearest_neighbor_of(ninds)
 
+#----------------------------------------------------------------------------------------
+# (1) recon without regularization
+
+print('LBFGS recon without regularization')
+noreg_recon       = init_recon.copy()
+noreg_recon_shape = init_recon.shape
+noreg_recon       = noreg_recon.flatten()
+
 cost = []
+cb = lambda x: cost.append(mr_bowsher_cost(x, noreg_recon_shape, signal, readout_inds, 
+                           apo_imgs_recon, 0, ninds, ninds2, method))
 
-cb = lambda x: cost.append(mr_bowsher_cost(x, recon_shape, signal, readout_inds, 
-                           apo_imgs_recon, beta, ninds, ninds2, method))
+res = fmin_l_bfgs_b(mr_bowsher_cost,
+                    noreg_recon, 
+                    fprime = mr_bowsher_grad, 
+                    args = (noreg_recon_shape, signal, readout_inds, apo_imgs_recon, 0, 
+                            ninds, ninds2, method), 
+                    callback = cb,
+                    maxiter = niter, 
+                    disp = 1)
 
-if alg == 'lbfgs' or alg == 'cg':
-  print('starting bfgs')
-  recon       = init_recon.copy()
-  recon_shape = init_recon.shape
-  recon       = recon.flatten()
+noreg_recon     = res[0].reshape(noreg_recon_shape)
+abs_noreg_recon = np.linalg.norm(noreg_recon,axis=-1)
 
-  if alg == 'lbfgs':
-    res = fmin_l_bfgs_b(mr_bowsher_cost,
-                        recon, 
-                        fprime = mr_bowsher_grad, 
-                        args = (recon_shape, signal, readout_inds, apo_imgs_recon, beta, ninds, ninds2, method), 
-                        callback = cb,
-                        maxiter = niter, 
-                        disp = 1)
-    recon = res[0].reshape(recon_shape)
-  elif alg == 'cg':
-    res = fmin_cg(mr_bowsher_cost,
-                  recon, 
-                  fprime = mr_bowsher_grad, 
-                  args = (recon_shape, signal, readout_inds, apo_imgs_recon, beta, ninds, ninds2, method), 
-                  callback = cb,
-                  maxiter = niter, 
-                  disp = 1)
 
-    recon = res.reshape(recon_shape)
+#----------------------------------------------------------------------------------------
+# recon with Bowsher prior
 
-#----------------------------------------------------------
+#-----------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------
+
 #--- plot the results
 
 vmax = 1.2*f.max()
 
-abs_f           = np.linalg.norm(f,axis=-1)
-abs_init_recon  = np.linalg.norm(init_recon,axis=-1)
-abs_init_recon *= abs_f.sum() / abs_init_recon.sum()
+fig1, ax1 = py.subplots(3,4, figsize = (12,9), squeeze = False)
+ax1[0,0].imshow(abs_f,           vmin = 0,  vmax = vmax)
+ax1[0,0].set_title('ground truth')
+ax1[0,1].imshow(abs_init_recon,  vmin = 0,  vmax = vmax)
+ax1[0,1].set_title('|inverse FFT data|')
+ax1[0,2].imshow(abs_noreg_recon, vmin = 0,  vmax = vmax)
+ax1[0,2].set_title('|it. recon no prior|')
+ax1[1,1].imshow(abs_init_recon - abs_f,     vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
+ax1[1,1].set_title('bias |inverse FFT data|')
+ax1[1,2].imshow(abs_noreg_recon - abs_f,    vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
+ax1[1,2].set_title('bias |it. recon no prior|')
+ax1[2,0].imshow(T2star_long,        vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
+ax1[2,0].set_title('data T2* long')
+ax1[2,1].imshow(T2star_short,       vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
+ax1[2,1].set_title('data T2* short')
+ax1[2,2].imshow(T2star_long_recon,  vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
+ax1[2,2].set_title('recon T2* long')
+ax1[2,3].imshow(T2star_short_recon, vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
+ax1[2,3].set_title('recon T2* short')
 
-abs_recon      = np.linalg.norm(recon,axis=-1)
+for axx in ax1.flatten(): axx.set_axis_off()
+fig1.tight_layout()
+fig1.show()
 
-fig, ax = py.subplots(3,4,figsize = (12,9))
-ax[0,0].imshow(abs_f, vmin = 0, vmax = vmax)
-ax[0,1].imshow(abs_init_recon, vmin = 0, vmax = vmax)
-ax[0,2].imshow(abs_recon, vmin = 0, vmax = vmax)
-ax[0,3].plot(t_read_1d)
+# plot the decay envelope
+t = t_read_2d.flatten()
+k = abs_k.flatten()
 
-ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_csf_short) + 0.4*np.exp(-t_read_1d/T2star_csf_long), label = 'csf')
-ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_gm_short) +  0.4*np.exp(-t_read_1d/T2star_gm_long), label = 'gm')
-ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_wm_short) +  0.4*np.exp(-t_read_1d/T2star_wm_long), label = 'wm')
-ax[1,1].plot(abs_f[:,n//2],'k')
-ax[1,1].plot(abs_init_recon[:,n//2],'b:')
-ax[1,1].plot(abs_recon[:,n//2],'r:')
-ax[1,2].plot(abs_f[n//2,:],'k')
-ax[1,2].plot(abs_init_recon[n//2,:],'b:')
-ax[1,2].plot(abs_recon[n//2,:],'r:')
-ax[1,3].loglog(np.arange(1,len(cost)+1), cost)
+fig2, ax2 = py.subplots(3,3, figsize = (9,9), squeeze = False)
+ax2[0,0].plot(k, 0.6*np.exp(-t/T2star_gm_short) + 0.4*np.exp(-t/T2star_gm_long), '.')
+ax2[0,0].set_title('GM')
+ax2[0,1].plot(k, 0.6*np.exp(-t/T2star_wm_short) + 0.4*np.exp(-t/T2star_wm_long), '.')
+ax2[0,1].set_title('WM')
+ax2[0,2].plot(k, 0.6*np.exp(-t/T2star_csf_short)+ 0.4*np.exp(-t/T2star_csf_long), '.')
+ax2[0,2].set_title('CSF')
 
-ax[2,0].imshow(T2star_short,       vmin = 0,  vmax = 55)
-ax[2,1].imshow(T2star_long,        vmin = 0,  vmax = 55)
-ax[2,2].imshow(T2star_short_recon, vmin = 0,  vmax = 55)
-ax[2,3].imshow(T2star_long_recon,  vmin = 0,  vmax = 55)
+if (T2short != -1) and (T2long != -1):
+  ax2[0,0].plot(k, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
+  ax2[0,1].plot(k, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
+  ax2[0,2].plot(k, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
+  
+for axx in ax2[0,:]: 
+  axx.set_xlabel('|k|')
+  axx.set_ylim(0,1)
+ax2[0,0].set_ylabel('decay env')
 
-ax[0,0].set_title('ground truth')
-ax[0,1].set_title('init recon (ifft)')
-ax[0,2].set_title('iterative recon')
-ax[0,3].set_title('readout times (|k|)')
+ax2[1,0].plot(t, 0.6*np.exp(-t/T2star_gm_short) + 0.4*np.exp(-t/T2star_gm_long), '.')
+ax2[1,0].set_title('GM')
+ax2[1,1].plot(t, 0.6*np.exp(-t/T2star_wm_short) + 0.4*np.exp(-t/T2star_wm_long), '.')
+ax2[1,1].set_title('WM')
+ax2[1,2].plot(t, 0.6*np.exp(-t/T2star_csf_short)+ 0.4*np.exp(-t/T2star_csf_long), '.')
+ax2[1,2].set_title('CSF')
 
-ax[1,0].set_title('signal decay (|k|)')
-ax[1,0].legend()
-ax[1,3].set_title('cost')
+if (T2short != -1) and (T2long != -1):
+  ax2[1,0].plot(t, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
+  ax2[1,1].plot(t, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
+  ax2[1,2].plot(t, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
 
-ax[2,0].set_title('gt short T2*')
-ax[2,1].set_title('gt long T2*')
-ax[2,2].set_title('recon short T2*')
-ax[2,3].set_title('recon long T2*')
+for axx in ax2[1,:]: 
+  axx.set_xlabel('t')
+  axx.set_ylim(0,1)
+ax2[1,0].set_ylabel('decay env')
 
-fig.tight_layout()
-fig.show()
+ax2[2,0].plot(t, k, '.')
+ax2[2,0].set_xlabel('t')
+ax2[2,0].set_ylabel('|k|')
+
+ax2[2,1].semilogy(np.arange(len(cost)) + 1, cost, '.')
+ax2[2,1].set_xlabel('iteration')
+ax2[2,1].set_ylabel('cost')
+
+
+ax2[2,2].set_axis_off()
+
+for axx in ax2.flatten(): 
+  axx.grid(ls = ':')
+fig2.tight_layout()
+fig2.show()
+
+#fig, ax = py.subplots(3,4,figsize = (12,9))
+#ax[0,2].imshow(abs_recon, vmin = 0, vmax = vmax)
+#ax[0,3].plot(t_read_1d)
+#
+#ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_csf_short) + 0.4*np.exp(-t_read_1d/T2star_csf_long), label = 'csf')
+#ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_gm_short) +  0.4*np.exp(-t_read_1d/T2star_gm_long), label = 'gm')
+#ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_wm_short) +  0.4*np.exp(-t_read_1d/T2star_wm_long), label = 'wm')
+#ax[1,1].plot(abs_f[:,n//2],'k')
+#ax[1,1].plot(abs_init_recon[:,n//2],'b:')
+#ax[1,1].plot(abs_recon[:,n//2],'r:')
+#ax[1,2].plot(abs_f[n//2,:],'k')
+#ax[1,2].plot(abs_init_recon[n//2,:],'b:')
+#ax[1,2].plot(abs_recon[n//2,:],'r:')
+#ax[1,3].loglog(np.arange(1,len(cost)+1), cost)
+#
+#ax[2,0].imshow(T2star_short,       vmin = 0,  vmax = 55)
+#ax[2,1].imshow(T2star_long,        vmin = 0,  vmax = 55)
+#ax[2,2].imshow(T2star_short_recon, vmin = 0,  vmax = 55)
+#ax[2,3].imshow(T2star_long_recon,  vmin = 0,  vmax = 55)
+#
+#ax[0,0].set_title('ground truth')
+#ax[0,1].set_title('init recon (ifft)')
+#ax[0,2].set_title('iterative recon')
+#ax[0,3].set_title('readout times (|k|)')
+#
+#ax[1,0].set_title('signal decay (|k|)')
+#ax[1,0].legend()
+#ax[1,3].set_title('cost')
+#
+#ax[2,0].set_title('gt short T2*')
+#ax[2,1].set_title('gt long T2*')
+#ax[2,2].set_title('recon short T2*')
+#ax[2,3].set_title('recon long T2*')
+#
 
 
 
