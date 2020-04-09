@@ -216,12 +216,12 @@ signal += noise_level*(np.random.randn(*signal.shape))
 if T2star_recon_short == -1:
   T2star_short_recon = T2star_short.copy()
 else :
-  T2star_short_recon = np.zeros((n,n)) + T2star_short
+  T2star_short_recon = np.zeros((n,n)) + T2star_recon_short
 
 if T2star_recon_long == -1:
   T2star_long_recon = T2star_long.copy()
 else :
-  T2star_long_recon = np.zeros((n,n)) + T2star_long
+  T2star_long_recon = np.zeros((n,n)) + T2star_recon_long
 
 apo_imgs_recon = apo_images(t_read_1d, T2star_short_recon, T2star_long_recon)
 
@@ -276,27 +276,27 @@ abs_noreg_recon_ps = gaussian_filter(abs_noreg_recon, sm_fwhm/2.35)
 
 #----------------------------------------------------------------------------------------
 # (2) recon with Bowsher prior
-
-print('LBFGS recon without regularization')
-bow_recon       = init_recon.copy()
-bow_recon_shape = init_recon.shape
-bow_recon       = bow_recon.flatten()
-
-bow_cost = []
-bow_cb   = lambda x: bow_cost.append(mr_bowsher_cost(x, bow_recon_shape, signal, readout_inds, 
-                                    apo_imgs_recon, beta, ninds, ninds2, method))
-
-res = fmin_l_bfgs_b(mr_bowsher_cost,
-                    bow_recon, 
-                    fprime = mr_bowsher_grad, 
-                    args = (bow_recon_shape, signal, readout_inds, apo_imgs_recon, beta, 
-                            ninds, ninds2, method), 
-                    callback = bow_cb,
-                    maxiter = niter, 
-                    disp = 1)
-
-bow_recon     = res[0].reshape(bow_recon_shape)
-abs_bow_recon = np.linalg.norm(bow_recon,axis=-1)
+if beta > 0:
+  print('LBFGS recon without regularization')
+  bow_recon       = init_recon.copy()
+  bow_recon_shape = init_recon.shape
+  bow_recon       = bow_recon.flatten()
+  
+  bow_cost = []
+  bow_cb   = lambda x: bow_cost.append(mr_bowsher_cost(x, bow_recon_shape, signal, readout_inds, 
+                                      apo_imgs_recon, beta, ninds, ninds2, method))
+  
+  res = fmin_l_bfgs_b(mr_bowsher_cost,
+                      bow_recon, 
+                      fprime = mr_bowsher_grad, 
+                      args = (bow_recon_shape, signal, readout_inds, apo_imgs_recon, beta, 
+                              ninds, ninds2, method), 
+                      callback = bow_cb,
+                      maxiter = niter, 
+                      disp = 1)
+  
+  bow_recon     = res[0].reshape(bow_recon_shape)
+  abs_bow_recon = np.linalg.norm(bow_recon,axis=-1)
 
 
 #-----------------------------------------------------------------------------------------
@@ -360,10 +360,10 @@ ax2[0,1].set_title('WM')
 ax2[0,2].plot(k, 0.6*np.exp(-t/T2star_csf_short)+ 0.4*np.exp(-t/T2star_csf_long), '.')
 ax2[0,2].set_title('CSF')
 
-if (T2star_recon_short != -1) and (T2star_long != -1):
-  ax2[0,0].plot(k, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.', label = 'recon')
-  ax2[0,1].plot(k, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
-  ax2[0,2].plot(k, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
+if (T2star_recon_short != -1) and (T2star_recon_long != -1):
+  ax2[0,0].plot(k, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_recon_long), '.', label = 'recon')
+  ax2[0,1].plot(k, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_recon_long), '.')
+  ax2[0,2].plot(k, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_recon_long), '.')
   
 for axx in ax2[0,:]: 
   axx.set_xlabel('|k|')
@@ -377,10 +377,10 @@ ax2[1,1].set_title('WM')
 ax2[1,2].plot(t, 0.6*np.exp(-t/T2star_csf_short)+ 0.4*np.exp(-t/T2star_csf_long), '.')
 ax2[1,2].set_title('CSF')
 
-if (T2star_recon_short != -1) and (T2star_long != -1):
-  ax2[1,0].plot(t, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
-  ax2[1,1].plot(t, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
-  ax2[1,2].plot(t, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
+if (T2star_recon_short != -1) and (T2star_recon_long != -1):
+  ax2[1,0].plot(t, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_recon_long), '.')
+  ax2[1,1].plot(t, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_recon_long), '.')
+  ax2[1,2].plot(t, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_recon_long), '.')
 
 for axx in ax2[1,:]: 
   axx.set_xlabel('t')
@@ -418,6 +418,3 @@ fig2.suptitle(', '.join([x[0] + ':' + str(x[1]) for x in args.__dict__.items()])
 fig2.tight_layout(pad = 3)
 fig2.savefig(os.path.join('figs', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]) + '_f2.png'))
 fig2.show()
-
-
-
