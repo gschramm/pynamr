@@ -87,6 +87,7 @@ parser.add_argument('--Kmax',                default =  1.8, type = float)
 parser.add_argument('--T2star_recon_short',  default = -1,   type = float)
 parser.add_argument('--T2star_recon_long',   default = -1,   type = float)
 parser.add_argument('--beta',                default =   0,  type = float)
+parser.add_argument('--sm_fwhm',             default = 1.5,  type = float)
 parser.add_argument('--noise_level',         default =   0,  type = float)
 
 parser.add_argument('--n',           default = 128,  type = int)
@@ -107,6 +108,7 @@ n = args.n
 
 niter       = args.niter
 beta        = args.beta
+sm_fwhm     = args.sm_fwhm
 method      = args.method
 noise_level = args.noise_level
 
@@ -179,23 +181,20 @@ abs_k *= Kmax/abs_k.max()
 t_read_2d = 1000*readout_time(abs_k)
 
 n_readout_bins = 64
-dt             = ((t_read_2d.max() - t_read_2d.min()) / n_readout_bins)
-t_read_1d      = t_read_2d.min()  + dt*np.arange(n_readout_bins)
 
-t_read_2d_binned = np.zeros(t_read_2d.shape)
+k_1d = np.linspace(0,abs_k.max(), n_readout_bins + 1)
 
 readout_inds = []
+t_read_1d    = np.zeros(n_readout_bins)
+t_read_2d_binned = np.zeros(t_read_2d.shape)
 
 for i in range(n_readout_bins):
-  t_start = t_read_1d[i]
-  t_end   = t_start + dt
-  if i == (n_readout_bins - 1):
-    rinds   = np.where(np.logical_and(t_read_2d >= t_start,t_read_2d <= t_end))
-  else:
-    rinds   = np.where(np.logical_and(t_read_2d >= t_start,t_read_2d <  t_end))
+  k_start = k_1d[i]
+  k_end   = k_1d[i+1]
+  rinds   = np.where(np.logical_and(abs_k >= k_start, abs_k <= k_end))
 
+  t_read_1d[i] = t_read_2d[rinds].mean()
   t_read_2d_binned[rinds] = t_read_1d[i]
-
   readout_inds.append(rinds)
 
 apo_imgs  = apo_images(t_read_1d, T2star_short, T2star_long)
@@ -212,7 +211,7 @@ signal += noise_level*(np.random.randn(*signal.shape))
 #----------------------------------------------------------
 #----------------------------------------------------------
 #----------------------------------------------------------
-#--- do the recon
+#--- do recons
 
 if T2star_recon_short == -1:
   T2star_short_recon = T2star_short.copy()
@@ -236,7 +235,7 @@ abs_init_recon *= abs_f.sum() / abs_init_recon.sum()
 
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
-aimg  = f.max() - f[...,0]
+aimg  = (f.max() - f[...,0])**0.8
 aimg += 0.001*aimg.max()*np.random.random(aimg.shape)
 
 # beta = 1e-4 reasonable for inverse crime
@@ -270,12 +269,35 @@ res = fmin_l_bfgs_b(mr_bowsher_cost,
                     maxiter = niter, 
                     disp = 1)
 
-noreg_recon     = res[0].reshape(noreg_recon_shape)
-abs_noreg_recon = np.linalg.norm(noreg_recon,axis=-1)
+noreg_recon        = res[0].reshape(noreg_recon_shape)
+abs_noreg_recon    = np.linalg.norm(noreg_recon,axis=-1)
+abs_noreg_recon_ps = gaussian_filter(abs_noreg_recon, sm_fwhm/2.35)
 
 
 #----------------------------------------------------------------------------------------
-# recon with Bowsher prior
+# (2) recon with Bowsher prior
+
+print('LBFGS recon without regularization')
+bow_recon       = init_recon.copy()
+bow_recon_shape = init_recon.shape
+bow_recon       = bow_recon.flatten()
+
+bow_cost = []
+bow_cb   = lambda x: bow_cost.append(mr_bowsher_cost(x, bow_recon_shape, signal, readout_inds, 
+                                    apo_imgs_recon, beta, ninds, ninds2, method))
+
+res = fmin_l_bfgs_b(mr_bowsher_cost,
+                    bow_recon, 
+                    fprime = mr_bowsher_grad, 
+                    args = (bow_recon_shape, signal, readout_inds, apo_imgs_recon, beta, 
+                            ninds, ninds2, method), 
+                    callback = bow_cb,
+                    maxiter = niter, 
+                    disp = 1)
+
+bow_recon     = res[0].reshape(bow_recon_shape)
+abs_bow_recon = np.linalg.norm(bow_recon,axis=-1)
+
 
 #-----------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------
@@ -293,17 +315,23 @@ ax1[0,1].set_title('|inverse FFT data|')
 ax1[0,2].imshow(abs_noreg_recon, vmin = 0,  vmax = vmax)
 ax1[0,2].set_title('|it. recon no prior|')
 if beta == 0:
-  ax1[0,3].imshow(gaussian_filter(abs_noreg_recon, 0.6), vmin = 0,  vmax = vmax)
+  ax1[0,3].imshow(abs_noreg_recon_ps, vmin = 0,  vmax = vmax)
   ax1[0,3].set_title('ps |it. recon no prior|')
+else:
+  ax1[0,3].imshow(abs_bow_recon, vmin = 0,  vmax = vmax)
+  ax1[0,3].set_title(f'|it. recon bow beta {beta}|')
 
 ax1[1,1].imshow(abs_init_recon - abs_f,     vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
 ax1[1,1].set_title('bias |inverse FFT data|')
 ax1[1,2].imshow(abs_noreg_recon - abs_f,    vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
 ax1[1,2].set_title('bias |it. recon no prior|')
 if beta == 0:
-  ax1[1,3].imshow(gaussian_filter(abs_noreg_recon, 0.6) - abs_f, vmin = -0.2*vmax, 
+  ax1[1,3].imshow(abs_noreg_recon_ps - abs_f, vmin = -0.2*vmax, 
                   vmax = 0.2*vmax, cmap = py.cm.bwr)
   ax1[1,3].set_title('bias ps |it. recon no prior|')
+else:  
+  ax1[1,3].imshow(abs_bow_recon - abs_f, vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
+  ax1[1,3].set_title(f'bias |it. recon bow beta {beta}|')
 
 ax1[2,0].imshow(T2star_long,        vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
 ax1[2,0].set_title('data T2* long')
@@ -364,13 +392,20 @@ ax2[2,0].set_xlabel('t')
 ax2[2,0].set_ylabel('|k|')
 
 ax2[2,1].semilogy(np.arange(len(cost)) + 1, cost, '.')
+if beta > 0:
+  ax2[2,1].semilogy(np.arange(len(bow_cost)) + 1, bow_cost, '.')
 ax2[2,1].set_xlabel('iteration')
 ax2[2,1].set_ylabel('cost')
 
-ax2[2,2].plot(abs_f[n//2,:], 'k', label = 'gt')
-ax2[2,2].plot(abs_init_recon[n//2,:], 'r--', label = 'ifft')
-ax2[2,2].plot(abs_noreg_recon[n//2,:], 'b--', label = 'it. no p.')
-ax2[2,2].set_ylim(0.6,1.5)
+ax2[2,2].plot(abs_f[n//2,60:110], 'k', label = 'gt')
+ax2[2,2].plot(abs_init_recon[n//2,60:110], 'r--', label = 'ifft')
+if noise_level == 0:
+  ax2[2,2].plot(abs_noreg_recon[n//2,60:110], 'g--', label = 'it. no p.')
+else:
+  ax2[2,2].plot(abs_noreg_recon_ps[n//2,60:110], 'g--', label = 'ps it. no p.')
+if beta > 0:
+  ax2[2,2].plot(abs_bow_recon[n//2,60:110], 'b--', label = 'it. bow')
+ax2[2,2].set_ylim(0.6,1.4)
 ax2[2,2].set_title('line profile')
 
 ax2[0,0].legend()
