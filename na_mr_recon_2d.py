@@ -1,5 +1,4 @@
 # small demo script to verify implementation of discrete FT (with FFT)
-# TODO: correct k-space sampling (not distance from center ...)
 
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
@@ -78,23 +77,48 @@ def mr_bowsher_grad(recon, recon_shape, signal, readout_inds, apo_imgs, beta, ni
 #--------------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------------
-n = 128
+# parse the command line
+from argparse import ArgumentParser
 
-niter  = 250
-beta   = 0
-method = 0
+parser = ArgumentParser(description = 'Train APETNET')
+parser.add_argument('--n',           default = 128,  type = int)
+parser.add_argument('--niter',       default = 100,  type = int)
+parser.add_argument('--beta',        default =   0,  type = float)
+parser.add_argument('--method',      default =   0,  type = int, choices = [0,1])
+parser.add_argument('--noise_level', default =   0,  type = float)
+parser.add_argument('--Kmax',        default =  1.8, type = float)
 
-T2star_csf_short = 50
-T2star_csf_long  = 50
-T2star_gm_short  = 8
-T2star_gm_long   = 15
-T2star_wm_short  = 9
-T2star_wm_long   = 18
+parser.add_argument('--T2star_csf_short', default = 50, type = float)
+parser.add_argument('--T2star_csf_long',  default = 50, type = float)
+parser.add_argument('--T2star_gm_short',  default = 8,  type = float)
+parser.add_argument('--T2star_gm_long',   default = 15, type = float)
+parser.add_argument('--T2star_wm_short',  default = 9,  type = float)
+parser.add_argument('--T2star_wm_long',   default = 18, type = float)
 
-Kmax = 2.*1.8     
+parser.add_argument('--T2star_recon_short',     default = -1,  type = float)
+parser.add_argument('--T2star_recon_long',      default = -1, type = float)
 
-T2short = 50    # -1 -> inverse crime, float -> constant value
-T2long  = 50   # -1 -> inverse crime, float -> constant value
+args = parser.parse_args()
+
+# input parameters
+n = args.n
+
+niter       = args.niter
+beta        = args.beta
+method      = args.method
+noise_level = args.noise_level
+
+T2star_csf_short = args.T2star_csf_short
+T2star_csf_long  = args.T2star_csf_long 
+T2star_gm_short  = args.T2star_gm_short 
+T2star_gm_long   = args.T2star_gm_long  
+T2star_wm_short  = args.T2star_wm_short 
+T2star_wm_long   = args.T2star_wm_long  
+
+Kmax = args.Kmax
+
+T2star_recon_short = args.T2star_recon_short   # -1 -> inverse crime, float -> constant value
+T2star_recon_long  = args.T2star_recon_long    # -1 -> inverse crime, float -> constant value
 
 #--------------------------------------------------------------------------------------
 
@@ -181,7 +205,6 @@ apo_imgs  = apo_images(t_read_1d, T2star_short, T2star_long)
 signal = apodized_fft(f, readout_inds, apo_imgs)
 
 # add noise to signal
-noise_level = 0 # 1e0 
 signal += noise_level*(np.random.randn(*signal.shape))
 
 #----------------------------------------------------------
@@ -189,15 +212,15 @@ signal += noise_level*(np.random.randn(*signal.shape))
 #----------------------------------------------------------
 #--- do the recon
 
-if T2short == -1:
+if T2star_recon_short == -1:
   T2star_short_recon = T2star_short.copy()
 else :
-  T2star_short_recon = np.zeros((n,n)) + T2short
+  T2star_short_recon = np.zeros((n,n)) + T2star_short
 
-if T2long == -1:
+if T2star_recon_long == -1:
   T2star_long_recon = T2star_long.copy()
 else :
-  T2star_long_recon = np.zeros((n,n)) + T2long
+  T2star_long_recon = np.zeros((n,n)) + T2star_long
 
 apo_imgs_recon = apo_images(t_read_1d, T2star_short_recon, T2star_long_recon)
 
@@ -281,25 +304,27 @@ ax1[2,3].imshow(T2star_short_recon, vmin = T2star_gm_short, vmax = 1.1*T2star_cs
 ax1[2,3].set_title('recon T2* short')
 
 for axx in ax1.flatten(): axx.set_axis_off()
-fig1.tight_layout()
+fig1.suptitle(', '.join([x[0] + ':' + str(x[1]) for x in args.__dict__.items()]), fontsize = 'x-small')
+fig1.tight_layout(pad = 3)
+fig1.savefig('fig1.png')
 fig1.show()
 
 # plot the decay envelope
 t = t_read_2d.flatten()
 k = abs_k.flatten()
 
-fig2, ax2 = py.subplots(3,3, figsize = (9,9), squeeze = False)
-ax2[0,0].plot(k, 0.6*np.exp(-t/T2star_gm_short) + 0.4*np.exp(-t/T2star_gm_long), '.')
+fig2, ax2 = py.subplots(3,3, figsize = (12,9), squeeze = False)
+ax2[0,0].plot(k, 0.6*np.exp(-t/T2star_gm_short) + 0.4*np.exp(-t/T2star_gm_long), '.', label = 'data')
 ax2[0,0].set_title('GM')
 ax2[0,1].plot(k, 0.6*np.exp(-t/T2star_wm_short) + 0.4*np.exp(-t/T2star_wm_long), '.')
 ax2[0,1].set_title('WM')
 ax2[0,2].plot(k, 0.6*np.exp(-t/T2star_csf_short)+ 0.4*np.exp(-t/T2star_csf_long), '.')
 ax2[0,2].set_title('CSF')
 
-if (T2short != -1) and (T2long != -1):
-  ax2[0,0].plot(k, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
-  ax2[0,1].plot(k, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
-  ax2[0,2].plot(k, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
+if (T2star_recon_short != -1) and (T2star_long != -1):
+  ax2[0,0].plot(k, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.', label = 'recon')
+  ax2[0,1].plot(k, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
+  ax2[0,2].plot(k, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
   
 for axx in ax2[0,:]: 
   axx.set_xlabel('|k|')
@@ -313,10 +338,10 @@ ax2[1,1].set_title('WM')
 ax2[1,2].plot(t, 0.6*np.exp(-t/T2star_csf_short)+ 0.4*np.exp(-t/T2star_csf_long), '.')
 ax2[1,2].set_title('CSF')
 
-if (T2short != -1) and (T2long != -1):
-  ax2[1,0].plot(t, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
-  ax2[1,1].plot(t, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
-  ax2[1,2].plot(t, 0.6*np.exp(-t/T2short) + 0.4*np.exp(-t/T2long), '.')
+if (T2star_recon_short != -1) and (T2star_long != -1):
+  ax2[1,0].plot(t, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
+  ax2[1,1].plot(t, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
+  ax2[1,2].plot(t, 0.6*np.exp(-t/T2star_recon_short) + 0.4*np.exp(-t/T2star_long), '.')
 
 for axx in ax2[1,:]: 
   axx.set_xlabel('t')
@@ -331,48 +356,22 @@ ax2[2,1].semilogy(np.arange(len(cost)) + 1, cost, '.')
 ax2[2,1].set_xlabel('iteration')
 ax2[2,1].set_ylabel('cost')
 
+ax2[2,2].plot(abs_f[n//2,:], 'k', label = 'gt')
+ax2[2,2].plot(abs_init_recon[n//2,:], 'r--', label = 'ifft')
+ax2[2,2].plot(abs_noreg_recon[n//2,:], 'b--', label = 'it. no p.')
+ax2[2,2].set_ylim(0.6,1.5)
+ax2[2,2].set_title('line profile')
 
-ax2[2,2].set_axis_off()
+ax2[0,0].legend()
+ax2[2,2].legend()
 
 for axx in ax2.flatten(): 
   axx.grid(ls = ':')
-fig2.tight_layout()
-fig2.show()
 
-#fig, ax = py.subplots(3,4,figsize = (12,9))
-#ax[0,2].imshow(abs_recon, vmin = 0, vmax = vmax)
-#ax[0,3].plot(t_read_1d)
-#
-#ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_csf_short) + 0.4*np.exp(-t_read_1d/T2star_csf_long), label = 'csf')
-#ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_gm_short) +  0.4*np.exp(-t_read_1d/T2star_gm_long), label = 'gm')
-#ax[1,0].plot(0.6*np.exp(-t_read_1d/T2star_wm_short) +  0.4*np.exp(-t_read_1d/T2star_wm_long), label = 'wm')
-#ax[1,1].plot(abs_f[:,n//2],'k')
-#ax[1,1].plot(abs_init_recon[:,n//2],'b:')
-#ax[1,1].plot(abs_recon[:,n//2],'r:')
-#ax[1,2].plot(abs_f[n//2,:],'k')
-#ax[1,2].plot(abs_init_recon[n//2,:],'b:')
-#ax[1,2].plot(abs_recon[n//2,:],'r:')
-#ax[1,3].loglog(np.arange(1,len(cost)+1), cost)
-#
-#ax[2,0].imshow(T2star_short,       vmin = 0,  vmax = 55)
-#ax[2,1].imshow(T2star_long,        vmin = 0,  vmax = 55)
-#ax[2,2].imshow(T2star_short_recon, vmin = 0,  vmax = 55)
-#ax[2,3].imshow(T2star_long_recon,  vmin = 0,  vmax = 55)
-#
-#ax[0,0].set_title('ground truth')
-#ax[0,1].set_title('init recon (ifft)')
-#ax[0,2].set_title('iterative recon')
-#ax[0,3].set_title('readout times (|k|)')
-#
-#ax[1,0].set_title('signal decay (|k|)')
-#ax[1,0].legend()
-#ax[1,3].set_title('cost')
-#
-#ax[2,0].set_title('gt short T2*')
-#ax[2,1].set_title('gt long T2*')
-#ax[2,2].set_title('recon short T2*')
-#ax[2,3].set_title('recon long T2*')
-#
+fig2.suptitle(', '.join([x[0] + ':' + str(x[1]) for x in args.__dict__.items()]), fontsize = 'x-small')
+fig2.tight_layout(pad = 3)
+fig2.savefig('fig2.png')
+fig2.show()
 
 
 
