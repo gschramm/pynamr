@@ -1,5 +1,6 @@
 # small demo script to verify implementation of discrete FT (with FFT)
 
+import os
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
 
@@ -11,7 +12,7 @@ from nearest_neighbors import *
 from bowsher           import *
 from readout_time      import readout_time
 
-from scipy.ndimage import zoom
+from scipy.ndimage import zoom, gaussian_filter
 
 #--------------------------------------------------------------
 def mr_data_fidelity(recon, signal, readout_inds, apo_imgs):
@@ -81,12 +82,16 @@ def mr_bowsher_grad(recon, recon_shape, signal, readout_inds, apo_imgs, beta, ni
 from argparse import ArgumentParser
 
 parser = ArgumentParser(description = 'Train APETNET')
+
+parser.add_argument('--Kmax',                default =  1.8, type = float)
+parser.add_argument('--T2star_recon_short',  default = -1,   type = float)
+parser.add_argument('--T2star_recon_long',   default = -1,   type = float)
+parser.add_argument('--beta',                default =   0,  type = float)
+parser.add_argument('--noise_level',         default =   0,  type = float)
+
 parser.add_argument('--n',           default = 128,  type = int)
-parser.add_argument('--niter',       default = 100,  type = int)
-parser.add_argument('--beta',        default =   0,  type = float)
+parser.add_argument('--niter',       default = 500,  type = int)
 parser.add_argument('--method',      default =   0,  type = int, choices = [0,1])
-parser.add_argument('--noise_level', default =   0,  type = float)
-parser.add_argument('--Kmax',        default =  1.8, type = float)
 
 parser.add_argument('--T2star_csf_short', default = 50, type = float)
 parser.add_argument('--T2star_csf_long',  default = 50, type = float)
@@ -94,9 +99,6 @@ parser.add_argument('--T2star_gm_short',  default = 8,  type = float)
 parser.add_argument('--T2star_gm_long',   default = 15, type = float)
 parser.add_argument('--T2star_wm_short',  default = 9,  type = float)
 parser.add_argument('--T2star_wm_long',   default = 18, type = float)
-
-parser.add_argument('--T2star_recon_short',     default = -1,  type = float)
-parser.add_argument('--T2star_recon_long',      default = -1, type = float)
 
 args = parser.parse_args()
 
@@ -290,10 +292,19 @@ ax1[0,1].imshow(abs_init_recon,  vmin = 0,  vmax = vmax)
 ax1[0,1].set_title('|inverse FFT data|')
 ax1[0,2].imshow(abs_noreg_recon, vmin = 0,  vmax = vmax)
 ax1[0,2].set_title('|it. recon no prior|')
+if beta == 0:
+  ax1[0,3].imshow(gaussian_filter(abs_noreg_recon, 0.6), vmin = 0,  vmax = vmax)
+  ax1[0,3].set_title('ps |it. recon no prior|')
+
 ax1[1,1].imshow(abs_init_recon - abs_f,     vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
 ax1[1,1].set_title('bias |inverse FFT data|')
 ax1[1,2].imshow(abs_noreg_recon - abs_f,    vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
 ax1[1,2].set_title('bias |it. recon no prior|')
+if beta == 0:
+  ax1[1,3].imshow(gaussian_filter(abs_noreg_recon, 0.6) - abs_f, vmin = -0.2*vmax, 
+                  vmax = 0.2*vmax, cmap = py.cm.bwr)
+  ax1[1,3].set_title('bias ps |it. recon no prior|')
+
 ax1[2,0].imshow(T2star_long,        vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
 ax1[2,0].set_title('data T2* long')
 ax1[2,1].imshow(T2star_short,       vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
@@ -306,7 +317,7 @@ ax1[2,3].set_title('recon T2* short')
 for axx in ax1.flatten(): axx.set_axis_off()
 fig1.suptitle(', '.join([x[0] + ':' + str(x[1]) for x in args.__dict__.items()]), fontsize = 'x-small')
 fig1.tight_layout(pad = 3)
-fig1.savefig('fig1.png')
+fig1.savefig(os.path.join('figs', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]) + '_f1.png'))
 fig1.show()
 
 # plot the decay envelope
@@ -370,7 +381,7 @@ for axx in ax2.flatten():
 
 fig2.suptitle(', '.join([x[0] + ':' + str(x[1]) for x in args.__dict__.items()]), fontsize = 'x-small')
 fig2.tight_layout(pad = 3)
-fig2.savefig('fig2.png')
+fig2.savefig(os.path.join('figs', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]) + '_f2.png'))
 fig2.show()
 
 
