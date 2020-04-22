@@ -103,7 +103,7 @@ py.ion()
 py.rc('image', cmap='gray')
 
 # load the brain web labels
-data = np.load('54.npz')
+data = np.load('./data/54.npz')
 t1     = data['arr_0']
 labels = data['arr_1']
 lab    = np.pad(labels[:,:,132].transpose(), ((0,0),(36,36)),'constant')

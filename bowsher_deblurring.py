@@ -65,7 +65,7 @@ method      = 0
 
 #-----------------------------------------------------------------------------------------------
 # load the brain web labels
-data  = np.load('54.npz')
+data  = np.load('./data/54.npz')
 gt    = data['arr_0'][...,70:75]
 #gt    = data['arr_0'][...,75]
 aimg  = (gt.max() - gt)**0.5
