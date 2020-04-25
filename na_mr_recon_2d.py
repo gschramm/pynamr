@@ -1,5 +1,6 @@
 # small demo script to verify implementation of discrete FT (with FFT)
 
+import h5py
 import os
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
@@ -119,7 +120,9 @@ T2star_gm_long   = args.T2star_gm_long
 T2star_wm_short  = args.T2star_wm_short 
 T2star_wm_long   = args.T2star_wm_long  
 
-Kmax = args.Kmax
+save_recons  = True
+Kmax         = args.Kmax
+add_B0_inhom = True
 
 T2star_recon_short = args.T2star_recon_short   # -1 -> inverse crime, float -> constant value
 T2star_recon_long  = args.T2star_recon_long    # -1 -> inverse crime, float -> constant value
@@ -162,6 +165,13 @@ T2star_long[lab_regrid == 1] = T2star_csf_long
 T2star_long[lab_regrid == 2] = T2star_gm_long
 T2star_long[lab_regrid == 3] = T2star_wm_long
 
+# add a region that has short T2 times due to B0 inhomgen.
+if add_B0_inhom:
+  x0, x1 = np.meshgrid(np.arange(n),np.arange(n), indexing = 'ij')
+  w      = gaussian_filter((np.sqrt((x0 - 22)**2 + (x1 - 64)**2) <= 14).astype(float), 1.5)
+  
+  T2star_short = (1 - w)*T2star_short + 6*w
+  T2star_long  = (1 - w)*T2star_long  + 11*w
 
 #===========================================================================================
 
@@ -277,7 +287,7 @@ abs_noreg_recon_ps = gaussian_filter(abs_noreg_recon, sm_fwhm/2.35)
 #----------------------------------------------------------------------------------------
 # (2) recon with Bowsher prior
 if beta > 0:
-  print('LBFGS recon without regularization')
+  print('LBFGS recon with regularization')
   bow_recon       = init_recon.copy()
   bow_recon_shape = init_recon.shape
   bow_recon       = bow_recon.flatten()
@@ -298,6 +308,20 @@ if beta > 0:
   bow_recon     = res[0].reshape(bow_recon_shape)
   abs_bow_recon = np.linalg.norm(bow_recon,axis=-1)
 
+#-----------------------------------------------------------------------------------------
+# save the recons
+if save_recons:
+  output_file = os.path.join('data','recons', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]) + '.h5')
+  with h5py.File(output_file, 'w') as hf:
+    grp = hf.create_group('images')
+    grp.create_dataset('ifft_recon',   data = init_recon)
+    grp.create_dataset('noreg_recon',  data = noreg_recon)
+    grp.create_dataset('bow_recon',    data = bow_recon)
+    grp.create_dataset('ground_truth', data = f)
+    grp.create_dataset('T2star_long',  data = T2star_long)
+    grp.create_dataset('T2star_short', data = T2star_short)
+    grp.create_dataset('T2star_long_recon',  data = T2star_long_recon)
+    grp.create_dataset('T2star_short_recon', data = T2star_short_recon)
 
 #-----------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------
@@ -333,13 +357,13 @@ else:
   ax1[1,3].imshow(abs_bow_recon - abs_f, vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
   ax1[1,3].set_title(f'bias |it. recon bow beta {beta}|')
 
-ax1[2,0].imshow(T2star_long,        vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
+ax1[2,0].imshow(T2star_long,        vmin = T2star_gm_short, vmax = 1.5*T2star_gm_long)
 ax1[2,0].set_title('data T2* long')
-ax1[2,1].imshow(T2star_short,       vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
+ax1[2,1].imshow(T2star_short,       vmin = T2star_gm_short, vmax = 1.5*T2star_gm_short)
 ax1[2,1].set_title('data T2* short')
-ax1[2,2].imshow(T2star_long_recon,  vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
+ax1[2,2].imshow(T2star_long_recon,  vmin = T2star_gm_short, vmax = 1.5*T2star_gm_long)
 ax1[2,2].set_title('recon T2* long')
-ax1[2,3].imshow(T2star_short_recon, vmin = T2star_gm_short, vmax = 1.1*T2star_csf_long)
+ax1[2,3].imshow(T2star_short_recon, vmin = T2star_gm_short, vmax = 1.5*T2star_gm_short)
 ax1[2,3].set_title('recon T2* short')
 
 for axx in ax1.flatten(): axx.set_axis_off()
