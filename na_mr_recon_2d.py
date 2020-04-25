@@ -16,25 +16,26 @@ from readout_time      import readout_time
 from scipy.ndimage import zoom, gaussian_filter
 
 #--------------------------------------------------------------
-def mr_data_fidelity(recon, signal, readout_inds, apo_imgs):
+def mr_data_fidelity(recon, signal, readout_inds, apo_imgs, kmask):
 
-  exp_data = apodized_fft(recon, readout_inds, apo_imgs)
+  exp_data = apodized_fft(recon, readout_inds, apo_imgs)*kmask
   diff     = exp_data - signal
   cost     = 0.5*(diff**2).sum()
 
   return cost
 
 #--------------------------------------------------------------
-def mr_data_fidelity_grad(recon, signal, readout_inds, apo_imgs):
+def mr_data_fidelity_grad(recon, signal, readout_inds, apo_imgs, kmask):
 
-  exp_data = apodized_fft(recon, readout_inds, apo_imgs_recon)
+  exp_data = apodized_fft(recon, readout_inds, apo_imgs_recon)*kmask
   diff     = exp_data - signal
   grad     = adjoint_apodized_fft(diff, readout_inds, apo_imgs_recon)
 
   return grad
 
 #--------------------------------------------------------------------
-def mr_bowsher_cost(recon, recon_shape, signal, readout_inds, apo_imgs, beta, ninds, ninds2, method):
+def mr_bowsher_cost(recon, recon_shape, signal, readout_inds, apo_imgs, 
+                    beta, ninds, ninds2, method, kmask):
   # ninds2 is a dummy argument to have the same arguments for
   # cost and its gradient
 
@@ -43,7 +44,7 @@ def mr_bowsher_cost(recon, recon_shape, signal, readout_inds, apo_imgs, beta, ni
     isflat = True
     recon  = recon.reshape(recon_shape)
 
-  cost = mr_data_fidelity(recon, signal, readout_inds, apo_imgs)
+  cost = mr_data_fidelity(recon, signal, readout_inds, apo_imgs, kmask)
 
   if beta > 0:
     cost += beta*bowsher_prior_cost(recon[...,0], ninds, method)
@@ -55,14 +56,15 @@ def mr_bowsher_cost(recon, recon_shape, signal, readout_inds, apo_imgs, beta, ni
   return cost
 
 #--------------------------------------------------------------------
-def mr_bowsher_grad(recon, recon_shape, signal, readout_inds, apo_imgs, beta, ninds, ninds2, method):
+def mr_bowsher_grad(recon, recon_shape, signal, readout_inds, apo_imgs, 
+                    beta, ninds, ninds2, method, kmask):
 
   isflat = False
   if recon.ndim == 1:  
     isflat = True
     recon  = recon.reshape(recon_shape)
 
-  grad = mr_data_fidelity_grad(recon, signal, readout_inds, apo_imgs)
+  grad = mr_data_fidelity_grad(recon, signal, readout_inds, apo_imgs, kmask)
 
   if beta > 0:
 
@@ -84,12 +86,12 @@ from argparse import ArgumentParser
 
 parser = ArgumentParser(description = 'Train APETNET')
 
-parser.add_argument('--Kmax',                default =  1.8, type = float)
-parser.add_argument('--T2star_recon_short',  default = -1,   type = float)
-parser.add_argument('--T2star_recon_long',   default = -1,   type = float)
-parser.add_argument('--beta',                default =   0,  type = float)
+parser.add_argument('--Kmax',                default =  2.5, type = float)
+parser.add_argument('--T2star_recon_short',  default =  8,   type = float)
+parser.add_argument('--T2star_recon_long',   default = 15,   type = float)
+parser.add_argument('--beta',                default =  2,   type = float)
 parser.add_argument('--sm_fwhm',             default = 1.5,  type = float)
-parser.add_argument('--noise_level',         default =   0,  type = float)
+parser.add_argument('--noise_level',         default = 0.2,  type = float)
 
 parser.add_argument('--n',           default = 128,  type = int)
 parser.add_argument('--niter',       default = 500,  type = int)
@@ -155,12 +157,14 @@ f          = zoom(np.expand_dims(f,-1),(n/434,n/434,1), order = 1, prefilter = F
 lab_regrid = zoom(lab, (n/434,n/434), order = 0, prefilter = False) 
 
 # set up array for T2* times
-T2star_short = np.zeros((n,n)) + 1e5
+#T2star_short = np.zeros((n,n)) + 1e5
+T2star_short = np.zeros((n,n)) + 1e-3
 T2star_short[lab_regrid == 1] = T2star_csf_short
 T2star_short[lab_regrid == 2] = T2star_gm_short
 T2star_short[lab_regrid == 3] = T2star_wm_short
 
-T2star_long = np.zeros((n,n)) + 1e5
+#T2star_long = np.zeros((n,n)) + 1e5
+T2star_long = np.zeros((n,n)) + 1e-3
 T2star_long[lab_regrid == 1] = T2star_csf_long 
 T2star_long[lab_regrid == 2] = T2star_gm_long
 T2star_long[lab_regrid == 3] = T2star_wm_long
@@ -177,6 +181,16 @@ if add_B0_inhom:
 
 # add imag part to
 f = np.stack((f,np.zeros(f.shape)), axis = -1)
+
+# create binary mask that shows the inner 64 cube of k-space that is read out
+# needed for 0 filling
+
+k0,k1 = np.meshgrid(np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5)
+#kmask = gaussian_filter((np.sqrt(k0**2 + k1**2) <= 32).astype(np.float), 2.)
+kmask = np.logical_and(np.abs(k0) <= 32, np.abs(k1) <= 32)
+
+kmask = np.fft.fftshift(kmask)
+kmask = np.stack((kmask,kmask), axis = -1)
 
 # setup the frequency array as used in numpy fft
 tmp    = np.fft.fftfreq(f.shape[0])
@@ -217,6 +231,9 @@ signal = apodized_fft(f, readout_inds, apo_imgs)
 
 # add noise to signal
 signal += noise_level*(np.random.randn(*signal.shape))
+
+# multiply signal with readout mas
+signal *= kmask
 
 #----------------------------------------------------------
 #----------------------------------------------------------
@@ -268,13 +285,13 @@ noreg_recon       = noreg_recon.flatten()
 
 cost = []
 cb = lambda x: cost.append(mr_bowsher_cost(x, noreg_recon_shape, signal, readout_inds, 
-                           apo_imgs_recon, 0, ninds, ninds2, method))
+                           apo_imgs_recon, 0, ninds, ninds2, method, kmask))
 
 res = fmin_l_bfgs_b(mr_bowsher_cost,
                     noreg_recon, 
                     fprime = mr_bowsher_grad, 
                     args = (noreg_recon_shape, signal, readout_inds, apo_imgs_recon, 0, 
-                            ninds, ninds2, method), 
+                            ninds, ninds2, method, kmask), 
                     callback = cb,
                     maxiter = niter, 
                     disp = 1)
@@ -294,13 +311,13 @@ if beta > 0:
   
   bow_cost = []
   bow_cb   = lambda x: bow_cost.append(mr_bowsher_cost(x, bow_recon_shape, signal, readout_inds, 
-                                      apo_imgs_recon, beta, ninds, ninds2, method))
+                                      apo_imgs_recon, beta, ninds, ninds2, method, kmask))
   
   res = fmin_l_bfgs_b(mr_bowsher_cost,
                       bow_recon, 
                       fprime = mr_bowsher_grad, 
                       args = (bow_recon_shape, signal, readout_inds, apo_imgs_recon, beta, 
-                              ninds, ninds2, method), 
+                              ninds, ninds2, method, kmask), 
                       callback = bow_cb,
                       maxiter = niter, 
                       disp = 1)
@@ -316,12 +333,14 @@ if save_recons:
     grp = hf.create_group('images')
     grp.create_dataset('ifft_recon',   data = init_recon)
     grp.create_dataset('noreg_recon',  data = noreg_recon)
-    grp.create_dataset('bow_recon',    data = bow_recon)
     grp.create_dataset('ground_truth', data = f)
     grp.create_dataset('T2star_long',  data = T2star_long)
     grp.create_dataset('T2star_short', data = T2star_short)
     grp.create_dataset('T2star_long_recon',  data = T2star_long_recon)
     grp.create_dataset('T2star_short_recon', data = T2star_short_recon)
+    if beta > 0:
+      grp.create_dataset('bow_recon',    data = bow_recon)
+      grp.create_dataset('prior_image',  data = aimg)
 
 #-----------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------
@@ -345,6 +364,8 @@ else:
   ax1[0,3].imshow(abs_bow_recon, vmin = 0,  vmax = vmax)
   ax1[0,3].set_title(f'|it. recon bow beta {beta}|')
 
+ax1[1,0].imshow(aimg, vmin = 0, vmax = aimg.max())
+ax1[1,0].set_title('anat. prior image')
 ax1[1,1].imshow(abs_init_recon - abs_f,     vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
 ax1[1,1].set_title('bias |inverse FFT data|')
 ax1[1,2].imshow(abs_noreg_recon - abs_f,    vmin = -0.2*vmax, vmax = 0.2*vmax, cmap = py.cm.bwr)
