@@ -9,12 +9,24 @@ def readout_time(k,
                  t0_sw        = 0.0018):
 
 
-  return t0_sw + ((c2*(k**3) - ((c1/eta)*np.exp(-eta*(k**3))) - beta_sw_tpi) / (3*alpha_sw_tpi))
+  # the point until the readout is linear
+  m = 1126 * 0.16
+
+  k_lin = t0_sw * m
+
+  i1 = np.where(k <= k_lin)
+  i2 = np.where(k > k_lin)
+
+  t = np.zeros(k.shape)
+  t[i1] = k[i1] / m
+  t[i2] = t0_sw + ((c2*(k[i2]**3) - ((c1/eta)*np.exp(-eta*(k[i2]**3))) - beta_sw_tpi) / (3*alpha_sw_tpi))
+
+  return t
 
 if __name__ == '__main__':
   import matplotlib.pyplot as py
 
-  nk  = 64
+  nk  = 128
   T2s = 0.029
   T2f = 0.009 
   osp = 1.8
@@ -32,20 +44,26 @@ if __name__ == '__main__':
 
   decay_env = 0.6*np.exp(-t/T2f) + 0.4*np.exp(-t/T2s)
 
-  fig, ax = py.subplots(1,3, figsize = (9,3))
-  ax[0].plot(1000*t,k,'.')
+  fig, ax = py.subplots(1,4, figsize = (12,3))
+  ax[0].plot(1000*t,k)
   ax[0].set_xlim((0,None))
 
-  ax[1].plot(k,1000*t,'.')
+  ax[1].plot(k,1000*t)
+  ax[2].axvline(rkwargs['t0_sw']*(1126*0.16), color = 'k', ls = ':')
+  ax[2].plot(k,1000*t)
+  ax[2].set_xlim((0,0.5))
+  ax[2].set_ylim((0,3.5))
 
-  ax[2].plot(k,decay_env,'.')
+  ax[3].plot(k,decay_env)
 
   ax[0].set_xlabel('t (ms)')
   ax[0].set_ylabel('k')
   ax[1].set_xlabel('k')
   ax[1].set_ylabel('t( ms)')
-  ax[2].set_xlabel('k')
-  ax[2].set_ylabel('decay env.')
+  ax[2].set_xlabel('k (zoom)')
+  ax[2].set_ylabel('t( ms)')
+  ax[3].set_xlabel('k')
+  ax[3].set_ylabel('decay env.')
 
   for axx in ax.flatten(): axx.grid(ls = ':')
 
