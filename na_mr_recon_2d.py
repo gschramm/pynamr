@@ -155,14 +155,12 @@ f          = zoom(np.expand_dims(f,-1),(n/434,n/434,1), order = 1, prefilter = F
 lab_regrid = zoom(lab, (n/434,n/434), order = 0, prefilter = False) 
 
 # set up array for T2* times
-#T2star_short = np.zeros((n,n)) + 1e5
-T2star_short = np.zeros((n,n)) + 1e-3
+T2star_short = np.full((n,n), T2star_csf_short)
 T2star_short[lab_regrid == 1] = T2star_csf_short
 T2star_short[lab_regrid == 2] = T2star_gm_short
 T2star_short[lab_regrid == 3] = T2star_wm_short
 
-#T2star_long = np.zeros((n,n)) + 1e5
-T2star_long = np.zeros((n,n)) + 1e-3
+T2star_long = np.full((n,n), T2star_csf_long)
 T2star_long[lab_regrid == 1] = T2star_csf_long 
 T2star_long[lab_regrid == 2] = T2star_gm_long
 T2star_long[lab_regrid == 3] = T2star_wm_long
