@@ -7,21 +7,19 @@ sdirs    = ['inverse_crime','50','8']
 f1_files = []
 
 for sdir in sdirs:
-  # find all the files without noise and no prior
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_0_*noise_level_0.0_*f1.png')))
-  
-  # add files with noise and no prior
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_0_*noise_level_0.05_*f1.png')))
-  
   # add prior recons with no noise
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_0.1_*noise_level_0.0_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_1.0_*noise_level_0.0_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_10.0_*noise_level_0.0_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_0.2_*noise_level_0.0_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_2.0_*noise_level_0.0_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_20.0_*noise_level_0.0_*f1.png')))
   
   # add prior recons with noise
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_0.1_*noise_level_0.05_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_1.0_*noise_level_0.05_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_10.0_*noise_level_0.05_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_0.2_*noise_level_0.04_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_2.0_*noise_level_0.04_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_20.0_*noise_level_0.04_*f1.png')))
+
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_0.2_*noise_level_0.1_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_2.0_*noise_level_0.1_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_20.0_*noise_level_0.1_*f1.png')))
 
 f2_files = [x.replace('f1.png','f2.png') for x in f1_files]
 
