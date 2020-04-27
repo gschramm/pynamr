@@ -29,7 +29,7 @@ def mr_data_fidelity_grad(recon, signal, readout_inds, apo_imgs, kmask):
 
   exp_data = apodized_fft(recon, readout_inds, apo_imgs_recon)*kmask
   diff     = exp_data - signal
-  grad     = adjoint_apodized_fft(diff, readout_inds, apo_imgs_recon)
+  grad     = adjoint_apodized_fft(diff*kmask, readout_inds, apo_imgs_recon)
 
   return grad
 
@@ -84,9 +84,8 @@ def mr_bowsher_grad(recon, recon_shape, signal, readout_inds, apo_imgs,
 # parse the command line
 from argparse import ArgumentParser
 
-parser = ArgumentParser(description = 'Train APETNET')
+parser = ArgumentParser(description = '2D na mr simulation')
 
-parser.add_argument('--Kmax',                default =  2.5, type = float)
 parser.add_argument('--T2star_recon_short',  default =  8,   type = float)
 parser.add_argument('--T2star_recon_long',   default = 15,   type = float)
 parser.add_argument('--beta',                default =  2,   type = float)
@@ -94,7 +93,7 @@ parser.add_argument('--sm_fwhm',             default = 1.5,  type = float)
 parser.add_argument('--noise_level',         default = 0.2,  type = float)
 
 parser.add_argument('--n',           default = 128,  type = int)
-parser.add_argument('--niter',       default = 500,  type = int)
+parser.add_argument('--niter',       default =  50,  type = int)
 parser.add_argument('--method',      default =   0,  type = int, choices = [0,1])
 
 parser.add_argument('--T2star_csf_short', default = 50, type = float)
@@ -123,7 +122,6 @@ T2star_wm_short  = args.T2star_wm_short
 T2star_wm_long   = args.T2star_wm_long  
 
 save_recons  = True
-Kmax         = args.Kmax
 add_B0_inhom = True
 
 T2star_recon_short = args.T2star_recon_short   # -1 -> inverse crime, float -> constant value
@@ -172,7 +170,7 @@ T2star_long[lab_regrid == 3] = T2star_wm_long
 # add a region that has short T2 times due to B0 inhomgen.
 if add_B0_inhom:
   x0, x1 = np.meshgrid(np.arange(n),np.arange(n), indexing = 'ij')
-  w      = gaussian_filter((np.sqrt((x0 - 22)**2 + (x1 - 64)**2) <= 14).astype(float), 1.5)
+  w      = gaussian_filter((np.sqrt((x0 - 22*(n//128))**2 + (x1 - 64*(n//128))**2) <= 14).astype(float), 1.5)
   
   T2star_short = (1 - w)*T2star_short + 6*w
   T2star_long  = (1 - w)*T2star_long  + 11*w
@@ -186,31 +184,30 @@ f = np.stack((f,np.zeros(f.shape)), axis = -1)
 # needed for 0 filling
 
 k0,k1 = np.meshgrid(np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5)
-#kmask = gaussian_filter((np.sqrt(k0**2 + k1**2) <= 32).astype(np.float), 2.)
-kmask = np.logical_and(np.abs(k0) <= 32, np.abs(k1) <= 32)
 
-kmask = np.fft.fftshift(kmask)
+# the K-value of 1.5 corresponds to the edge of the cube with radius 32
+k_edge = 1.5
+abs_k  = k_edge*np.sqrt(k0**2 + k1**2) / 32
+
+abs_k = np.fft.fftshift(abs_k)
+
+#kmask  = np.ones((n,n))
+#kmask = gaussian_filter((abs_k <= k_edge).astype(np.float), 1.)
+kmask = (abs_k <= k_edge).astype(np.float)
+
 kmask = np.stack((kmask,kmask), axis = -1)
-
-# setup the frequency array as used in numpy fft
-tmp    = np.fft.fftfreq(f.shape[0])
-k0, k1 = np.meshgrid(tmp, tmp, indexing = 'ij')
-abs_k  = np.sqrt(k0**2 + k1**2)
-
-# normalize the absolute value of the the k space vector
-# needed for the calculation of the apo images from the read out times
-
-abs_k *= Kmax/abs_k.max()
 
 t_read_2d = 1000*readout_time(abs_k)
 
-n_readout_bins = 64
+n_readout_bins = int(32 * (abs_k[kmask[:,:,0] == 1].max() / 1.5))
 
-k_1d = np.linspace(0,abs_k.max(), n_readout_bins + 1)
+k_1d = np.linspace(0, abs_k[kmask[:,:,0] == 1].max(), n_readout_bins + 1)
 
 readout_inds = []
 t_read_1d    = np.zeros(n_readout_bins)
 t_read_2d_binned = np.zeros(t_read_2d.shape)
+
+read_out_img = np.zeros((n,n))
 
 for i in range(n_readout_bins):
   k_start = k_1d[i]
@@ -220,9 +217,9 @@ for i in range(n_readout_bins):
   t_read_1d[i] = t_read_2d[rinds].mean()
   t_read_2d_binned[rinds] = t_read_1d[i]
   readout_inds.append(rinds)
+  read_out_img[rinds] = i + 1
 
 apo_imgs  = apo_images(t_read_1d, T2star_short, T2star_long)
-
 
 #----------------------------------------------------------
 #--- simulate the signal
@@ -412,6 +409,7 @@ if (T2star_recon_short != -1) and (T2star_recon_long != -1):
   
 for axx in ax2[0,:]: 
   axx.set_xlabel('|k|')
+  axx.set_xlim(0,k_edge)
   axx.set_ylim(0,1)
 ax2[0,0].set_ylabel('decay env')
 
@@ -429,6 +427,7 @@ if (T2star_recon_short != -1) and (T2star_recon_long != -1):
 
 for axx in ax2[1,:]: 
   axx.set_xlabel('t')
+  axx.set_xlim(0,t_read_1d.max())
   axx.set_ylim(0,1)
 ax2[1,0].set_ylabel('decay env')
 
