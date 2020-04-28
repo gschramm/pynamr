@@ -169,7 +169,7 @@ T2star_long[lab_regrid == 3] = T2star_wm_long
 # add a region that has short T2 times due to B0 inhomgen.
 if add_B0_inhom:
   x0, x1 = np.meshgrid(np.arange(n),np.arange(n), indexing = 'ij')
-  w      = gaussian_filter((np.sqrt((x0 - 22*(n//128))**2 + (x1 - 64*(n//128))**2) <= 14).astype(float), 1.5)
+  w      = gaussian_filter((np.sqrt((x0 - 22*(n//128))**2 + (x1 - 64*(n//128))**2) <= (n//128)*14).astype(float), 1.5)
   
   T2star_short = (1 - w)*T2star_short + 6*w
   T2star_long  = (1 - w)*T2star_long  + 11*w
