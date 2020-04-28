@@ -14,6 +14,7 @@ from bowsher           import *
 from readout_time      import readout_time
 
 from scipy.ndimage import zoom, gaussian_filter
+from scipy.interpolate import interp1d
 
 #--------------------------------------------------------------
 def mr_data_fidelity(recon, signal, readout_inds, apo_imgs, kmask):
@@ -185,21 +186,22 @@ k0,k1 = np.meshgrid(np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5)
 
 # the K-value of 1.5 corresponds to the edge of the cube with radius 32
 k_edge = 1.5
-abs_k  = k_edge*np.sqrt(k0**2 + k1**2) / 32
-
+abs_k  = np.sqrt(k0**2 + k1**2)
 abs_k = np.fft.fftshift(abs_k)
 
-#kmask  = np.ones((n,n))
-#kmask = gaussian_filter((abs_k <= k_edge).astype(np.float), 1.)
-kmask = (abs_k <= k_edge).astype(np.float)
-
+# create the han window that we need to multiply to the mask
+h_win = interp1d(np.arange(32), np.hanning(64)[32:], fill_value = 0, bounds_error = False)
+kmask = h_win(abs_k.flatten()).reshape(n,n)
 kmask = np.stack((kmask,kmask), axis = -1)
+
+# rescale abs_k such that k = 1.5 is at r = 32 (the edge)
+abs_k *= 1.5/32
 
 t_read_2d = 1000*readout_time(abs_k)
 
-n_readout_bins = int(32 * (abs_k[kmask[:,:,0] == 1].max() / 1.5))
+n_readout_bins = 32
 
-k_1d = np.linspace(0, abs_k[kmask[:,:,0] == 1].max(), n_readout_bins + 1)
+k_1d = np.linspace(0, k_edge, n_readout_bins + 1)
 
 readout_inds = []
 t_read_1d    = np.zeros(n_readout_bins)
@@ -439,14 +441,14 @@ if beta > 0:
 ax2[2,1].set_xlabel('iteration')
 ax2[2,1].set_ylabel('cost')
 
-ax2[2,2].plot(abs_f[n//2,60:110], 'k', label = 'gt')
-ax2[2,2].plot(abs_init_recon[n//2,60:110], 'r--', label = 'ifft')
+ax2[2,2].plot(abs_f[n//2,:], 'k', label = 'gt')
+ax2[2,2].plot(abs_init_recon[n//2,:], 'r--', label = 'ifft')
 if noise_level == 0:
-  ax2[2,2].plot(abs_noreg_recon[n//2,60:110], 'g--', label = 'it. no p.')
+  ax2[2,2].plot(abs_noreg_recon[n//2,:], 'g--', label = 'it. no p.')
 else:
-  ax2[2,2].plot(abs_noreg_recon_ps[n//2,60:110], 'g--', label = 'ps it. no p.')
+  ax2[2,2].plot(abs_noreg_recon_ps[n//2,:], 'g--', label = 'ps it. no p.')
 if beta > 0:
-  ax2[2,2].plot(abs_bow_recon[n//2,60:110], 'b--', label = 'it. bow')
+  ax2[2,2].plot(abs_bow_recon[n//2,:], 'b--', label = 'it. bow')
 ax2[2,2].set_ylim(0.6,1.4)
 ax2[2,2].set_title('line profile')
 
