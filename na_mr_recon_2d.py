@@ -130,8 +130,12 @@ abs_k = np.fft.fftshift(abs_k)
 
 # create the han window that we need to multiply to the mask
 h_win = interp1d(np.arange(32), np.hanning(64)[32:], fill_value = 0, bounds_error = False)
-kmask = h_win(abs_k.flatten()).reshape(n,n)
+kmask = (abs_k <= 32).astype(float)
 kmask = np.stack((kmask,kmask), axis = -1)
+
+# create a Han window needed for the coventional IFFT recon
+hmask = h_win(abs_k.flatten()).reshape(n,n)
+hmask = np.stack((hmask,hmask), axis = -1)
 
 # rescale abs_k such that k = 1.5 is at r = 32 (the edge)
 abs_k *= 1.5/32
@@ -188,7 +192,7 @@ else :
 
 apo_imgs_recon = apo_images(t_read_1d, T2star_short_recon, T2star_long_recon)
 
-init_recon  = np.fft.ifft2(np.squeeze(signal.view(dtype = np.complex128))) * np.sqrt(np.prod(f.shape)) / np.sqrt(4*signal.ndim)
+init_recon  = np.fft.ifft2(np.squeeze((hmask*signal).view(dtype = np.complex128))) * np.sqrt(np.prod(f.shape)) / np.sqrt(4*signal.ndim)
 
 init_recon  = init_recon.view('(2,)float')
 
