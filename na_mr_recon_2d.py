@@ -294,7 +294,7 @@ fig1, ax1 = py.subplots(3,4, figsize = (12,9), squeeze = False)
 ax1[0,0].imshow(abs_f,           vmin = 0,  vmax = vmax)
 ax1[0,0].set_title('ground truth')
 ax1[0,1].imshow(abs_init_recon,  vmin = 0,  vmax = vmax)
-ax1[0,1].set_title('|inverse FFT data|')
+ax1[0,1].set_title('|IFFT han data|')
 ax1[0,2].imshow(abs_noreg_recon, vmin = 0,  vmax = vmax)
 ax1[0,2].set_title('|it. recon no prior|')
 if beta == 0:
