@@ -13,18 +13,18 @@ f1_files = []
 
 for sdir in sdirs:
   # add prior recons with no noise
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_0.3_*noise_level_0.0_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_1.0_*noise_level_0.0_*f1.png')))
   f1_files += sorted(glob(os.path.join(sdir,'*beta_3.0_*noise_level_0.0_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_10.0_*noise_level_0.0_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_30.0_*noise_level_0.0_*f1.png')))
   
   # add prior recons with noise
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_0.3_*noise_level_0.1_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_1.0_*noise_level_0.1_*f1.png')))
   f1_files += sorted(glob(os.path.join(sdir,'*beta_3.0_*noise_level_0.1_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_10.0_*noise_level_0.1_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_30.0_*noise_level_0.1_*f1.png')))
 
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_3.0_*noise_level_0.5_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_10.0_*noise_level_0.5_*f1.png')))
-  f1_files += sorted(glob(os.path.join(sdir,'*beta_30.0_*noise_level_0.5_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_0.3_*noise_level_0.3_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_1.0_*noise_level_0.3_*f1.png')))
+  f1_files += sorted(glob(os.path.join(sdir,'*beta_3.0_*noise_level_0.3_*f1.png')))
 
 f2_files = [x.replace('f1.png','f2.png') for x in f1_files]
 
