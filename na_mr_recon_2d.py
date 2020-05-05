@@ -63,6 +63,7 @@ T2star_wm_long   = args.T2star_wm_long
 
 save_recons  = True
 add_B0_inhom = True
+show_mic     = False
 
 T2star_recon_short = args.T2star_recon_short   # -1 -> inverse crime, float -> constant value
 T2star_recon_long  = args.T2star_recon_long    # -1 -> inverse crime, float -> constant value
@@ -405,3 +406,60 @@ fig2.suptitle(', '.join([x[0] + ':' + str(x[1]) for x in args.__dict__.items()])
 fig2.tight_layout(pad = 3)
 fig2.savefig(os.path.join('figs', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]) + '_f2.png'))
 fig2.show()
+
+
+# figs for MIC proceeding
+if show_mic:
+  from mpl_toolkits.axes_grid1 import make_axes_locatable
+  
+  py.rcParams['text.usetex'] = True
+  py.rcParams['text.latex.preamble'] = [r'\usepackage[cm]{sfmath}']
+  py.rcParams['font.family'] = 'sans-serif'
+  py.rcParams['font.sans-serif'] = 'Computer Modern Sans Serif'
+  py.rcParams['axes.titlesize'] =  'medium'
+
+  fig3, ax3 = py.subplots(2,3, figsize = (6,4), squeeze = False)
+  
+  im00 = ax3[0,0].imshow(abs_f,           vmin = 0,  vmax = vmax)
+  ax3[0,0].set_title('(a) ground truth')
+  divider = make_axes_locatable(ax3[0,0])
+  cax = divider.append_axes('right', size='3%', pad=0.04)
+  fig3.colorbar(im00, cax=cax, orientation='vertical')
+  
+  im10 = ax3[1,0].imshow(aimg, vmin = 0, vmax = aimg.max())
+  ax3[1,0].set_title('(d) anat. prior image')
+  divider = make_axes_locatable(ax3[1,0])
+  cax = divider.append_axes('right', size='3%', pad=0.04)
+  fig3.colorbar(im10, cax=cax, orientation='vertical')
+  
+  im01 = ax3[0,1].imshow(T2star_short, vmin = T2star_gm_short, vmax = 1.5*T2star_gm_short)
+  ax3[0,1].set_title('(b) T2* fast (ms)')
+  divider = make_axes_locatable(ax3[0,1])
+  cax = divider.append_axes('right', size='3%', pad=0.04)
+  fig3.colorbar(im01, cax=cax, orientation='vertical')
+  
+  im02 = ax3[0,2].imshow(T2star_long,  vmin = T2star_gm_short, vmax = 1.5*T2star_gm_long)
+  ax3[0,2].set_title('(c) T2* slow (ms)')
+  divider = make_axes_locatable(ax3[0,2])
+  cax = divider.append_axes('right', size='3%', pad=0.04)
+  fig3.colorbar(im02, cax=cax, orientation='vertical')
+  
+  ax3[1,1].plot(t, k)
+  ax3[1,1].set_xlabel('t (ms)')
+  ax3[1,1].set_ylabel(r'$|$k$|$')
+  ax3[1,1].set_xlim(0,40)
+  ax3[1,1].set_ylim(0,1.5)
+  ax3[1,1].set_title('(e) readout trajectory')
+  
+  ax3[1,2].plot(k, 0.6*np.exp(-t/T2star_gm_short) + 0.4*np.exp(-t/T2star_gm_long))
+  ax3[1,2].plot(k, 0.6*np.exp(-t/T2star_csf_short)+ 0.4*np.exp(-t/T2star_csf_long))
+  ax3[1,2].set_xlim(0,1.5)
+  ax3[1,2].set_xlabel(r'$|$k$|$')
+  ax3[1,2].set_ylabel(r'd($|$k$|$)')
+  ax3[1,2].set_title('(f) signal decay factor')
+  
+  for axx in ax3[0,:].flatten(): axx.set_axis_off()
+  ax3[1,0].set_axis_off()
+  
+  fig3.tight_layout()
+  fig3.show()
