@@ -2,6 +2,8 @@ import h5py
 import os
 import numpy as np
 
+import matplotlib
+import matplotlib.lines as lines
 import matplotlib.pyplot as py
 
 py.rc('image', cmap='gray')
@@ -33,6 +35,7 @@ for i, fname in enumerate(fnames):
 
     if i == 0:
       ifft_recon = np.linalg.norm(h5data['images/ifft_recon'][:],axis=-1)
+      gt         = np.linalg.norm(h5data['images/ground_truth'][:],axis=-1)
 
 fig3, ax3 = py.subplots(2,5, figsize = (12.,5), squeeze = False)
 ax3[0,0].imshow(noreg_recons[0,...], vmax = vmax)
@@ -48,13 +51,15 @@ ax3[1,1].imshow(bow_recons[3,...], vmax = vmax)
 ax3[1,2].imshow(bow_recons[4,...], vmax = vmax)
 ax3[1,3].imshow(bow_recons[5,...], vmax = vmax)
 
-ax3[0,4].imshow(ifft_recon, vmax = vmax)
+ax3[0,4].imshow(gt, vmax = vmax)
+ax3[1,4].imshow(ifft_recon, vmax = vmax)
 
 ax3[0,0].set_title(r'$\beta = 0$')
 ax3[0,1].set_title(r'$\beta = 0.2$')
 ax3[0,2].set_title(r'$\beta = 2$')
 ax3[0,3].set_title(r'$\beta = 10$')
-ax3[0,4].set_title(r'IFFT Han filtered signal')
+ax3[0,4].set_title(r'ground truth')
+ax3[1,4].set_title(r'IFFT Han filtered data')
 
 for axx in ax3.flatten(): 
   axx.set_xticklabels([])
@@ -63,6 +68,9 @@ for axx in ax3.flatten():
   axx.set_yticks([])
 
 ax3[-1,-1].set_axis_off()
+
+l1 = lines.Line2D([0.8, 0.8], [0, 1.], transform=fig3.transFigure, figure=fig3, linewidth = 4, color = 'k')
+fig3.lines.extend([l1])
 
 fig3.tight_layout()
 fig3.show()
