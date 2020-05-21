@@ -92,6 +92,124 @@ def apo_images(readout_times, T2star_short, T2star_long, C_short = 0.6, C_long =
   return apo_imgs
 
 #--------------------------------------------------------------
+def apodized_fft_dual_echo(f, readout_inds, Gamma, t, dt):
+  """ Calculate apodized FFT of an image (e.g. caused by T2* decay during readout
+  
+  Parameters
+  ----------
+
+  f : a float64 numpy array of shape (n0,n1,...,nn,2)
+    [...,0] is considered as the real part
+    [...,1] is considered as the imag part
+
+  readout_inds : list of array indices (nr elements)
+    containing the 2D array indicies that read out at every time point
+
+  Gamma : 3d numpy array of (n0,n1,...,nn)
+    containing the exponential of the T2* time exp(-dt/T2*)
+
+  t : float64 1d numpy array
+    containing the readout times
+
+  dt : float64
+    the time difference between the two echos
+
+  Returns
+  -------
+  a float64 numpy array of shape (2,n0,n1,...,nn,2)
+  """
+
+  # create a complex view of the input real input array with two channels
+  f  = np.squeeze(f.view(dtype=np.complex128))
+
+  # signal of for first echo
+  F1 = np.zeros(f.shape, dtype = np.complex128)
+  # signal of for second echo
+  F2 = np.zeros(f.shape, dtype = np.complex128)
+
+  for i in range(t.shape[0]):
+    tmp1 = np.fft.fft2((Gamma**(t[i]/dt)) * f, axes = -np.arange(f.ndim,0,-1))
+    F1[readout_inds[i]] = tmp1[readout_inds[i]]
+    tmp2 = np.fft.fft2((Gamma**((t[i]/dt)+1)) * f, axes = -np.arange(f.ndim,0,-1))
+    F2[readout_inds[i]] = tmp2[readout_inds[i]]
+
+  # we normalize to get the norm of the operator to the norm of the gradient op
+  F1 *= np.sqrt(4*f.ndim) / np.sqrt(np.prod(f.shape))
+  F2 *= np.sqrt(4*f.ndim) / np.sqrt(np.prod(f.shape))
+
+  # convert F back to 2 real arrays
+  f  = f.view('(2,)float')
+  F1 = F1.view('(2,)float')
+  F2 = F2.view('(2,)float')
+
+  return np.array((F1,F2))
+
+#--------------------------------------------------------------
+def adjoint_apodized_fft_dual_echo(F, readout_inds, Gamma, t, dt, grad_gamma = False):
+  """ Calculate apodized FFT of an image (e.g. caused by T2* decay during readout)
+
+  Parameters
+  ----------
+
+  F : a float64 numpy array of shape (2, n0,n1,...,nn,2)
+    [...,0] is considered as the real part
+    [...,1] is considered as the imag part
+    [0,...] is the signal for the first echo
+    [1,...] is the signal for the second echo
+
+  readout_inds : list of array indices (nr elements)
+    containing the 2D array indicies that read out at every time point
+
+  Gamma : 3d numpy array of (n0,n1,...,nn)
+    containing the exponential of the T2* time exp(-dt/T2*)
+
+  t : float64 1d numpy array
+    containing the readout times
+
+  dt : float64
+    the time difference between the two echos
+
+  grad_gamma : bool (default False)
+    wether to calculate the adjoint needed for the gradient with respect to Gamma
+
+  Returns
+  -------
+  a float64 numpy array of shape (n0,n1,...,nn,2)
+  """
+
+  # create a complex view of the input real input array with two channels
+  F = np.squeeze(F.view(dtype = np.complex128))
+
+  f = np.zeros(F[0,...].shape, dtype = np.complex128)
+
+  for i in range(t.shape[0]):
+    tmp1 = np.zeros(f.shape, dtype = np.complex128)
+    tmp1[readout_inds[i]] = F[0,...][readout_inds[i]]
+
+    if grad_gamma:
+      f += (t[i]/dt)*(Gamma**((t[i]/dt) - 1)) * np.fft.ifft2(tmp1, axes = -np.arange(F[0,...].ndim,0,-1))
+    else:
+      f += (Gamma**(t[i]/dt)) * np.fft.ifft2(tmp1, axes = -np.arange(F[0,...].ndim,0,-1))
+
+    tmp2 = np.zeros(f.shape, dtype = np.complex128)
+    tmp2[readout_inds[i]] = F[1,...][readout_inds[i]]
+
+    if grad_gamma:
+      f += ((t[i]/dt)+1) * Gamma**(t[i]/dt) * np.fft.ifft2(tmp2, axes = -np.arange(F[0,...].ndim,0,-1))
+    else:
+      f += Gamma**((t[i]/dt)+1) * np.fft.ifft2(tmp2, axes = -np.arange(F[0,...].ndim,0,-1))
+
+  f *=  ((np.sqrt(np.prod(F[0,...].shape))) * np.sqrt(4*F[0,...].ndim))
+
+  # convert F back to 2 real arrays
+  f  = f.view('(2,)float')
+  F  = F.view('(2,)float')
+
+  return f
+
+
+
+#--------------------------------------------------------------
 #--------------------------------------------------------------
 #--------------------------------------------------------------
 #--------------------------------------------------------------
@@ -100,10 +218,15 @@ def apo_images(readout_times, T2star_short, T2star_long, C_short = 0.6, C_long =
 if __name__ == '__main__':
   np.random.seed(0)
   
+  dual_echo = True
   n = 256
-  
+
   x = np.random.rand(n,n,2)
-  y = np.random.rand(n,n,2)
+
+  if dual_echo:
+    y = np.random.rand(2,n,n,2)
+  else:
+    y = np.random.rand(n,n,2)
   
   # setup the frequency array as used in numpy fft
   tmp    = np.fft.fftfreq(x.shape[0])
@@ -118,13 +241,20 @@ if __name__ == '__main__':
   
   for i, t_read in enumerate(readout_times):
     readout_inds.append(np.where(readout_ind_array == i))
-  
-  # generate the signal apodization images
-  apo_imgs  = apo_images(readout_times, 8*np.random.rand(n,n), 30*np.random.rand(n,n))
-  
-  x_fwd  = apodized_fft(x, readout_inds, apo_imgs)
-  y_back = adjoint_apodized_fft(y, readout_inds, apo_imgs) 
-  
+ 
+  if dual_echo:
+    Gam     = np.random.rand(n,n)
+    tr      = np.arange(n_readout_bins)/2.
+    delta_t = 5.
+
+    x_fwd = apodized_fft_dual_echo(x, readout_inds, Gam, tr, delta_t)
+    y_back = adjoint_apodized_fft_dual_echo(y, readout_inds, Gam, tr, delta_t)
+
+  else:
+    # generate the signal apodization images
+    apo_imgs  = apo_images(readout_times, 8*np.random.rand(n,n), 30*np.random.rand(n,n))
+
+    x_fwd  = apodized_fft(x, readout_inds, apo_imgs)
+    y_back = adjoint_apodized_fft(y, readout_inds, apo_imgs) 
+
   print((x_fwd*y).sum(),(x*y_back).sum())
-
-
