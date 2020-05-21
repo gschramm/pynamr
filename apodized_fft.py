@@ -145,8 +145,11 @@ def apodized_fft_dual_echo(f, readout_inds, Gamma, t, dt):
   return np.array((F1,F2))
 
 #--------------------------------------------------------------
-def adjoint_apodized_fft_dual_echo(F, readout_inds, Gamma, t, dt):
+def adjoint_apodized_fft_dual_echo(F, readout_inds, Gamma, t, dt, grad_gamma = False):
   """ Calculate apodized FFT of an image (e.g. caused by T2* decay during readout)
+
+  Parameters
+  ----------
 
   F : a float64 numpy array of shape (2, n0,n1,...,nn,2)
     [...,0] is considered as the real part
@@ -166,8 +169,8 @@ def adjoint_apodized_fft_dual_echo(F, readout_inds, Gamma, t, dt):
   dt : float64
     the time difference between the two echos
 
-  Parameters
-  ----------
+  grad_gamma : bool (default False)
+    wether to calculate the adjoint needed for the gradient with respect to Gamma
 
   Returns
   -------
@@ -183,12 +186,18 @@ def adjoint_apodized_fft_dual_echo(F, readout_inds, Gamma, t, dt):
     tmp1 = np.zeros(f.shape, dtype = np.complex128)
     tmp1[readout_inds[i]] = F[0,...][readout_inds[i]]
 
-    f += (Gamma**(t[i]/dt)) * np.fft.ifft2(tmp1, axes = -np.arange(F[0,...].ndim,0,-1))
+    if grad_gamma:
+      f += (t[i]/dt)*(Gamma**((t[i]/dt) - 1)) * np.fft.ifft2(tmp1, axes = -np.arange(F[0,...].ndim,0,-1))
+    else:
+      f += (Gamma**(t[i]/dt)) * np.fft.ifft2(tmp1, axes = -np.arange(F[0,...].ndim,0,-1))
 
     tmp2 = np.zeros(f.shape, dtype = np.complex128)
     tmp2[readout_inds[i]] = F[1,...][readout_inds[i]]
 
-    f += Gamma**((t[i]/dt)+1) * np.fft.ifft2(tmp2, axes = -np.arange(F[0,...].ndim,0,-1))
+    if grad_gamma:
+      f += ((t[i]/dt)+1) * Gamma**(t[i]/dt) * np.fft.ifft2(tmp2, axes = -np.arange(F[0,...].ndim,0,-1))
+    else:
+      f += Gamma**((t[i]/dt)+1) * np.fft.ifft2(tmp2, axes = -np.arange(F[0,...].ndim,0,-1))
 
   f *=  ((np.sqrt(np.prod(F[0,...].shape))) * np.sqrt(4*F[0,...].ndim))
 
