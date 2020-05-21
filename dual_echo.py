@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import matplotlib.pyplot as py
 
@@ -9,6 +10,7 @@ from bowsher      import bowsher_prior_cost, bowsher_prior_grad
 
 from scipy.ndimage     import zoom, gaussian_filter
 
+from argparse import ArgumentParser
 #--------------------------------------------------------------
 def dual_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, kmask):
 
@@ -111,12 +113,39 @@ def dual_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, 
 
 #--------------------------------------------------------------
 #--------------------------------------------------------------
+parser = ArgumentParser(description = '2D na mr dual echo simulation')
+parser.add_argument('--niter',  default = 10, type = int)
+parser.add_argument('--niter_last', default = 20, type = int)
+parser.add_argument('--n_outer', default = 10, type = int)
+parser.add_argument('--method', default = 0, type = int)
+parser.add_argument('--bet_recon', default = 0.1, type = float)
+parser.add_argument('--bet_gam', default = 0.1, type = float)
+parser.add_argument('--delta_t', default = 5., type = float)
+parser.add_argument('--n', default = 128, type = int)
+parser.add_argument('--noise_level', default = 0.2,  type = float)
+
+args = parser.parse_args()
+
+niter       = args.niter
+niter_last  = args.niter_last
+n_outer     = args.n_outer
+bet_recon   = args.bet_recon
+bet_gam     = args.bet_gam
+method      = args.method
+n           = args.n
+delta_t     = args.delta_t
+noise_level = args.noise_level
+
+odir = os.path.join('data','recons', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
+
+if not os.path.exists(odir):
+    os.makedirs(odir)
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
 
 np.random.seed(0)
   
-n = 128
-delta_t = 5.
-
 #-------------------
 # simulate images
 #-------------------
@@ -191,11 +220,19 @@ for i in range(n_readout_bins):
 #------------
 
 signal = apodized_fft_dual_echo(f, readout_inds, Gam, tr, delta_t)
+
 kmask  = np.zeros(signal.shape)
 kmask[0,...,0] = (read_out_img > 0).astype(np.float)
 kmask[0,...,1] = (read_out_img > 0).astype(np.float)
 kmask[1,...,0] = (read_out_img > 0).astype(np.float)
 kmask[1,...,1] = (read_out_img > 0).astype(np.float)
+
+# add noise to signal
+if noise_level > 0:
+  signal += noise_level*(np.random.randn(*signal.shape))
+
+# multiply signal with readout mas
+signal *= kmask
 
 ifft_fac = np.sqrt(np.prod(f.shape)) / np.sqrt(4*(signal.ndim - 1))
 
@@ -221,21 +258,14 @@ nearest_neighbors(aimg,s,nnearest,ninds)
 ninds2 = is_nearest_neighbor_of(ninds)
 
 #--------------------------------------------------------------------------------------------------
-
-niter      = 10
-niter_last = 50
-n_outer    = 5
-bet_recon  = 0.5
-bet_gam    = 0.5
-method     = 0
-
 # initialize variables
 
 #Gam_recon = Gam.copy()
 #Gam_recon = np.full(Gam.shape, Gam.min())
 Gam_recon   = np.full(Gam.shape, 1.)
-noreg_recon = ifft0.copy()
-noreg_recon_shape = noreg_recon.shape
+recon = ifft0.copy()
+recon_shape = recon.shape
+abs_recon    = np.linalg.norm(recon,axis=-1)
 
 Gam_bounds = (n**2)*[(0.001,1)]
 
@@ -247,8 +277,10 @@ py.rcParams['text.latex.preamble'] = [r'\usepackage[cm]{sfmath}']
 py.rcParams['font.family'] = 'sans-serif'
 py.rcParams['font.sans-serif'] = 'Computer Modern Sans Serif'
 
-fig1, ax1 = py.subplots(2,n_outer, figsize = (n_outer*3,6))
+fig1, ax1 = py.subplots(2,n_outer+1, figsize = ((n_outer+1)*3,6))
 vmax = 1.1*np.linalg.norm(f, axis = -1).max()
+ax1[0,0].imshow(Gam_recon, vmin = 0, vmax = 1)
+ax1[1,0].imshow(abs_recon, vmin = 0, vmax = vmax)
 #--------------------------------------------------------------------------------------------------
 
 for i in range(n_outer):
@@ -257,22 +289,22 @@ for i in range(n_outer):
   
   Gam_recon = Gam_recon.flatten()
   
-  cb = lambda x: cost.append(dual_echo_bowsher_cost_gamma(x, noreg_recon_shape, signal, readout_inds, 
-                             noreg_recon, tr, delta_t, kmask, bet_gam, ninds, ninds2, method))
+  cb = lambda x: cost.append(dual_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
+                             recon, tr, delta_t, kmask, bet_gam, ninds, ninds2, method))
   
   res = fmin_l_bfgs_b(dual_echo_bowsher_cost_gamma,
                       Gam_recon, 
                       fprime = dual_echo_bowsher_grad_gamma, 
-                      args = (noreg_recon_shape, signal, readout_inds, 
-                              noreg_recon, tr, delta_t, kmask, bet_gam, ninds, ninds2, method),
+                      args = (recon_shape, signal, readout_inds, 
+                              recon, tr, delta_t, kmask, bet_gam, ninds, ninds2, method),
                       callback = cb,
                       maxiter = niter, 
                       bounds = Gam_bounds,
                       disp = 1)
   
-  Gam_recon = res[0].reshape(noreg_recon_shape[:-1])
+  Gam_recon = res[0].reshape(recon_shape[:-1])
 
-  ax1[0,i].imshow(Gam_recon, vmin = 0, vmax = 1)
+  ax1[0,i+1].imshow(Gam_recon, vmin = 0, vmax = 1)
 
   #---------------------------------------
 
@@ -283,31 +315,32 @@ for i in range(n_outer):
   else:
     niter_recon = niter
 
-  noreg_recon       = noreg_recon.flatten()
+  recon       = recon.flatten()
   
-  cb = lambda x: cost.append(dual_echo_bowsher_cost(x, noreg_recon_shape, signal, readout_inds, 
+  cb = lambda x: cost.append(dual_echo_bowsher_cost(x, recon_shape, signal, readout_inds, 
                              Gam_recon, tr, delta_t, kmask, bet_recon, ninds, ninds2, method))
   
   res = fmin_l_bfgs_b(dual_echo_bowsher_cost,
-                      noreg_recon, 
+                      recon, 
                       fprime = dual_echo_bowsher_grad, 
-                      args = (noreg_recon_shape, signal, readout_inds, 
+                      args = (recon_shape, signal, readout_inds, 
                               Gam_recon, tr, delta_t, kmask, bet_recon, ninds, ninds2, method),
                       callback = cb,
                       maxiter = niter_recon, 
                       disp = 1)
   
-  noreg_recon        = res[0].reshape(noreg_recon_shape)
-  abs_noreg_recon    = np.linalg.norm(noreg_recon,axis=-1)
+  recon        = res[0].reshape(recon_shape)
+  abs_recon    = np.linalg.norm(recon,axis=-1)
   
-  ax1[1,i].imshow(abs_noreg_recon, vmin = 0, vmax = vmax)
+  ax1[1,i+1].imshow(abs_recon, vmin = 0, vmax = vmax)
 
 #--------------------------------------------------------------------------------------------------
 
 fig1.tight_layout()
+fig1.savefig(os.path.join(odir,'convergence.png'))
 fig1.show()
 
-fig, ax = py.subplots(2,3, figsize = (12,8))
+fig, ax = py.subplots(2,4, figsize = (12,6))
 ax[0,0].imshow(np.linalg.norm(f, axis = -1), vmax = vmax)
 ax[0,0].set_title('ground truth signal')
 ax[1,0].imshow(Gam, vmax = 1, vmin = 0)
@@ -316,9 +349,20 @@ ax[0,1].imshow(np.linalg.norm(ifft0, axis = -1), vmax = vmax)
 ax[0,1].set_title('IFFT 1st echo')
 ax[1,1].imshow(np.linalg.norm(ifft1, axis = -1), vmax = vmax)
 ax[1,1].set_title('IFFT 2nd echo')
-ax[0,2].imshow(abs_noreg_recon, vmax = vmax)
+ax[0,2].imshow(abs_recon, vmax = vmax)
 ax[0,2].set_title(r'recon $\beta$ ' + f'{bet_recon}')
 ax[1,2].imshow(Gam_recon, vmax = 1, vmin = 0)
 ax[1,2].set_title(r'$\Gamma$ recon $\beta$ ' + f'{bet_gam}')
+ax[0,3].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
+ax[0,3].set_title(r'bias recon $\beta$ ' + f'{bet_recon}')
+ax[1,3].imshow(Gam_recon - Gam, vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
+ax[1,3].set_title(r'bias $\Gamma$ recon $\beta$ ' + f'{bet_gam}')
 fig.tight_layout()
+fig.savefig(os.path.join(odir,'results.png'))
 fig.show()
+
+fig2,ax2 = py.subplots()
+ax2.semilogy(cost)
+fig2.tight_layout()
+fig2.savefig(os.path.join(odir,'cost.png'))
+fig2.show()
