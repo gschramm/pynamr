@@ -1,5 +1,8 @@
 import os
 import numpy as np
+
+import matplotlib as mpl
+if os.getenv('DISPLAY') is None: mpl.use('Agg')
 import matplotlib.pyplot as py
 
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
