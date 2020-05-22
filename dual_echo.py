@@ -115,14 +115,14 @@ def dual_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, 
 #--------------------------------------------------------------
 parser = ArgumentParser(description = '2D na mr dual echo simulation')
 parser.add_argument('--niter',  default = 10, type = int)
-parser.add_argument('--niter_last', default = 20, type = int)
-parser.add_argument('--n_outer', default = 10, type = int)
+parser.add_argument('--niter_last', default = 10, type = int)
+parser.add_argument('--n_outer', default = 6, type = int)
 parser.add_argument('--method', default = 0, type = int)
-parser.add_argument('--bet_recon', default = 0.1, type = float)
-parser.add_argument('--bet_gam', default = 0.1, type = float)
+parser.add_argument('--bet_recon', default = 0.5, type = float)
+parser.add_argument('--bet_gam', default = 0.5, type = float)
 parser.add_argument('--delta_t', default = 5., type = float)
 parser.add_argument('--n', default = 128, type = int)
-parser.add_argument('--noise_level', default = 0.2,  type = float)
+parser.add_argument('--noise_level', default = 0.1,  type = float)
 
 args = parser.parse_args()
 
@@ -136,10 +136,15 @@ n           = args.n
 delta_t     = args.delta_t
 noise_level = args.noise_level
 
-odir = os.path.join('data','recons', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
+odir = os.path.join('data','recons_dual', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
 if not os.path.exists(odir):
     os.makedirs(odir)
+
+# write input arguments to file
+with open(os.path.join(odir,'input_params.csv'), 'w') as f:
+  for x in args.__dict__.items():
+    f.write("%s,%s\n"%(x[0],x[1]))
 
 #--------------------------------------------------------------
 #--------------------------------------------------------------
@@ -242,6 +247,9 @@ s1 = signal[1,...].view(dtype = np.complex128).squeeze().copy()
 ifft0 = np.ascontiguousarray(np.fft.ifft2(s0).view('(2,)float') * ifft_fac)
 ifft1 = np.ascontiguousarray(np.fft.ifft2(s1).view('(2,)float') * ifft_fac)
 
+abs_ifft0 = np.linalg.norm(ifft0, axis = -1)
+abs_ifft1 = np.linalg.norm(ifft1, axis = -1)
+
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
 aimg  = (f.max() - f[...,0])**0.8
@@ -260,12 +268,16 @@ ninds2 = is_nearest_neighbor_of(ninds)
 #--------------------------------------------------------------------------------------------------
 # initialize variables
 
-#Gam_recon = Gam.copy()
-#Gam_recon = np.full(Gam.shape, Gam.min())
-Gam_recon   = np.full(Gam.shape, 1.)
+g0 = gaussian_filter(abs_ifft0,2)
+g1 = gaussian_filter(abs_ifft1,2)
+
+Gam_recon =  g1 / g0
+Gam_recon[abs_ifft1 < 0.1*g0.max()] = 1
+Gam_recon[Gam_recon > 1] = 1
+
 recon = ifft0.copy()
 recon_shape = recon.shape
-abs_recon    = np.linalg.norm(recon,axis=-1)
+abs_recon   = np.linalg.norm(recon,axis=-1)
 
 Gam_bounds = (n**2)*[(0.001,1)]
 
@@ -277,10 +289,12 @@ py.rcParams['text.latex.preamble'] = [r'\usepackage[cm]{sfmath}']
 py.rcParams['font.family'] = 'sans-serif'
 py.rcParams['font.sans-serif'] = 'Computer Modern Sans Serif'
 
-fig1, ax1 = py.subplots(2,n_outer+1, figsize = ((n_outer+1)*3,6))
+fig1, ax1 = py.subplots(4,n_outer+1, figsize = ((n_outer+1)*3,12))
 vmax = 1.1*np.linalg.norm(f, axis = -1).max()
 ax1[0,0].imshow(Gam_recon, vmin = 0, vmax = 1)
-ax1[1,0].imshow(abs_recon, vmin = 0, vmax = vmax)
+ax1[1,0].imshow(Gam_recon - Gam, vmin = -0.2, vmax = 0.2, cmap = py.cm.bwr)
+ax1[2,0].imshow(abs_recon, vmin = 0, vmax = vmax)
+ax1[3,0].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
 #--------------------------------------------------------------------------------------------------
 
 for i in range(n_outer):
@@ -304,7 +318,11 @@ for i in range(n_outer):
   
   Gam_recon = res[0].reshape(recon_shape[:-1])
 
+  # reset values in low signal regions
+  Gam_recon[abs_ifft1 < 0.1*g0.max()] = 1
+
   ax1[0,i+1].imshow(Gam_recon, vmin = 0, vmax = 1)
+  ax1[1,i+1].imshow(Gam_recon - Gam, vmin = -0.2, vmax = 0.2, cmap = py.cm.bwr)
 
   #---------------------------------------
 
@@ -332,7 +350,8 @@ for i in range(n_outer):
   recon        = res[0].reshape(recon_shape)
   abs_recon    = np.linalg.norm(recon,axis=-1)
   
-  ax1[1,i+1].imshow(abs_recon, vmin = 0, vmax = vmax)
+  ax1[2,i+1].imshow(abs_recon, vmin = 0, vmax = vmax)
+  ax1[3,i+1].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
 
 #--------------------------------------------------------------------------------------------------
 
