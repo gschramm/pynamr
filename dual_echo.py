@@ -15,25 +15,27 @@ from scipy.ndimage     import zoom, gaussian_filter
 
 from argparse import ArgumentParser
 #--------------------------------------------------------------
-def multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, kmask):
+def multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask):
 
-  exp_data = apodized_fft_multi_echo(recon, readout_inds, Gam, tr, delta_t)
+  exp_data = apodized_fft_multi_echo(recon, readout_inds, Gam, tr, delta_t, nechos = nechos)
   diff     = (exp_data - signal)*kmask
   cost     = 0.5*(diff**2).sum()
 
   return cost
 
 #--------------------------------------------------------------
-def multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, kmask, grad_gamma):
+def multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, nechos, 
+                                  kmask, grad_gamma):
 
-  exp_data = apodized_fft_multi_echo(recon, readout_inds, Gam, tr, delta_t)*kmask
+  exp_data = apodized_fft_multi_echo(recon, readout_inds, Gam, tr, delta_t, nechos = nechos)
   diff     = (exp_data - signal)*kmask
-  grad     = adjoint_apodized_fft_multi_echo(diff, readout_inds, Gam, tr, delta_t,grad_gamma = grad_gamma)
+  grad     = adjoint_apodized_fft_multi_echo(diff, readout_inds, Gam, tr, delta_t, 
+                                             grad_gamma = grad_gamma)
 
   return grad
 
 #--------------------------------------------------------------------
-def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, kmask,
+def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
                            beta, ninds, ninds2, method):
   # ninds2 is a dummy argument to have the same arguments for
   # cost and its gradient
@@ -49,7 +51,7 @@ def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, d
     isflat_Gam = True
     Gam  = Gam.reshape(recon_shape[:-1])
 
-  cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, kmask)
+  cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask)
 
   if beta > 0:
     cost += beta*bowsher_prior_cost(recon[...,0], ninds, method)
@@ -64,13 +66,13 @@ def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, d
   return cost
 
 #--------------------------------------------------------------------
-def multi_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, kmask,
-                                 beta, ninds, ninds2, method):
-  return multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, kmask,
-                                beta, ninds, ninds2, method)
+def multi_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, 
+                                  nechos, kmask, beta, ninds, ninds2, method):
+  return multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, 
+                                 nechos, kmask, beta, ninds, ninds2, method)
 
 #--------------------------------------------------------------------
-def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, kmask,
+def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
                            beta, ninds, ninds2, method):
 
   isflat = False
@@ -78,7 +80,8 @@ def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, d
     isflat = True
     recon  = recon.reshape(recon_shape)
 
-  grad = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, kmask, False)
+  grad = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, 
+                                       nechos, kmask, False)
 
   if beta > 0:
 
@@ -92,15 +95,15 @@ def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, d
   return grad
 
 #--------------------------------------------------------------------
-def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, kmask,
-                                 beta, ninds, ninds2, method):
+def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, nechos, 
+                                  kmask, beta, ninds, ninds2, method):
 
   isflat = False
   if Gam.ndim == 1:  
     isflat = True
     Gam = Gam.reshape(recon_shape[:-1])
 
-  tmp = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, kmask, True)
+  tmp = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, True)
 
   grad = tmp[...,0] + tmp[...,1]
 
@@ -126,6 +129,7 @@ parser.add_argument('--bet_gam', default = 0.5, type = float)
 parser.add_argument('--delta_t', default = 5., type = float)
 parser.add_argument('--n', default = 128, type = int)
 parser.add_argument('--noise_level', default = 0.1,  type = float)
+parser.add_argument('--nechos', default = 4,  type = int)
 
 args = parser.parse_args()
 
@@ -136,8 +140,9 @@ bet_recon   = args.bet_recon
 bet_gam     = args.bet_gam
 method      = args.method
 n           = args.n
-delta_t     = args.delta_t
+delta_t     = args.delta_t / (args.nechos - 1)
 noise_level = args.noise_level
+nechos      = args.nechos
 
 odir = os.path.join('data','recons_dual', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
@@ -227,31 +232,30 @@ for i in range(n_readout_bins):
 #------------
 #------------
 
-signal = apodized_fft_multi_echo(f, readout_inds, Gam, tr, delta_t)
+signal = apodized_fft_multi_echo(f, readout_inds, Gam, tr, delta_t, nechos = nechos)
 
 kmask  = np.zeros(signal.shape)
-kmask[0,...,0] = (read_out_img > 0).astype(np.float)
-kmask[0,...,1] = (read_out_img > 0).astype(np.float)
-kmask[1,...,0] = (read_out_img > 0).astype(np.float)
-kmask[1,...,1] = (read_out_img > 0).astype(np.float)
+for i in range(nechos):
+  kmask[i,...,0] = (read_out_img > 0).astype(np.float)
+  kmask[i,...,1] = (read_out_img > 0).astype(np.float)
 
 # add noise to signal
 if noise_level > 0:
-  signal += noise_level*(np.random.randn(*signal.shape))
+  signal += noise_level*(np.random.randn(*signal.shape))*np.sqrt(nechos)/np.sqrt(2)
 
 # multiply signal with readout mas
 signal *= kmask
 
 ifft_fac = np.sqrt(np.prod(f.shape)) / np.sqrt(4*(signal.ndim - 1))
 
-s0 = signal[0,...].view(dtype = np.complex128).squeeze().copy()
-s1 = signal[1,...].view(dtype = np.complex128).squeeze().copy()
+# calculate the inverse FFT of the data for all echos
+ifft     = np.zeros((nechos,) + f.shape)
+abs_ifft = np.zeros((nechos,) + f.shape[:-1])
 
-ifft0 = np.ascontiguousarray(np.fft.ifft2(s0).view('(2,)float') * ifft_fac)
-ifft1 = np.ascontiguousarray(np.fft.ifft2(s1).view('(2,)float') * ifft_fac)
-
-abs_ifft0 = np.linalg.norm(ifft0, axis = -1)
-abs_ifft1 = np.linalg.norm(ifft1, axis = -1)
+for i in range(nechos):
+  s = signal[i,...].view(dtype = np.complex128).squeeze().copy()
+  ifft[i,...] = np.ascontiguousarray(np.fft.ifft2(s).view('(2,)float') * ifft_fac)
+  abs_ifft[i,...] = np.linalg.norm(ifft[i,...], axis = -1)
 
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
@@ -271,20 +275,21 @@ ninds2 = is_nearest_neighbor_of(ninds)
 #--------------------------------------------------------------------------------------------------
 # initialize variables
 
-g0 = gaussian_filter(abs_ifft0,2)
-g1 = gaussian_filter(abs_ifft1,2)
+g0 = gaussian_filter(abs_ifft[0,...],2)
+g1 = gaussian_filter(abs_ifft[1,...],2)
 
 Gam_recon =  g1 / g0
-Gam_recon[abs_ifft1 < 0.1*g0.max()] = 1
+Gam_recon[abs_ifft[1,...] < 0.1*g0.max()] = 1
 Gam_recon[Gam_recon > 1] = 1
 
-recon = ifft0.copy()
+recon = ifft[0,...].copy()
 recon_shape = recon.shape
 abs_recon   = np.linalg.norm(recon,axis=-1)
 
 Gam_bounds = (n**2)*[(0.001,1)]
 
-cost = []
+cost1 = []
+cost2 = []
 
 py.rc('image', cmap='gray')
 py.rcParams['text.usetex'] = True
@@ -306,14 +311,14 @@ for i in range(n_outer):
   
   Gam_recon = Gam_recon.flatten()
   
-  cb = lambda x: cost.append(multi_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
-                             recon, tr, delta_t, kmask, bet_gam, ninds, ninds2, method))
+  cb = lambda x: cost1.append(multi_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
+                             recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
                       Gam_recon, 
                       fprime = multi_echo_bowsher_grad_gamma, 
                       args = (recon_shape, signal, readout_inds, 
-                              recon, tr, delta_t, kmask, bet_gam, ninds, ninds2, method),
+                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method),
                       callback = cb,
                       maxiter = niter, 
                       bounds = Gam_bounds,
@@ -322,7 +327,7 @@ for i in range(n_outer):
   Gam_recon = res[0].reshape(recon_shape[:-1])
 
   # reset values in low signal regions
-  Gam_recon[abs_ifft1 < 0.1*g0.max()] = 1
+  Gam_recon[abs_ifft[1,...] < 0.1*g0.max()] = 1
 
   ax1[0,i+1].imshow(Gam_recon, vmin = 0, vmax = 1)
   ax1[1,i+1].imshow(Gam_recon - Gam, vmin = -0.2, vmax = 0.2, cmap = py.cm.bwr)
@@ -338,14 +343,14 @@ for i in range(n_outer):
 
   recon       = recon.flatten()
   
-  cb = lambda x: cost.append(multi_echo_bowsher_cost(x, recon_shape, signal, readout_inds, 
-                             Gam_recon, tr, delta_t, kmask, bet_recon, ninds, ninds2, method))
+  cb = lambda x: cost2.append(multi_echo_bowsher_cost(x, recon_shape, signal, readout_inds, 
+                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost,
                       recon, 
                       fprime = multi_echo_bowsher_grad, 
                       args = (recon_shape, signal, readout_inds, 
-                              Gam_recon, tr, delta_t, kmask, bet_recon, ninds, ninds2, method),
+                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method),
                       callback = cb,
                       maxiter = niter_recon, 
                       disp = 1)
@@ -367,10 +372,10 @@ ax[0,0].imshow(np.linalg.norm(f, axis = -1), vmax = vmax)
 ax[0,0].set_title('ground truth signal')
 ax[1,0].imshow(Gam, vmax = 1, vmin = 0)
 ax[1,0].set_title(r'$\Gamma$')
-ax[0,1].imshow(np.linalg.norm(ifft0, axis = -1), vmax = vmax)
+ax[0,1].imshow(abs_ifft[0,...], vmax = vmax)
 ax[0,1].set_title('IFFT 1st echo')
-ax[1,1].imshow(np.linalg.norm(ifft1, axis = -1), vmax = vmax)
-ax[1,1].set_title('IFFT 2nd echo')
+ax[1,1].imshow(abs_ifft[-1,...], vmax = vmax)
+ax[1,1].set_title('IFFT last echo')
 ax[0,2].imshow(abs_recon, vmax = vmax)
 ax[0,2].set_title(r'recon $\beta$ ' + f'{bet_recon}')
 ax[1,2].imshow(Gam_recon, vmax = 1, vmin = 0)
@@ -384,7 +389,8 @@ fig.savefig(os.path.join(odir,'results.png'))
 fig.show()
 
 fig2,ax2 = py.subplots()
-ax2.semilogy(cost)
+ax2.semilogy(cost1)
+ax2.semilogy(cost2)
 fig2.tight_layout()
 fig2.savefig(os.path.join(odir,'cost.png'))
 fig2.show()
