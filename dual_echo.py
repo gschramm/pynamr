@@ -8,32 +8,32 @@ import matplotlib.pyplot as py
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
 from nearest_neighbors import nearest_neighbors, is_nearest_neighbor_of
 from readout_time import readout_time
-from apodized_fft import apodized_fft_dual_echo, adjoint_apodized_fft_dual_echo
+from apodized_fft import apodized_fft_multi_echo, adjoint_apodized_fft_multi_echo
 from bowsher      import bowsher_prior_cost, bowsher_prior_grad
 
 from scipy.ndimage     import zoom, gaussian_filter
 
 from argparse import ArgumentParser
 #--------------------------------------------------------------
-def dual_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, kmask):
+def multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, kmask):
 
-  exp_data = apodized_fft_dual_echo(recon, readout_inds, Gam, tr, delta_t)
+  exp_data = apodized_fft_multi_echo(recon, readout_inds, Gam, tr, delta_t)
   diff     = (exp_data - signal)*kmask
   cost     = 0.5*(diff**2).sum()
 
   return cost
 
 #--------------------------------------------------------------
-def dual_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, kmask, grad_gamma):
+def multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, kmask, grad_gamma):
 
-  exp_data = apodized_fft_dual_echo(recon, readout_inds, Gam, tr, delta_t)*kmask
+  exp_data = apodized_fft_multi_echo(recon, readout_inds, Gam, tr, delta_t)*kmask
   diff     = (exp_data - signal)*kmask
-  grad     = adjoint_apodized_fft_dual_echo(diff, readout_inds, Gam, tr, delta_t,grad_gamma = grad_gamma)
+  grad     = adjoint_apodized_fft_multi_echo(diff, readout_inds, Gam, tr, delta_t,grad_gamma = grad_gamma)
 
   return grad
 
 #--------------------------------------------------------------------
-def dual_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, kmask,
+def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, kmask,
                            beta, ninds, ninds2, method):
   # ninds2 is a dummy argument to have the same arguments for
   # cost and its gradient
@@ -49,7 +49,7 @@ def dual_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, de
     isflat_Gam = True
     Gam  = Gam.reshape(recon_shape[:-1])
 
-  cost = dual_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, kmask)
+  cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, kmask)
 
   if beta > 0:
     cost += beta*bowsher_prior_cost(recon[...,0], ninds, method)
@@ -64,13 +64,13 @@ def dual_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, de
   return cost
 
 #--------------------------------------------------------------------
-def dual_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, kmask,
+def multi_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, kmask,
                                  beta, ninds, ninds2, method):
-  return dual_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, kmask,
+  return multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, kmask,
                                 beta, ninds, ninds2, method)
 
 #--------------------------------------------------------------------
-def dual_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, kmask,
+def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, kmask,
                            beta, ninds, ninds2, method):
 
   isflat = False
@@ -78,7 +78,7 @@ def dual_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, de
     isflat = True
     recon  = recon.reshape(recon_shape)
 
-  grad = dual_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, kmask, False)
+  grad = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, kmask, False)
 
   if beta > 0:
 
@@ -92,7 +92,7 @@ def dual_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, de
   return grad
 
 #--------------------------------------------------------------------
-def dual_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, kmask,
+def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, kmask,
                                  beta, ninds, ninds2, method):
 
   isflat = False
@@ -100,7 +100,7 @@ def dual_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, 
     isflat = True
     Gam = Gam.reshape(recon_shape[:-1])
 
-  tmp = dual_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, kmask, True)
+  tmp = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, kmask, True)
 
   grad = tmp[...,0] + tmp[...,1]
 
@@ -227,7 +227,7 @@ for i in range(n_readout_bins):
 #------------
 #------------
 
-signal = apodized_fft_dual_echo(f, readout_inds, Gam, tr, delta_t)
+signal = apodized_fft_multi_echo(f, readout_inds, Gam, tr, delta_t)
 
 kmask  = np.zeros(signal.shape)
 kmask[0,...,0] = (read_out_img > 0).astype(np.float)
@@ -306,12 +306,12 @@ for i in range(n_outer):
   
   Gam_recon = Gam_recon.flatten()
   
-  cb = lambda x: cost.append(dual_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
+  cb = lambda x: cost.append(multi_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
                              recon, tr, delta_t, kmask, bet_gam, ninds, ninds2, method))
   
-  res = fmin_l_bfgs_b(dual_echo_bowsher_cost_gamma,
+  res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
                       Gam_recon, 
-                      fprime = dual_echo_bowsher_grad_gamma, 
+                      fprime = multi_echo_bowsher_grad_gamma, 
                       args = (recon_shape, signal, readout_inds, 
                               recon, tr, delta_t, kmask, bet_gam, ninds, ninds2, method),
                       callback = cb,
@@ -338,12 +338,12 @@ for i in range(n_outer):
 
   recon       = recon.flatten()
   
-  cb = lambda x: cost.append(dual_echo_bowsher_cost(x, recon_shape, signal, readout_inds, 
+  cb = lambda x: cost.append(multi_echo_bowsher_cost(x, recon_shape, signal, readout_inds, 
                              Gam_recon, tr, delta_t, kmask, bet_recon, ninds, ninds2, method))
   
-  res = fmin_l_bfgs_b(dual_echo_bowsher_cost,
+  res = fmin_l_bfgs_b(multi_echo_bowsher_cost,
                       recon, 
-                      fprime = dual_echo_bowsher_grad, 
+                      fprime = multi_echo_bowsher_grad, 
                       args = (recon_shape, signal, readout_inds, 
                               Gam_recon, tr, delta_t, kmask, bet_recon, ninds, ninds2, method),
                       callback = cb,
