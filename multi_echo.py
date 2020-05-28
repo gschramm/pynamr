@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import h5py
 
 import matplotlib as mpl
 if os.getenv('DISPLAY') is None: mpl.use('Agg')
@@ -129,7 +130,7 @@ parser.add_argument('--bet_gam', default = 0.5, type = float)
 parser.add_argument('--delta_t', default = 5., type = float)
 parser.add_argument('--n', default = 128, type = int)
 parser.add_argument('--noise_level', default = 0.1,  type = float)
-parser.add_argument('--nechos', default = 4,  type = int)
+parser.add_argument('--nechos', default = 2,  type = int)
 
 args = parser.parse_args()
 
@@ -144,7 +145,7 @@ delta_t     = args.delta_t / (args.nechos - 1)
 noise_level = args.noise_level
 nechos      = args.nechos
 
-odir = os.path.join('data','recons_dual', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
+odir = os.path.join('data','recons_multi', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
 if not os.path.exists(odir):
     os.makedirs(odir)
@@ -239,16 +240,44 @@ for i in range(nechos):
   kmask[i,...,0] = (read_out_img > 0).astype(np.float)
   kmask[i,...,1] = (read_out_img > 0).astype(np.float)
 
+# multiply signal with readout mask
+signal *= kmask
+abs_signal = np.linalg.norm(signal, axis = -1)
+
+# plot central line trough k-space
+fig3, ax3 = py.subplots(3,nechos, figsize = (nechos*3,9))
+for i in range(nechos):
+  ax3[0,i].plot(np.fft.fftshift(signal[i,:,:,0])[n//2,(n//2 - 32):(n//2 + 32)], '-')
+  ax3[0,i].set_title(f'echo {i+1} real part')
+  ax3[1,i].plot(np.fft.fftshift(signal[i,:,:,1])[n//2,(n//2 - 32):(n//2 + 32)], '-')
+  ax3[1,i].set_title(f'echo {i+1} imag part')
+  ax3[2,i].plot(np.fft.fftshift(abs_signal[i,:,:])[n//2,(n//2 - 32):(n//2 + 32)], '-')
+  ax3[2,i].set_title(f'echo {i+1} abs value')
+for axx in ax3[:-1,:].flatten(): 
+  axx.set_ylim(-1,1)
+  axx.grid(ls = ':')
+for axx in ax3[-1,:].flatten(): 
+  axx.set_ylim(0,1)
+  axx.grid(ls = ':')
+fig3.tight_layout()
+
 # add noise to signal
 if noise_level > 0:
   signal += noise_level*(np.random.randn(*signal.shape))*np.sqrt(nechos)/np.sqrt(2)
 
-# multiply signal with readout mas
+# multiply signal with readout mask
 signal *= kmask
+abs_signal = np.linalg.norm(signal, axis = -1)
 
-ifft_fac = np.sqrt(np.prod(f.shape)) / np.sqrt(4*(signal.ndim - 1))
+# replot noisy signal
+for i in range(nechos):
+  ax3[0,i].plot(np.fft.fftshift(signal[i,:,:,0])[n//2,(n//2 - 32):(n//2 + 32)], '.')
+  ax3[1,i].plot(np.fft.fftshift(signal[i,:,:,1])[n//2,(n//2 - 32):(n//2 + 32)], '.')
+  ax3[2,i].plot(np.fft.fftshift(abs_signal[i,:,:])[n//2,(n//2 - 32):(n//2 + 32)], '.')
 
 # calculate the inverse FFT of the data for all echos
+ifft_fac = np.sqrt(np.prod(f.shape)) / np.sqrt(4*(signal.ndim - 1))
+
 ifft     = np.zeros((nechos,) + f.shape)
 abs_ifft = np.zeros((nechos,) + f.shape[:-1])
 
@@ -362,6 +391,19 @@ for i in range(n_outer):
   ax1[3,i+1].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
 
 #--------------------------------------------------------------------------------------------------
+# save the recons
+output_file = os.path.join(odir, 'recons.h5')
+with h5py.File(output_file, 'w') as hf:
+  grp = hf.create_group('images')
+  grp.create_dataset('Gam',          data = Gam)
+  grp.create_dataset('Gam_recon',    data = Gam_recon)
+  grp.create_dataset('ground_truth', data = f)
+  grp.create_dataset('signal',       data = signal)
+  grp.create_dataset('recon',        data = recon)
+  grp.create_dataset('ifft',         data = ifft)
+  grp.create_dataset('prior_image',  data = aimg)
+
+#--------------------------------------------------------------------------------------------------
 
 fig1.tight_layout()
 fig1.savefig(os.path.join(odir,'convergence.png'))
@@ -388,20 +430,12 @@ fig.tight_layout()
 fig.savefig(os.path.join(odir,'results.png'))
 fig.show()
 
-fig2,ax2 = py.subplots()
-ax2.semilogy(cost1)
-ax2.semilogy(cost2)
+fig2,ax2 = py.subplots(1,2, figsize = (6,3))
+ax2[0].semilogy(cost1)
+ax2[1].semilogy(cost2)
 fig2.tight_layout()
 fig2.savefig(os.path.join(odir,'cost.png'))
 fig2.show()
 
-# plot central line trough k-space
-fig3, ax3 = py.subplots(2,nechos, figsize = (nechos*3,6))
-for i in range(nechos):
-  ax3[0,i].plot(np.fft.fftshift(signal[i,:,:,0])[n//2,(n//2 - 32):(n//2 + 32)], '-.')
-  ax3[0,i].set_title(f'echo {i} real part')
-  ax3[1,i].plot(np.fft.fftshift(signal[i,:,:,1])[n//2,(n//2 - 32):(n//2 + 32)], '-.')
-  ax3[1,i].set_title(f'echo {i} imag part')
-for axx in ax3.flatten(): axx.set_ylim(-2,2)
-fig3.tight_layout()
 fig3.show()
+fig3.savefig(os.path.join(odir,'kspace_prof.png'))
