@@ -394,3 +394,14 @@ ax2.semilogy(cost2)
 fig2.tight_layout()
 fig2.savefig(os.path.join(odir,'cost.png'))
 fig2.show()
+
+# plot central line trough k-space
+fig3, ax3 = py.subplots(2,nechos, figsize = (nechos*3,6))
+for i in range(nechos):
+  ax3[0,i].plot(np.fft.fftshift(signal[i,:,:,0])[n//2,(n//2 - 32):(n//2 + 32)], '-.')
+  ax3[0,i].set_title(f'echo {i} real part')
+  ax3[1,i].plot(np.fft.fftshift(signal[i,:,:,1])[n//2,(n//2 - 32):(n//2 + 32)], '-.')
+  ax3[1,i].set_title(f'echo {i} imag part')
+for axx in ax3.flatten(): axx.set_ylim(-2,2)
+fig3.tight_layout()
+fig3.show()
