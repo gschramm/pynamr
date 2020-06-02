@@ -13,6 +13,7 @@ from apodized_fft import apodized_fft_multi_echo, adjoint_apodized_fft_multi_ech
 from bowsher      import bowsher_prior_cost, bowsher_prior_grad
 
 from scipy.ndimage     import zoom, gaussian_filter
+from scipy.interpolate import interp1d
 
 from argparse import ArgumentParser
 #--------------------------------------------------------------
@@ -278,13 +279,22 @@ for i in range(nechos):
 # calculate the inverse FFT of the data for all echos
 ifft_fac = np.sqrt(np.prod(f.shape)) / np.sqrt(4*(signal.ndim - 1))
 
-ifft     = np.zeros((nechos,) + f.shape)
-abs_ifft = np.zeros((nechos,) + f.shape[:-1])
+ifft          = np.zeros((nechos,) + f.shape)
+ifft_filtered = np.zeros((nechos,) + f.shape)
+abs_ifft          = np.zeros((nechos,) + f.shape[:-1])
+abs_ifft_filtered = np.zeros((nechos,) + f.shape[:-1])
+
+# create the han window that we need to multiply to the mask
+h_win = interp1d(np.arange(32), np.hanning(64)[32:], fill_value = 0, bounds_error = False)
+# abs_k was scaled to have the k edge at 32, we have to revert that for the han window
+hmask = h_win(abs_k.flatten()*32/k_edge).reshape(n,n)
 
 for i in range(nechos):
   s = signal[i,...].view(dtype = np.complex128).squeeze().copy()
   ifft[i,...] = np.ascontiguousarray(np.fft.ifft2(s).view('(2,)float') * ifft_fac)
+  ifft_filtered[i,...] = np.ascontiguousarray(np.fft.ifft2(hmask*s).view('(2,)float') * ifft_fac)
   abs_ifft[i,...] = np.linalg.norm(ifft[i,...], axis = -1)
+  abs_ifft_filtered[i,...] = np.linalg.norm(ifft_filtered[i,...], axis = -1)
 
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
@@ -304,14 +314,11 @@ ninds2 = is_nearest_neighbor_of(ninds)
 #--------------------------------------------------------------------------------------------------
 # initialize variables
 
-g0 = gaussian_filter(abs_ifft[0,...],2)
-g1 = gaussian_filter(abs_ifft[1,...],2)
-
-Gam_recon =  g1 / g0
-Gam_recon[abs_ifft[1,...] < 0.1*g0.max()] = 1
+Gam_recon = abs_ifft_filtered[1,...] / abs_ifft_filtered[0,...]
+Gam_recon[abs_ifft_filtered[1,...] < 0.1*abs_ifft_filtered[0,...].max()] = 1
 Gam_recon[Gam_recon > 1] = 1
 
-recon = ifft[0,...].copy()
+recon = ifft_filtered[0,...].copy()
 recon_shape = recon.shape
 abs_recon   = np.linalg.norm(recon,axis=-1)
 
@@ -335,33 +342,6 @@ ax1[3,0].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.
 #--------------------------------------------------------------------------------------------------
 
 for i in range(n_outer):
-
-  print('LBFGS to optimize for gamma')
-  
-  Gam_recon = Gam_recon.flatten()
-  
-  cb = lambda x: cost1.append(multi_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
-                             recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method))
-  
-  res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
-                      Gam_recon, 
-                      fprime = multi_echo_bowsher_grad_gamma, 
-                      args = (recon_shape, signal, readout_inds, 
-                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method),
-                      callback = cb,
-                      maxiter = niter, 
-                      bounds = Gam_bounds,
-                      disp = 1)
-  
-  Gam_recon = res[0].reshape(recon_shape[:-1])
-
-  # reset values in low signal regions
-  Gam_recon[abs_ifft[1,...] < 0.1*g0.max()] = 1
-
-  ax1[0,i+1].imshow(Gam_recon, vmin = 0, vmax = 1)
-  ax1[1,i+1].imshow(Gam_recon - Gam, vmin = -0.2, vmax = 0.2, cmap = py.cm.bwr)
-
-  #---------------------------------------
 
   print('LBFGS to optimize for recon')
   
@@ -390,18 +370,46 @@ for i in range(n_outer):
   ax1[2,i+1].imshow(abs_recon, vmin = 0, vmax = vmax)
   ax1[3,i+1].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
 
-#--------------------------------------------------------------------------------------------------
+  #---------------------------------------
+
+  print('LBFGS to optimize for gamma')
+  
+  Gam_recon = Gam_recon.flatten()
+  
+  cb = lambda x: cost1.append(multi_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
+                             recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method))
+  
+  res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
+                      Gam_recon, 
+                      fprime = multi_echo_bowsher_grad_gamma, 
+                      args = (recon_shape, signal, readout_inds, 
+                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method),
+                      callback = cb,
+                      maxiter = niter, 
+                      bounds = Gam_bounds,
+                      disp = 1)
+  
+  Gam_recon = res[0].reshape(recon_shape[:-1])
+
+  # reset values in low signal regions
+  Gam_recon[abs_ifft_filtered[1,...] < 0.1*abs_ifft_filtered[0,...].max()] = 1
+
+  ax1[0,i+1].imshow(Gam_recon, vmin = 0, vmax = 1)
+  ax1[1,i+1].imshow(Gam_recon - Gam, vmin = -0.2, vmax = 0.2, cmap = py.cm.bwr)
+
+  #--------------------------------------------------------------------------------------------------
 # save the recons
 output_file = os.path.join(odir, 'recons.h5')
 with h5py.File(output_file, 'w') as hf:
   grp = hf.create_group('images')
-  grp.create_dataset('Gam',          data = Gam)
-  grp.create_dataset('Gam_recon',    data = Gam_recon)
-  grp.create_dataset('ground_truth', data = f)
-  grp.create_dataset('signal',       data = signal)
-  grp.create_dataset('recon',        data = recon)
-  grp.create_dataset('ifft',         data = ifft)
-  grp.create_dataset('prior_image',  data = aimg)
+  grp.create_dataset('Gam',           data = Gam)
+  grp.create_dataset('Gam_recon',     data = Gam_recon)
+  grp.create_dataset('ground_truth',  data = f)
+  grp.create_dataset('signal',        data = signal)
+  grp.create_dataset('recon',         data = recon)
+  grp.create_dataset('ifft',          data = ifft)
+  grp.create_dataset('ifft_filtered', data = ifft)
+  grp.create_dataset('prior_image',   data = aimg)
 
 #--------------------------------------------------------------------------------------------------
 
@@ -409,23 +417,27 @@ fig1.tight_layout()
 fig1.savefig(os.path.join(odir,'convergence.png'))
 fig1.show()
 
-fig, ax = py.subplots(2,4, figsize = (12,6))
+fig, ax = py.subplots(2,5, figsize = (15,6))
 ax[0,0].imshow(np.linalg.norm(f, axis = -1), vmax = vmax)
 ax[0,0].set_title('ground truth signal')
 ax[1,0].imshow(Gam, vmax = 1, vmin = 0)
 ax[1,0].set_title(r'$\Gamma$')
-ax[0,1].imshow(abs_ifft[0,...], vmax = vmax)
-ax[0,1].set_title('IFFT 1st echo')
-ax[1,1].imshow(abs_ifft[-1,...], vmax = vmax)
-ax[1,1].set_title('IFFT last echo')
-ax[0,2].imshow(abs_recon, vmax = vmax)
-ax[0,2].set_title(r'recon $\beta$ ' + f'{bet_recon}')
-ax[1,2].imshow(Gam_recon, vmax = 1, vmin = 0)
-ax[1,2].set_title(r'$\Gamma$ recon $\beta$ ' + f'{bet_gam}')
-ax[0,3].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
-ax[0,3].set_title(r'bias recon $\beta$ ' + f'{bet_recon}')
-ax[1,3].imshow(Gam_recon - Gam, vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
-ax[1,3].set_title(r'bias $\Gamma$ recon $\beta$ ' + f'{bet_gam}')
+ax[0,1].imshow(abs_ifft_filtered[0,...], vmax = vmax)
+ax[0,1].set_title('filt. IFFT 1st echo')
+ax[1,1].imshow(abs_ifft_filtered[-1,...], vmax = vmax)
+ax[1,1].set_title('filt. IFFT last echo')
+ax[0,2].imshow(abs_ifft[0,...], vmax = vmax)
+ax[0,2].set_title('IFFT 1st echo')
+ax[1,2].imshow(abs_ifft[-1,...], vmax = vmax)
+ax[1,2].set_title('IFFT last echo')
+ax[0,3].imshow(abs_recon, vmax = vmax)
+ax[0,3].set_title(r'recon $\beta$ ' + f'{bet_recon}')
+ax[1,3].imshow(Gam_recon, vmax = 1, vmin = 0)
+ax[1,3].set_title(r'$\Gamma$ recon $\beta$ ' + f'{bet_gam}')
+ax[0,4].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
+ax[0,4].set_title(r'bias recon $\beta$ ' + f'{bet_recon}')
+ax[1,4].imshow(Gam_recon - Gam, vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
+ax[1,4].set_title(r'bias $\Gamma$ recon $\beta$ ' + f'{bet_gam}')
 fig.tight_layout()
 fig.savefig(os.path.join(odir,'results.png'))
 fig.show()
