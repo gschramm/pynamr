@@ -131,7 +131,9 @@ parser.add_argument('--bet_gam', default = 10., type = float)
 parser.add_argument('--delta_t', default = 5., type = float)
 parser.add_argument('--n', default = 128, type = int)
 parser.add_argument('--noise_level', default = 0.1,  type = float)
-parser.add_argument('--nechos', default = 2,  type = int)
+parser.add_argument('--nechos',   default = 2,  type = int)
+parser.add_argument('--nnearest', default = 3,  type = int)
+parser.add_argument('--nneigh',   default = 8,  type = int, choices = [8,20])
 
 args = parser.parse_args()
 
@@ -145,6 +147,8 @@ n           = args.n
 delta_t     = args.delta_t / (args.nechos - 1)
 noise_level = args.noise_level
 nechos      = args.nechos
+nnearest    = args.nnearest 
+nneigh      = args.nneigh
 
 odir = os.path.join('data','recons_multi', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
@@ -302,11 +306,18 @@ aimg  = (f.max() - f[...,0])**0.8
 aimg += 0.001*aimg.max()*np.random.random(aimg.shape)
 
 # beta = 1e-4 reasonable for inverse crime
-s    = np.array([[1,1,1], 
-                 [1,0,1], 
-                 [1,1,1]])
-nnearest = 3 
-
+if nneigh == 8:
+  s    = np.array([[1,1,1], 
+                   [1,0,1], 
+                   [1,1,1]])
+  
+elif nneigh == 20:
+  s    = np.array([[0,1,1,1,0], 
+                   [1,1,1,1,1], 
+                   [1,1,0,1,1], 
+                   [1,1,1,1,1], 
+                   [0,1,1,1,0]])
+                 
 ninds  = np.zeros((np.prod(aimg.shape),nnearest), dtype = np.uint32)
 nearest_neighbors(aimg,s,nnearest,ninds)
 ninds2 = is_nearest_neighbor_of(ninds)
