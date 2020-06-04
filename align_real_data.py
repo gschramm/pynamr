@@ -10,7 +10,8 @@ import pymirc.image_operations as pi
 import pymirc.metrics as pm
 
 #def read_read_data(sdir = './data/SodiumExample/TBI-n005_tpiRecon_FID125462_TE03/PhyCha/kw1', fpattern = '*.c?'): 
-sdir = './data/SodiumExample/TBI-n005_tpiRecon_FID125462_TE03/PhyCha/kw1'
+sdir1 = './data/SodiumExample/TBI-n005_tpiRecon_FID125462_TE03/PhyCha/kw1'
+sdir2 = './data/SodiumExample/TBI-n005_tpiRecon_FID125464_TE5/PhyCha/kw1/'
 fpattern = '*.c?'
 
 t1_nii = nib.load('./data/SodiumExample/T1.nii')
@@ -23,38 +24,40 @@ csf_nii = nib.as_closest_canonical(csf_nii)
 csf     = csf_nii.get_fdata()
 
 #----
-# load the complex coil images
-
-fnames = glob(os.path.join(sdir, fpattern))
-
-ncoils = len(fnames)
-
+# load the complex coil images for first echo
 data_shape = (64,64,64)
-data = np.zeros((ncoils,) + data_shape, dtype = np.complex64)
 
+fnames = glob(os.path.join(sdir1, fpattern))
+ncoils = len(fnames)
+data   = np.zeros((ncoils,) + data_shape, dtype = np.complex64)
 
 for i, fname in enumerate(fnames):
   data[i,...] = np.flip(np.fromfile(fname, dtype = np.complex64).reshape(data_shape).swapaxes(0,2), (0,2))
   
 na = np.flip(np.abs(data).sum(axis = 0), (0,1))
-na /= na.max()
+na_norm = na.max()
+na /= na_norm
 
-#s2 = np.abs(data.sum(axis = 0))
+#----
+# load the complex coil images for second echo
 
-#s3 = np.flip(np.fromfile(os.path.join(sdir,'tpirec.csos'), 
-#                         dtype = np.complex64).reshape(data_shape).swapaxes(0,2), (0,2))
+fnames2 = glob(os.path.join(sdir2, fpattern))
+ncoils2 = len(fnames2)
+data2   = np.zeros((ncoils2,) + data_shape, dtype = np.complex64)
 
-#f_3d   = s1.copy()
-#f      = f_3d[:,:,26]
-#signal = np.fft.fft2(f).astype(np.complex128)
-#signal = signal.view('(2,)float')
-#f = np.stack((f,np.zeros(f.shape)), axis = -1)
+for i, fname2 in enumerate(fnames2):
+  data2[i,...] = np.flip(np.fromfile(fname2, dtype = np.complex64).reshape(data_shape).swapaxes(0,2), (0,2))
+  
+na2 = np.flip(np.abs(data2).sum(axis = 0), (0,1))
+na2 /= na_norm
+
 
 #----------------------------------------------------------------------
 # align the T1 to the sodium image
 
 # interpolate sodium image to a 256 grid
-na_interp = zoom(na, 2, order = 1, prefilter = False) / na.max()
+na_interp  = zoom(na,  2, order = 1, prefilter = False)
+na2_interp = zoom(na2, 2, order = 1, prefilter = False)
 
 fov = 223.
 
@@ -84,9 +87,6 @@ t1_na_grid  = pi.aff_transform(t1, regis_aff, na_interp.shape, cval = t1.min())
 nib.save(nib.Nifti1Image(t1_na_grid, na_affine), './data/SodiumExample/T1_128_aligned.nii')
 nib.save(nib.Nifti1Image(csf_na_grid, na_affine), './data/SodiumExample/csf_128_aligned.nii')
 nib.save(nib.Nifti1Image(na_interp, na_affine), './data/SodiumExample/na_128.nii')
-
+nib.save(nib.Nifti1Image(na2_interp, na_affine), './data/SodiumExample/na2_128.nii')
+ 
 np.savetxt('./data/SodiumExample/affine_128.txt', regis_aff)
-
-
-
-#return f, signal
