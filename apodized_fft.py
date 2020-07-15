@@ -130,7 +130,7 @@ def apodized_fft_multi_echo(f, readout_inds, Gamma, t, dt, nechos = 2):
 
   for i in range(t.shape[0]):
     for k in range(nechos):
-      tmp = np.fft.fft2((Gamma**((t[i]/dt)+k)) * f, axes = -np.arange(f.ndim,0,-1))
+      tmp = np.fft.fftn((Gamma**((t[i]/dt)+k)) * f, axes = -np.arange(f.ndim,0,-1))
       F[k,...][readout_inds[i]] = tmp[readout_inds[i]]
 
   # we normalize to get the norm of the operator to the norm of the gradient op
@@ -188,9 +188,9 @@ def adjoint_apodized_fft_multi_echo(F, readout_inds, Gamma, t, dt, grad_gamma = 
       tmp[readout_inds[i]] = F[k,...][readout_inds[i]]
 
       if grad_gamma:
-        f += ((t[i]/dt) + k)*(Gamma**((t[i]/dt) + k - 1)) * np.fft.ifft2(tmp, axes = -np.arange(F[0,...].ndim,0,-1))
+        f += ((t[i]/dt) + k)*(Gamma**((t[i]/dt) + k - 1)) * np.fft.ifftn(tmp, axes = -np.arange(F[0,...].ndim,0,-1))
       else:
-        f += (Gamma**((t[i]/dt) + k)) * np.fft.ifft2(tmp, axes = -np.arange(F[0,...].ndim,0,-1))
+        f += (Gamma**((t[i]/dt) + k)) * np.fft.ifftn(tmp, axes = -np.arange(F[0,...].ndim,0,-1))
 
   f *=  ((np.sqrt(np.prod(F[0,...].shape))) * np.sqrt(4*F[0,...].ndim))
 
