@@ -34,8 +34,12 @@ def multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t,
   exp_data = apodized_fft_multi_echo(cp.asarray(recon), readout_inds, cp.asarray(Gam), tr, delta_t, 
                                      nechos = nechos).get()
   diff     = (exp_data - signal)*kmask
-  grad     = adjoint_apodized_fft_multi_echo(cp.asarray(diff), readout_inds, cp.asarray(Gam), tr, delta_t, 
-                                             grad_gamma = grad_gamma).get()
+
+  if grad_gamma:
+    grad  = adjoint_apodized_fft_multi_echo(cp.asarray(diff), readout_inds, cp.asarray(Gam), tr, delta_t, grad_gamma = True).get()
+    grad *= recon
+  else:
+    grad  = adjoint_apodized_fft_multi_echo(cp.asarray(diff), readout_inds, cp.asarray(Gam), tr, delta_t, grad_gamma = False).get()
 
   return grad
 

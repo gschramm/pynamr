@@ -31,8 +31,12 @@ def multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t,
 
   exp_data = apodized_fft_multi_echo(recon, readout_inds, Gam, tr, delta_t, nechos = nechos)
   diff     = (exp_data - signal)*kmask
-  grad     = adjoint_apodized_fft_multi_echo(diff, readout_inds, Gam, tr, delta_t, 
-                                             grad_gamma = grad_gamma)
+
+  if grad_gamma:
+    grad  = adjoint_apodized_fft_multi_echo(diff, readout_inds, Gam, tr, delta_t, grad_gamma = True)
+    grad *= recon
+  else:
+    grad  = adjoint_apodized_fft_multi_echo(diff, readout_inds, Gam, tr, delta_t, grad_gamma = False)
 
   return grad
 
