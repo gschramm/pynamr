@@ -4,7 +4,6 @@ import cupy as cp
 import h5py
 
 import matplotlib as mpl
-#if os.getenv('DISPLAY') is None: mpl.use('Agg')
 import matplotlib.pyplot as py
 
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
@@ -128,13 +127,13 @@ def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon,
 
 #--------------------------------------------------------------
 #--------------------------------------------------------------
-parser = ArgumentParser(description = '2D na mr dual echo simulation')
-parser.add_argument('--niter',  default = 10, type = int)
-parser.add_argument('--niter_last', default = 10, type = int)
+parser = ArgumentParser(description = '3D na mr dual echo simulation')
+parser.add_argument('--niter',  default = 20, type = int)
+parser.add_argument('--niter_last', default = 20, type = int)
 parser.add_argument('--n_outer', default = 6, type = int)
 parser.add_argument('--method', default = 0, type = int)
-parser.add_argument('--bet_recon', default = 10., type = float)
-parser.add_argument('--bet_gam', default = 10., type = float)
+parser.add_argument('--bet_recon', default = 5., type = float)
+parser.add_argument('--bet_gam', default = 5., type = float)
 parser.add_argument('--delta_t', default = 5., type = float)
 parser.add_argument('--n', default = 128, type = int)
 parser.add_argument('--noise_level', default = 2.,  type = float)
@@ -157,7 +156,7 @@ nechos      = args.nechos
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
 
-odir = os.path.join('data','recons_multi', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
+odir = os.path.join('data','recons_multi_3d', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
 if not os.path.exists(odir):
     os.makedirs(odir)
@@ -338,7 +337,8 @@ Gam_recon = abs_ifft_filtered[1,...] / abs_ifft_filtered[0,...]
 Gam_recon[abs_ifft_filtered[1,...] < 0.1*abs_ifft_filtered[0,...].max()] = 1
 Gam_recon[Gam_recon > 1] = 1
 
-recon = ifft_filtered[0,...].copy()
+# division by 3 is to compensate for norm of adjoint operator
+recon = ifft_filtered[0,...].copy() / 3.
 recon_shape = recon.shape
 abs_recon   = np.linalg.norm(recon,axis=-1)
 
@@ -348,7 +348,7 @@ cost1 = []
 cost2 = []
 
 fig1, ax1 = py.subplots(4,n_outer+1, figsize = ((n_outer+1)*3,12))
-vmax = 1.1*abs_f.max()
+vmax = 1.5*abs_f.max()
 ax1[0,0].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
 ax1[1,0].imshow(Gam_recon[...,64] - Gam[...,64], vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
 ax1[2,0].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
@@ -416,29 +416,30 @@ for i in range(n_outer):
 #--------------------------------------------------------------------------------------------------
 
 fig1.tight_layout()
-#fig1.savefig(os.path.join(odir,'convergence.png'))
+fig1.savefig(os.path.join(odir,'convergence.png'))
 fig1.show()
 
-## save the recons
-#output_file = os.path.join(odir, 'recons.h5')
-#with h5py.File(output_file, 'w') as hf:
-#  grp = hf.create_group('images')
-#  grp.create_dataset('Gam',           data = Gam)
-#  grp.create_dataset('Gam_recon',     data = Gam_recon)
-#  grp.create_dataset('ground_truth',  data = f)
-#  grp.create_dataset('signal',        data = signal)
-#  grp.create_dataset('recon',         data = recon)
-#  grp.create_dataset('ifft',          data = ifft)
-#  grp.create_dataset('ifft_filtered', data = ifft_filtered)
-#  grp.create_dataset('prior_image',   data = aimg)
-#
-##--------------------------------------------------------------------------------------------------
+# save the recons
+output_file = os.path.join(odir, 'recons.h5')
+with h5py.File(output_file, 'w') as hf:
+  grp = hf.create_group('images')
+  grp.create_dataset('Gam',           data = Gam)
+  grp.create_dataset('Gam_recon',     data = Gam_recon)
+  grp.create_dataset('ground_truth',  data = f)
+  grp.create_dataset('signal',        data = signal)
+  grp.create_dataset('recon',         data = recon)
+  grp.create_dataset('ifft',          data = ifft)
+  grp.create_dataset('ifft_filtered', data = ifft_filtered)
+  grp.create_dataset('prior_image',   data = aimg)
+
+#--------------------------------------------------------------------------------------------------
 
 import pymirc.viewer as pv
 
-ims1 = [{'cmap':py.cm.Greys_r}, {'cmap':py.cm.Greys_r}, 
-        {'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.1}, {'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.1}]
-vi1 = pv.ThreeAxisViewer([abs_ifft[0,...],abs_ifft_filtered[0,...],abs_recon,abs_f], imshow_kwargs = ims1)
+ims1 = 2*[{'cmap':py.cm.Greys_r}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}]
+vi1 = pv.ThreeAxisViewer([abs_ifft[0,...],abs_ifft_filtered[0,...],abs_f], imshow_kwargs = ims1)
+vi1.fig.savefig(os.path.join(odir,'fig1.png'))
 
-ims2 = 2*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
-vi2  = pv.ThreeAxisViewer([Gam_recon, Gam], imshow_kwargs = ims2)
+ims2 = [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + 2*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
+vi2  = pv.ThreeAxisViewer([abs_recon,Gam_recon, Gam], imshow_kwargs = ims2)
+vi2.fig.savefig(os.path.join(odir,'fig2.png'))
