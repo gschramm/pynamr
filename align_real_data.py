@@ -8,20 +8,19 @@ from glob import glob
 
 import pymirc.image_operations as pi
 import pymirc.metrics as pm
+import pymirc.viewer as pv
 
-#def read_read_data(sdir = './data/SodiumExample/TBI-n005_tpiRecon_FID125462_TE03/PhyCha/kw1', fpattern = '*.c?'): 
-sdir1 = './data/SodiumExample/TBI-n005_tpiRecon_FID125462_TE03/PhyCha/kw1'
-sdir2 = './data/SodiumExample/TBI-n005_tpiRecon_FID125464_TE5/PhyCha/kw1/'
+pdir = os.path.join('data','sodium_data','BT-007_visit2')
+sdir = 'PhyCha_kw1'
+
+sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03'))[0], sdir.split('_')[0], sdir)
+sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5'))[0], sdir.split('_')[0], sdir)
 fpattern = '*.c?'
 
-t1_nii = nib.load('./data/SodiumExample/T1.nii')
+t1_nii = nib.load(os.path.join(pdir,'mprage.nii'))
 t1_nii = nib.as_closest_canonical(t1_nii)
 t1     = t1_nii.get_fdata()
 t1_affine = t1_nii.affine
-
-csf_nii = nib.load('./data/SodiumExample/c3T1.nii')
-csf_nii = nib.as_closest_canonical(csf_nii)
-csf     = csf_nii.get_fdata()
 
 #----
 # load the complex coil images for first echo
@@ -69,9 +68,10 @@ na_affine[:-1,-1] = -fov/2.
 # this is the affine that maps from the T1 onto the Na grid
 pre_affine = np.linalg.inv(t1_affine) @ na_affine
 
+#args = (na_interp, csf, True, True, pm.neg_mutual_information, pre_affine), 
 reg_params = np.zeros(6)
 res = minimize(pm.regis_cost_func, reg_params, 
-               args = (na_interp, csf, True, True, pm.neg_mutual_information, pre_affine), 
+               args = (na_interp, t1, True, True, pm.neg_mutual_information, pre_affine), 
                method = 'Powell', 
                options = {'ftol':1e-2, 'xtol':1e-2, 'disp':True, 'maxiter':20, 'maxfev':5000})
 
@@ -79,14 +79,14 @@ reg_params = res.x.copy()
 
 regis_aff = pre_affine @ pi.kul_aff(reg_params, origin = np.array(na_interp.shape)/2)
 
-csf_na_grid = pi.aff_transform(csf, regis_aff, na_interp.shape, cval = csf.min()) 
+#csf_na_grid = pi.aff_transform(csf, regis_aff, na_interp.shape, cval = csf.min()) 
 t1_na_grid  = pi.aff_transform(t1, regis_aff, na_interp.shape, cval = t1.min()) 
 
 # save the data
 
-nib.save(nib.Nifti1Image(t1_na_grid, na_affine), './data/SodiumExample/T1_128_aligned.nii')
-nib.save(nib.Nifti1Image(csf_na_grid, na_affine), './data/SodiumExample/csf_128_aligned.nii')
-nib.save(nib.Nifti1Image(na_interp, na_affine), './data/SodiumExample/na_128.nii')
-nib.save(nib.Nifti1Image(na2_interp, na_affine), './data/SodiumExample/na2_128.nii')
+#nib.save(nib.Nifti1Image(csf_na_grid, na_affine), './data/SodiumExample/csf_128_aligned.nii')
+nib.save(nib.Nifti1Image(t1_na_grid, na_affine), os.path.join(pdir,'mprage_128_aligned.nii'))
+nib.save(nib.Nifti1Image(na_interp, na_affine), os.path.join(pdir,'TE03_128_' + sdir + '.nii'))
+nib.save(nib.Nifti1Image(na2_interp, na_affine), os.path.join(pdir,'TE5_128_' + sdir + '.nii'))
  
-np.savetxt('./data/SodiumExample/affine_128.txt', regis_aff)
+np.savetxt(os.path.join(pdir,'affine_128.txt'), regis_aff)
