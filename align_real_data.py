@@ -23,71 +23,76 @@ t1_nii = nib.as_closest_canonical(t1_nii)
 t1     = t1_nii.get_fdata()
 t1_affine = t1_nii.affine
 
+csf_nii = nib.load(os.path.join(pdir,'c3mprage.nii'))
+csf_nii = nib.as_closest_canonical(csf_nii)
+csf     = csf_nii.get_fdata()
+csf_affine = csf_nii.affine
+
 #----
 # load the complex coil images for first echo
-data_shape = (64,64,64)
+data_shape  = (64,64,64)
+#recon_shape = (256,256,256) 
+recon_shape = (128,128,128) 
 
-fnames = glob(os.path.join(sdir1, fpattern))
-ncoils = len(fnames)
-data   = np.zeros((ncoils,) + data_shape, dtype = np.complex64)
+fnames  = glob(os.path.join(sdir1, fpattern))
+ncoils  = len(fnames)
+data    = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
+data_filt = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
+cimg      = np.zeros((ncoils,) + data_shape,   dtype = np.complex64)
+cimg_pad  = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
+sens      = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
+cimg_pad_filt  = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 
-for i, fname in enumerate(fnames):
-  data[i,...] = np.flip(np.fromfile(fname, dtype = np.complex64).reshape(data_shape).swapaxes(0,2), (0,2))
+# calculate filter for data used to estimated sensitivity
+k = np.fft.fftfreq(recon_shape[0])
+k0,k1,k2 = np.meshgrid(k, k, k, indexing = 'ij')
+abs_k    = np.sqrt(k0**2 + k1**2 + k2**2) 
+filt     = np.exp(-(abs_k**2)/(2*0.02**2))
+
+for i in range(ncoils):
+  # load complex image
+  cimg[i,...] = np.flip(np.fromfile(fnames[i], dtype = np.complex64).reshape(data_shape).swapaxes(0,2), (1,2))
   
-na = np.flip(np.abs(data).sum(axis = 0), (0,1))
-na_norm = na.max()
-na /= na_norm
+  # perform fft to get into k-space
+  cimg_fft = np.fft.fftn(cimg[i,...], norm = 'ortho')
 
-#----
-# load the complex coil images for second echo
+  # pad data with 0s
+  data[i,...] = np.fft.fftshift(np.pad(np.fft.fftshift(cimg_fft), 
+                                (recon_shape[0] - data_shape[0])//2))
+  data_filt[i,...] = filt*data[i,...]
 
-fnames2 = glob(os.path.join(sdir2, fpattern))
-ncoils2 = len(fnames2)
-data2   = np.zeros((ncoils2,) + data_shape, dtype = np.complex64)
+  # do inverse FFT of data
+  cimg_pad[i,...] = np.fft.ifftn(data[i,...], norm = 'ortho')
+  cimg_pad_filt[i,...] = np.fft.ifftn(data_filt[i,...], norm = 'ortho')
 
-for i, fname2 in enumerate(fnames2):
-  data2[i,...] = np.flip(np.fromfile(fname2, dtype = np.complex64).reshape(data_shape).swapaxes(0,2), (0,2))
-  
-na2 = np.flip(np.abs(data2).sum(axis = 0), (0,1))
-na2 /= na_norm
+#-------
 
-#----------------------------------------------------------------------
-# align the T1 to the sodium image
+# calculate the sum of square image
+sos = np.abs(cimg_pad).sum(axis = 0)
+sos_filt = np.abs(cimg_pad_filt).sum(axis = 0)
+
+for i in range(ncoils):
+  sens[i,...] = cimg_pad_filt[i,...] / sos_filt
+
+
+#------------------------------------------------------------------------------
+#- align T1--------------------------------------------------------------------
+#------------------------------------------------------------------------------
 
 fov = 223.
-
-# interpolate sodium image to a 256 grid
-na_interp  = zoom(na,  n//64, order = 1, prefilter = False)
-na2_interp = zoom(na2, n//64, order = 1, prefilter = False)
-
-
-na_voxsize = fov / np.array(na_interp.shape)
-
+na_voxsize = fov / np.array(recon_shape)
 na_affine = np.diag(np.concatenate((na_voxsize,[1])))
 na_affine[:-1,-1] = -fov/2.
 
-# this is the affine that maps from the T1 onto the Na grid
-pre_affine = np.linalg.inv(t1_affine) @ na_affine
+csf_coreg, coreg_aff, coreg_params = pi.rigid_registration(csf, sos, t1_affine, na_affine)
 
-#args = (na_interp, csf, True, True, pm.neg_mutual_information, pre_affine), 
-reg_params = np.zeros(6)
-res = minimize(pm.regis_cost_func, reg_params, 
-               args = (na_interp, t1, True, True, pm.neg_mutual_information, pre_affine), 
-               method = 'Powell', 
-               options = {'ftol':1e-2, 'xtol':1e-2, 'disp':True, 'maxiter':20, 'maxfev':5000})
+t1_coreg = pi.aff_transform(t1, coreg_aff, recon_shape, cval = t1.min())
 
-reg_params = res.x.copy()
-
-regis_aff = pre_affine @ pi.kul_aff(reg_params, origin = np.array(na_interp.shape)/2)
-
-#csf_na_grid = pi.aff_transform(csf, regis_aff, na_interp.shape, cval = csf.min()) 
-t1_na_grid  = pi.aff_transform(t1, regis_aff, na_interp.shape, cval = t1.min()) 
-
-# save the data
-
-#nib.save(nib.Nifti1Image(csf_na_grid, na_affine), './data/SodiumExample/csf_128_aligned.nii')
-nib.save(nib.Nifti1Image(t1_na_grid, na_affine), os.path.join(pdir,f'mprage_{n}_aligned.nii'))
-nib.save(nib.Nifti1Image(na_interp, na_affine), os.path.join(pdir,f'TE03_{n}_' + sdir + '.nii'))
-nib.save(nib.Nifti1Image(na2_interp, na_affine), os.path.join(pdir,f'TE5_{n}_' + sdir + '.nii'))
- 
-np.savetxt(os.path.join(pdir,'affine_{n}.txt'), regis_aff)
+## save the data
+#
+##nib.save(nib.Nifti1Image(csf_na_grid, na_affine), './data/SodiumExample/csf_128_aligned.nii')
+#nib.save(nib.Nifti1Image(t1_na_grid, na_affine), os.path.join(pdir,f'mprage_{n}_aligned.nii'))
+#nib.save(nib.Nifti1Image(na_interp, na_affine), os.path.join(pdir,f'TE03_{n}_' + sdir + '.nii'))
+#nib.save(nib.Nifti1Image(na2_interp, na_affine), os.path.join(pdir,f'TE5_{n}_' + sdir + '.nii'))
+# 
+#np.savetxt(os.path.join(pdir,'affine_{n}.txt'), regis_aff)
