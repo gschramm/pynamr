@@ -144,7 +144,7 @@ def apodized_fft_multi_echo(f, readout_inds, Gamma, t, dt, nechos = 2):
   return F
 
 #--------------------------------------------------------------
-def apodized_fft_multi_echo(f, readout_inds, Gamma, t, dt, nechos = 2):
+def apodized_fft_multi_echo(f, readout_inds, Gamma, t, dt, nechos = 2, sens = None):
   """ Calculate apodized FFT of an image (e.g. caused by T2* decay during readout
   
   Parameters
@@ -179,26 +179,35 @@ def apodized_fft_multi_echo(f, readout_inds, Gamma, t, dt, nechos = 2):
   
   # create a complex view of the input real input array with two channels
   f  = xp.squeeze(f.view(dtype=xp.complex128))
+
+  if sens is None:
+    sens = np.ones(f.shape, dtype = np.complex128)
+  else:
+    sens = xp.squeeze(sens.view(dtype=xp.complex128))
+  
   
   # signal of for all echos
   F = xp.zeros((nechos,) + f.shape, dtype = xp.complex128)
-  
+ 
+  f_sens = f * sens
+ 
   for i in range(t.shape[0]):
     for k in range(nechos):
-      tmp = xp.fft.fftn((Gamma**((t[i]/dt)+k)) * f, norm = 'ortho')
+      tmp = xp.fft.fftn((Gamma**((t[i]/dt)+k)) * f_sens, norm = 'ortho')
       F[k,...][readout_inds[i]] = tmp[readout_inds[i]]
 
   # we normalize to get the norm of the operator to the norm of the gradient op
   F *= np.sqrt(4*f.ndim)
  
   # convert F back to 2 real arrays
-  f  = xp.stack([f.real, f.imag], axis = -1)
-  F  = xp.stack([F.real, F.imag], axis = -1)
+  f    = xp.stack([f.real, f.imag], axis = -1)
+  sens = xp.stack([sens.real, sens.imag], axis = -1)
+  F    = xp.stack([F.real, F.imag], axis = -1)
 
   return F
 
 #--------------------------------------------------------------
-def adjoint_apodized_fft_multi_echo(F, readout_inds, Gamma, t, dt, grad_gamma = False):
+def adjoint_apodized_fft_multi_echo(F, readout_inds, Gamma, t, dt, grad_gamma = False, sens = None):
   """ Calculate apodized FFT of an image (e.g. caused by T2* decay during readout)
 
   Parameters
@@ -238,6 +247,11 @@ def adjoint_apodized_fft_multi_echo(F, readout_inds, Gamma, t, dt, grad_gamma = 
 
   f = xp.zeros(F[0,...].shape, dtype = xp.complex128)
 
+  if sens is None:
+    sens = np.ones(f.shape, dtype = np.complex128)
+  else:
+    sens = xp.squeeze(sens.view(dtype=xp.complex128))
+
   nechos = F.shape[0]
 
   for i in range(t.shape[0]):
@@ -250,12 +264,15 @@ def adjoint_apodized_fft_multi_echo(F, readout_inds, Gamma, t, dt, grad_gamma = 
       else:
         f += (Gamma**((t[i]/dt) + k)) * xp.fft.ifftn(tmp, norm = 'ortho')
 
+  f *= np.conj(sens)
+
   # we normalize to get the norm of the operator to the norm of the gradient op
   f *= np.sqrt(4*f.ndim)
 
   # convert F back to 2 real arrays
-  f  = xp.stack([f.real, f.imag], axis = -1)
-  F  = xp.stack([F.real, F.imag], axis = -1)
+  f    = xp.stack([f.real, f.imag], axis = -1)
+  sens = xp.stack([sens.real, sens.imag], axis = -1)
+  F    = xp.stack([F.real, F.imag], axis = -1)
 
   return f
 
@@ -268,10 +285,11 @@ def adjoint_apodized_fft_multi_echo(F, readout_inds, Gamma, t, dt, grad_gamma = 
 if __name__ == '__main__':
   np.random.seed(0)
   
-  nechos = 4
+  nechos = 2
   n      = 256
 
   x = np.random.rand(n,n,2)
+  sens = np.random.rand(n,n,2)
 
   if nechos > 1:
     y = np.random.rand(nechos,n,n,2)
@@ -297,8 +315,8 @@ if __name__ == '__main__':
     tr      = np.arange(n_readout_bins)/2.
     delta_t = 5.
 
-    x_fwd = apodized_fft_multi_echo(x, readout_inds, Gam, tr, delta_t, nechos = nechos)
-    y_back = adjoint_apodized_fft_multi_echo(y, readout_inds, Gam, tr, delta_t)
+    x_fwd = apodized_fft_multi_echo(x, readout_inds, Gam, tr, delta_t, nechos = nechos, sens = sens)
+    y_back = adjoint_apodized_fft_multi_echo(y, readout_inds, Gam, tr, delta_t, sens = sens)
 
   else:
     # generate the signal apodization images
