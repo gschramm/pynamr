@@ -181,20 +181,22 @@ def apodized_fft_multi_echo(f, readout_inds, Gamma, t, dt, nechos = 2, sens = No
   f  = xp.squeeze(f.view(dtype=xp.complex128))
 
   if sens is None:
-    sens = xp.ones(f.shape, dtype = np.complex128)
+    sens = xp.ones((1,) + f.shape, dtype = np.complex128)
   else:
     sens = xp.squeeze(sens.view(dtype=xp.complex128))
   
+  ncoils = sens.shape[0]
   
   # signal of for all echos
-  F = xp.zeros((nechos,) + f.shape, dtype = xp.complex128)
+  F = xp.zeros((ncoils,nechos,) + f.shape, dtype = xp.complex128)
+
+  for isens in range(ncoils): 
+    f_sens = f * sens[isens,...]
  
-  f_sens = f * sens
- 
-  for i in range(t.shape[0]):
-    for k in range(nechos):
-      tmp = xp.fft.fftn((Gamma**((t[i]/dt)+k)) * f_sens, norm = 'ortho')
-      F[k,...][readout_inds[i]] = tmp[readout_inds[i]]
+    for i in range(t.shape[0]):
+      for k in range(nechos):
+        tmp = xp.fft.fftn((Gamma**((t[i]/dt)+k)) * f_sens, norm = 'ortho')
+        F[isens,k,...][readout_inds[i]] = tmp[readout_inds[i]]
 
   # we normalize to get the norm of the operator to the norm of the gradient op
   F *= np.sqrt(4*f.ndim)
@@ -245,26 +247,26 @@ def adjoint_apodized_fft_multi_echo(F, readout_inds, Gamma, t, dt, grad_gamma = 
   # create a complex view of the input real input array with two channels
   F = xp.squeeze(F.view(dtype = xp.complex128))
 
-  f = xp.zeros(F[0,...].shape, dtype = xp.complex128)
+  f = xp.zeros(F[0,0,...].shape, dtype = xp.complex128)
 
   if sens is None:
-    sens = xp.ones(f.shape, dtype = np.complex128)
+    sens = xp.ones((1,) + f.shape, dtype = np.complex128)
   else:
     sens = xp.squeeze(sens.view(dtype=xp.complex128))
 
-  nechos = F.shape[0]
+  nechos = F.shape[1]
+  ncoils = sens.shape[0]
+  
+  for isens in range(ncoils): 
+    for i in range(t.shape[0]):
+      for k in range(nechos):
+        tmp = xp.zeros(f.shape, dtype = xp.complex128)
+        tmp[readout_inds[i]] = F[isens,k,...][readout_inds[i]]
 
-  for i in range(t.shape[0]):
-    for k in range(nechos):
-      tmp = xp.zeros(f.shape, dtype = xp.complex128)
-      tmp[readout_inds[i]] = F[k,...][readout_inds[i]]
-
-      if grad_gamma:
-        f += ((t[i]/dt) + k)*(Gamma**((t[i]/dt) + k - 1)) * xp.fft.ifftn(tmp, norm = 'ortho')
-      else:
-        f += (Gamma**((t[i]/dt) + k)) * xp.fft.ifftn(tmp, norm = 'ortho')
-
-  f *= xp.conj(sens)
+        if grad_gamma:
+          f += ((t[i]/dt) + k)*(Gamma**((t[i]/dt) + k - 1)) * xp.fft.ifftn(tmp, norm = 'ortho') * xp.conj(sens[isens,...])
+        else:
+          f += (Gamma**((t[i]/dt) + k)) * xp.fft.ifftn(tmp, norm = 'ortho') * xp.conj(sens[isens,...])
 
   # we normalize to get the norm of the operator to the norm of the gradient op
   f *= np.sqrt(4*f.ndim)
@@ -286,20 +288,18 @@ if __name__ == '__main__':
   np.random.seed(0)
   
   nechos = 2
-  n      = 256
+  ncoils = 1
+  n      = 128
 
-  x = np.random.rand(n,n,2)
-  sens = np.random.rand(n,n,2)
+  x = np.random.rand(n,n,n,2)
+  sens = np.random.rand(ncoils,n,n,n,2)
 
-  if nechos > 1:
-    y = np.random.rand(nechos,n,n,2)
-  else:
-    y = np.random.rand(n,n,2)
+  y = np.random.rand(ncoils,nechos,n,n,n,2)
   
   # setup the frequency array as used in numpy fft
-  tmp    = np.fft.fftfreq(x.shape[0])
-  k0, k1 = np.meshgrid(tmp, tmp, indexing = 'ij')
-  abs_k  = np.sqrt(k0**2 + k1**2)
+  tmp        = np.fft.fftfreq(n)
+  k0, k1, k2 = np.meshgrid(tmp, tmp,tmp, indexing = 'ij')
+  abs_k      = np.sqrt(k0**2 + k1**2 + k2**2)
   
   # generate array of k-space readout times
   n_readout_bins     = 50
@@ -310,19 +310,11 @@ if __name__ == '__main__':
   for i, t_read in enumerate(readout_times):
     readout_inds.append(np.where(readout_ind_array == i))
  
-  if nechos > 1:
-    Gam     = np.random.rand(n,n)
-    tr      = np.arange(n_readout_bins)/2.
-    delta_t = 5.
+  Gam     = np.random.rand(n,n,n)
+  tr      = np.arange(n_readout_bins)/2.
+  delta_t = 5.
 
-    x_fwd = apodized_fft_multi_echo(x, readout_inds, Gam, tr, delta_t, nechos = nechos, sens = sens)
-    y_back = adjoint_apodized_fft_multi_echo(y, readout_inds, Gam, tr, delta_t, sens = sens)
-
-  else:
-    # generate the signal apodization images
-    apo_imgs  = apo_images(readout_times, 8*np.random.rand(n,n), 30*np.random.rand(n,n))
-
-    x_fwd  = apodized_fft(x, readout_inds, apo_imgs)
-    y_back = adjoint_apodized_fft(y, readout_inds, apo_imgs) 
+  x_fwd = apodized_fft_multi_echo(x, readout_inds, Gam, tr, delta_t, nechos = nechos, sens = sens)
+  y_back = adjoint_apodized_fft_multi_echo(y, readout_inds, Gam, tr, delta_t, sens = sens)
 
   print((x_fwd*y).sum(),(x*y_back).sum())
