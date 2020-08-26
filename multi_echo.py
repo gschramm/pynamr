@@ -2,129 +2,22 @@ import os
 import numpy as np
 import h5py
 
-import matplotlib as mpl
-if os.getenv('DISPLAY') is None: mpl.use('Agg')
 import matplotlib.pyplot as py
 
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
 from nearest_neighbors import nearest_neighbors, is_nearest_neighbor_of
 from readout_time import readout_time
-from apodized_fft import apodized_fft_multi_echo, adjoint_apodized_fft_multi_echo
-from bowsher      import bowsher_prior_cost, bowsher_prior_grad
+from apodized_fft import apodized_fft_multi_echo
+from cost_functions import multi_echo_bowsher_cost, multi_echo_bowsher_grad, multi_echo_bowsher_cost_gamma, multi_echo_bowsher_grad_gamma
 
 from scipy.ndimage     import zoom, gaussian_filter
 from scipy.interpolate import interp1d
 
 from argparse import ArgumentParser
-#--------------------------------------------------------------
-def multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask):
-
-  exp_data = apodized_fft_multi_echo(recon, readout_inds, Gam, tr, delta_t, nechos = nechos)
-  diff     = (exp_data - signal)*kmask
-  cost     = 0.5*(diff**2).sum()
-
-  return cost
-
-#--------------------------------------------------------------
-def multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, nechos, 
-                                  kmask, grad_gamma):
-
-  exp_data = apodized_fft_multi_echo(recon, readout_inds, Gam, tr, delta_t, nechos = nechos)
-  diff     = (exp_data - signal)*kmask
-
-  if grad_gamma:
-    grad  = adjoint_apodized_fft_multi_echo(diff, readout_inds, Gam, tr, delta_t, grad_gamma = True)
-    grad *= recon
-  else:
-    grad  = adjoint_apodized_fft_multi_echo(diff, readout_inds, Gam, tr, delta_t, grad_gamma = False)
-
-  return grad
-
-#--------------------------------------------------------------------
-def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
-                           beta, ninds, ninds2, method):
-  # ninds2 is a dummy argument to have the same arguments for
-  # cost and its gradient
-
-  isflat_recon = False
-  isflat_Gam   = False
-
-  if recon.ndim == 1:  
-    isflat_recon = True
-    recon  = recon.reshape(recon_shape)
-
-  if Gam.ndim == 1:  
-    isflat_Gam = True
-    Gam  = Gam.reshape(recon_shape[:-1])
-
-  cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask)
-
-  if beta > 0:
-    cost += beta*bowsher_prior_cost(recon[...,0], ninds, method)
-    cost += beta*bowsher_prior_cost(recon[...,1], ninds, method)
-
-  if isflat_recon:
-    recon = recon.flatten()
-
-  if isflat_Gam:
-    Gam = Gam.flatten()
-   
-  return cost
-
-#--------------------------------------------------------------------
-def multi_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, 
-                                  nechos, kmask, beta, ninds, ninds2, method):
-  return multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, 
-                                 nechos, kmask, beta, ninds, ninds2, method)
-
-#--------------------------------------------------------------------
-def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
-                           beta, ninds, ninds2, method):
-
-  isflat = False
-  if recon.ndim == 1:  
-    isflat = True
-    recon  = recon.reshape(recon_shape)
-
-  grad = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, 
-                                       nechos, kmask, False)
-
-  if beta > 0:
-
-    grad[...,0] += beta*bowsher_prior_grad(recon[...,0], ninds, ninds2, method)
-    grad[...,1] += beta*bowsher_prior_grad(recon[...,1], ninds, ninds2, method)
-
-  if isflat:
-    recon = recon.flatten()
-    grad  = grad.flatten()
-
-  return grad
-
-#--------------------------------------------------------------------
-def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, nechos, 
-                                  kmask, beta, ninds, ninds2, method):
-
-  isflat = False
-  if Gam.ndim == 1:  
-    isflat = True
-    Gam = Gam.reshape(recon_shape[:-1])
-
-  tmp = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, True)
-
-  grad = tmp[...,0] + tmp[...,1]
-
-  if beta > 0:
-    grad += beta*bowsher_prior_grad(Gam, ninds, ninds2, method)
-
-  if isflat:
-    Gam  = Gam.flatten()
-    grad = grad.flatten()
-
-  return grad
-
 
 #--------------------------------------------------------------
 #--------------------------------------------------------------
+
 parser = ArgumentParser(description = '2D na mr dual echo simulation')
 parser.add_argument('--niter',  default = 10, type = int)
 parser.add_argument('--niter_last', default = 10, type = int)
@@ -134,10 +27,10 @@ parser.add_argument('--bet_recon', default = 3., type = float)
 parser.add_argument('--bet_gam', default = 10., type = float)
 parser.add_argument('--delta_t', default = 5., type = float)
 parser.add_argument('--n', default = 128, type = int)
-parser.add_argument('--noise_level', default = 0.1,  type = float)
+parser.add_argument('--noise_level', default = 1.,  type = float)
 parser.add_argument('--nechos',   default = 2,  type = int)
-parser.add_argument('--nnearest', default = 3,  type = int)
-parser.add_argument('--nneigh',   default = 8,  type = int, choices = [8,20])
+parser.add_argument('--nnearest', default = 4,   type = int)
+parser.add_argument('--nneigh',   default = 20,  type = int, choices = [8,20])
 
 args = parser.parse_args()
 
@@ -272,7 +165,8 @@ fig3.tight_layout()
 
 # add noise to signal
 if noise_level > 0:
-  signal += noise_level*(np.random.randn(*signal.shape))*np.sqrt(nechos)/np.sqrt(2)
+  # sqrt(2/3) is needed to get similar noise level between and 3d becaues of operator rescaling
+  signal += np.sqrt(2./3)*noise_level*(np.random.randn(*signal.shape))*np.sqrt(nechos)/np.sqrt(2)
 
 # multiply signal with readout mask
 signal *= kmask
@@ -343,10 +237,10 @@ cost1 = []
 cost2 = []
 
 py.rc('image', cmap='gray')
-py.rcParams['text.usetex'] = True
-py.rcParams['text.latex.preamble'] = [r'\usepackage[cm]{sfmath}']
-py.rcParams['font.family'] = 'sans-serif'
-py.rcParams['font.sans-serif'] = 'Computer Modern Sans Serif'
+#py.rcParams['text.usetex'] = True
+#py.rcParams['text.latex.preamble'] = [r'\usepackage[cm]{sfmath}']
+#py.rcParams['font.family'] = 'sans-serif'
+#py.rcParams['font.sans-serif'] = 'Computer Modern Sans Serif'
 
 fig1, ax1 = py.subplots(4,n_outer+1, figsize = ((n_outer+1)*3,12))
 vmax = 1.1*np.linalg.norm(f, axis = -1).max()
