@@ -44,8 +44,6 @@ delta_t     = args.delta_t
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
 
-n = 128
-
 #odir = os.path.join('data','recons_multi_3d', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 #
 #if not os.path.exists(odir):
@@ -65,9 +63,9 @@ n = 128
 
 pdir = 'W:\georg\sodium_bowsher\BT-007_visit2'
 
-na_nii   = nib.load(os.path.join(pdir,'TE03_128_PhyCha_kw1.nii'))
-na2_nii  = nib.load(os.path.join(pdir,'TE5_128_PhyCha_kw1.nii'))
-t1_nii   = nib.load(os.path.join(pdir,'mprage_128_aligned.nii'))
+na_nii   = nib.load(os.path.join(pdir,'TE03_256_PhyCha_kw1.nii'))
+na2_nii  = nib.load(os.path.join(pdir,'TE5_256_PhyCha_kw1.nii'))
+t1_nii   = nib.load(os.path.join(pdir,'mprage_256_aligned.nii'))
 
 na_nii  = nib.as_closest_canonical(na_nii)
 na2_nii = nib.as_closest_canonical(na2_nii)
@@ -89,6 +87,7 @@ signal = np.array([np.fft.fftn(f[...,0], norm = 'ortho').view('(2,)float'),
 #-------------------
 # calc readout times
 #-------------------
+n = signal.shape[1]
 
 # setup the frequency array as used in numpy fft
 k0,k1,k2 = np.meshgrid(np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5)
@@ -190,7 +189,7 @@ recon = f.copy()
 recon_shape = recon.shape
 abs_recon   = np.linalg.norm(recon,axis=-1)
 
-Gam_bounds = (n**3)*[(0.001,1)]
+Gam_bounds = ((Gam_recon.shape[0])**3)*[(0.001,1)]
 
 cost1 = []
 cost2 = []
