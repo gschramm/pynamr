@@ -108,3 +108,4 @@ venv.bak/
 figs/*
 data/*
 run*.sh
+run*.bat
