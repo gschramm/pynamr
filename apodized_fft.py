@@ -181,7 +181,7 @@ def apodized_fft_multi_echo(f, readout_inds, Gamma, t, dt, nechos = 2, sens = No
   f  = xp.squeeze(f.view(dtype=xp.complex128))
 
   if sens is None:
-    sens = np.ones(f.shape, dtype = np.complex128)
+    sens = xp.ones(f.shape, dtype = np.complex128)
   else:
     sens = xp.squeeze(sens.view(dtype=xp.complex128))
   
@@ -248,7 +248,7 @@ def adjoint_apodized_fft_multi_echo(F, readout_inds, Gamma, t, dt, grad_gamma = 
   f = xp.zeros(F[0,...].shape, dtype = xp.complex128)
 
   if sens is None:
-    sens = np.ones(f.shape, dtype = np.complex128)
+    sens = xp.ones(f.shape, dtype = np.complex128)
   else:
     sens = xp.squeeze(sens.view(dtype=xp.complex128))
 
@@ -264,7 +264,7 @@ def adjoint_apodized_fft_multi_echo(F, readout_inds, Gamma, t, dt, grad_gamma = 
       else:
         f += (Gamma**((t[i]/dt) + k)) * xp.fft.ifftn(tmp, norm = 'ortho')
 
-  f *= np.conj(sens)
+  f *= xp.conj(sens)
 
   # we normalize to get the norm of the operator to the norm of the gradient op
   f *= np.sqrt(4*f.ndim)
