@@ -53,11 +53,16 @@ delta_t     = 5.
 # load the data
 #-------------------
 
-pdir   = os.path.join('data','sodium_data','BT-007_visit2','PhyCha_kw1_preprocessed')
+pdir   = os.path.join('data','sodium_data','BT-007_visit2','PhyCha_kw0_preprocessed')
 odir   = os.path.join(pdir, datetime.now().strftime("%y%m%d-%H%M%S") + '_' +'__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
 if not os.path.exists(odir):
   os.makedirs(odir)
+
+# write input arguments to file
+with open(os.path.join(odir,'input_params.csv'), 'w') as f:
+  for x in args.__dict__.items():
+    f.write("%s,%s\n"%(x[0],x[1]))
 
 nechos = 2
 
@@ -219,7 +224,7 @@ cost1 = []
 cost2 = []
 
 fig1, ax1 = py.subplots(2,n_outer+1, figsize = ((n_outer+1)*3,6))
-vmax = 1.2*abs_recon.max()
+vmax = 1.2
 ax1[0,0].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
 ax1[1,0].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
 
@@ -283,20 +288,25 @@ fig1.savefig(os.path.join(odir,'convergence.png'))
 # generate the sum of squares image
 ref_recon = abs_ifft[:,0,...].sum(0)*scale_fac
 # scale total of ref_recon to joint recon
-ref_recon *= (abs_recon.sum() / ref_recon.sum())
+ref_recon *= (np.percentile(abs_recon,99.99) / np.percentile(ref_recon,99.99))
+
+ref_recon_filt = abs_ifft_filtered[:,0,...].sum(0)*scale_fac
+# scale total of ref_recon to joint recon
+ref_recon_filt *= (np.percentile(abs_recon,99.99) / np.percentile(ref_recon_filt,99.99))
 
 # save the recons
 output_file = os.path.join(odir, 'recons.h5')
 with h5py.File(output_file, 'w') as hf:
+  grp = hf.create_group('images')
   grp.create_dataset('Gam_recon',     data = Gam_recon)
   grp.create_dataset('recon',         data = recon)
   grp.create_dataset('abs_recon',     data = abs_recon)
   grp.create_dataset('ifft',          data = ref_recon)
+  grp.create_dataset('ifft_filt',     data = ref_recon_filt)
   grp.create_dataset('prior_image',   data = aimg)
 
 #--------------------------------------------------------------------------------------------------
 
-ims2 = [{'cmap':py.cm.Greys_r},{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax},
-        {'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}, {'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
-vi2  = pv.ThreeAxisViewer([aimg, ref_recon, abs_recon,Gam_recon], imshow_kwargs = ims2)
+ims2 = [{'cmap':py.cm.Greys_r}] + 3*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
+vi2  = pv.ThreeAxisViewer([np.flip(x,(0,1)) for x in [aimg, ref_recon,ref_recon_filt,abs_recon,Gam_recon]], imshow_kwargs = ims2)
 vi2.fig.savefig(os.path.join(odir,'fig1.png'))
