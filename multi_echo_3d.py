@@ -104,7 +104,6 @@ abs_f = np.linalg.norm(f, axis = -1)
 # calc readout times
 #-------------------
 
-
 # setup the frequency array as used in numpy fft
 k0,k1,k2 = np.meshgrid(np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5)
 abs_k = np.sqrt(k0**2 + k1**2 + k2**2)

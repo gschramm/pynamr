@@ -17,77 +17,66 @@ from scipy.ndimage     import zoom, gaussian_filter
 from scipy.interpolate import interp1d
 
 from argparse import ArgumentParser
+from datetime import datetime
 
+import pymirc.viewer as pv
 #--------------------------------------------------------------
 #--------------------------------------------------------------
 
 parser = ArgumentParser(description = '3D na mr dual echo simulation')
 parser.add_argument('--niter',  default = 10, type = int)
-parser.add_argument('--niter_last', default = 10, type = int)
 parser.add_argument('--n_outer', default = 3, type = int)
-parser.add_argument('--method', default = 0, type = int)
-parser.add_argument('--bet_recon', default = 5., type = float)
-parser.add_argument('--bet_gam', default = 5., type = float)
-parser.add_argument('--delta_t', default = 5., type = float)
+parser.add_argument('--bet_recon', default = 1., type = float)
+parser.add_argument('--bet_gam', default = 1., type = float)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
+parser.add_argument('--n',   default = 128,  type = int, choices = [128,256])
 
 args = parser.parse_args()
 
 niter       = args.niter
-niter_last  = args.niter_last
 n_outer     = args.n_outer
 bet_recon   = args.bet_recon
 bet_gam     = args.bet_gam
-method      = args.method
-delta_t     = args.delta_t
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
+n           = args.n
 
-#odir = os.path.join('data','recons_multi_3d', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
-#
-#if not os.path.exists(odir):
-#    os.makedirs(odir)
-#
-## write input arguments to file
-#with open(os.path.join(odir,'input_params.csv'), 'w') as f:
-#  for x in args.__dict__.items():
-#    f.write("%s,%s\n"%(x[0],x[1]))
+method      = 0
+delta_t     = 5.
 
 #--------------------------------------------------------------
 #--------------------------------------------------------------
+
 
 #-------------------
 # load the data
 #-------------------
 
-pdir = 'W:\georg\sodium_bowsher\BT-007_visit2'
+pdir   = os.path.join('data','sodium_data','BT-007_visit2','PhyCha_kw1_preprocessed')
+odir   = os.path.join(pdir, datetime.now().strftime("%y%m%d-%H%M%S") + '_' +'__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
-na_nii   = nib.load(os.path.join(pdir,'TE03_256_PhyCha_kw1.nii'))
-na2_nii  = nib.load(os.path.join(pdir,'TE5_256_PhyCha_kw1.nii'))
-t1_nii   = nib.load(os.path.join(pdir,'mprage_256_aligned.nii'))
+if not os.path.exists(odir):
+  os.makedirs(odir)
 
-na_nii  = nib.as_closest_canonical(na_nii)
-na2_nii = nib.as_closest_canonical(na2_nii)
-t1_nii  = nib.as_closest_canonical(t1_nii)
+nechos = 2
 
-na_vol  = na_nii.get_fdata()
-na2_vol = na2_nii.get_fdata()
-t1_vol  = t1_nii.get_fdata()
+t1_vol = np.load(os.path.join(pdir,f't1_coreg_{n}.npy'))
+sens   = np.load(os.path.join(pdir,f'sens_{n}.npy')).astype(np.complex128).view('(2,)float')
+echo1  = np.load(os.path.join(pdir,f'echo1_{n}.npy')).astype(np.complex128).view('(2,)float')
+echo2  = np.load(os.path.join(pdir,f'echo2_{n}.npy')).astype(np.complex128).view('(2,)float')
 
-f = na_vol.astype(np.float64)
-f = np.stack((f,np.zeros(f.shape)), axis = -1)
+ncoils = echo1.shape[0]
 
-f2 = na2_vol.astype(np.float64)
-f2 = np.stack((f2,np.zeros(f2.shape)), axis = -1)
+signal = np.zeros((ncoils,nechos) + echo1.shape[1:])
 
-signal = np.array([np.fft.fftn(f[...,0], norm = 'ortho').view('(2,)float'), 
-                   np.fft.fftn(f2[...,0], norm = 'ortho').view('(2,)float')])
+for i in range(ncoils):
+  signal[i,0,...] = echo1[i,...]
+  signal[i,1,...] = echo2[i,...]
 
 #-------------------
 # calc readout times
 #-------------------
-n = signal.shape[1]
 
 # setup the frequency array as used in numpy fft
 k0,k1,k2 = np.meshgrid(np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5)
@@ -125,16 +114,37 @@ for i in range(n_readout_bins):
 #------------
 #------------
 
-kmask  = np.ones(signal.shape)
+kmask  = np.zeros(signal.shape)
+for j in range(ncoils):
+  for i in range(nechos):
+    kmask[j,i,...,0] = (read_out_img > 0).astype(np.float)
+    kmask[j,i,...,1] = (read_out_img > 0).astype(np.float)
 
-ifft          = np.zeros((2,) + signal.shape)
-ifft_filtered = np.zeros((2,) + signal.shape)
-abs_ifft          = np.zeros((2,) + signal.shape[:-1])
-abs_ifft_filtered = np.zeros((2,) + signal.shape[:-1])
+# multiply signal with readout mask
+signal *= kmask
+abs_signal = np.linalg.norm(signal, axis = -1)
+
+ifft          = np.zeros(signal.shape)
+ifft_filtered = np.zeros(signal.shape)
+abs_ifft          = np.zeros(signal.shape[:-1])
+abs_ifft_filtered = np.zeros(signal.shape[:-1])
+
+# create the han window that we need to multiply to the mask
+h_win = interp1d(np.arange(32), np.hanning(64)[32:], fill_value = 0, bounds_error = False)
+# abs_k was scaled to have the k edge at 32, we have to revert that for the han window
+hmask = h_win(abs_k.flatten()*32/k_edge).reshape(n,n,n)
+
+for j in range(ncoils):
+  for i in range(nechos):
+    s = signal[j,i,...].view(dtype = np.complex128).squeeze().copy()
+    ifft[j,i,...] = np.ascontiguousarray(np.fft.ifftn(s, norm = 'ortho').view('(2,)float'))
+    ifft_filtered[j,i,...] = np.ascontiguousarray(np.fft.ifftn(hmask*s, norm = 'ortho').view('(2,)float'))
+    abs_ifft[j,i,...] = np.linalg.norm(ifft[j,i,...], axis = -1)
+    abs_ifft_filtered[j,i,...] = np.linalg.norm(ifft_filtered[j,i,...], axis = -1)
 
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
-aimg = t1_vol.copy() / t1_vol.max()
+aimg = t1_vol.copy()
 
 if nneigh == 18:
   s    = np.array([[[0,1,0], 
@@ -181,56 +191,62 @@ ninds2 = is_nearest_neighbor_of(ninds)
 #--------------------------------------------------------------------------------------------------
 # initialize variables
 
-Gam_recon = f2[...,0] / f[...,0]
-Gam_recon[f[...,0] < 0.1*f[...,0].max()] = 1
+tmp1 = abs_ifft_filtered[:,0,...].sum(0)
+tmp2 = abs_ifft_filtered[:,1,...].sum(0)
+
+Gam_recon = tmp2 / tmp1
+Gam_recon[tmp1 < 0.05*tmp1.max()] = 1
 Gam_recon[Gam_recon > 1] = 1
 
-recon = f.copy()
+recon = np.zeros(signal.shape[2:])
+recon[...,0] = tmp1
+
 recon_shape = recon.shape
+Gam_bounds  = ((Gam_recon.shape[0])**3)*[(0.001,1)]
+
+# rescale signal and initial recon to get an image with max approx 1
+scale_fac = 1./tmp1.max()
+
+signal *= scale_fac
+tmp1   *= scale_fac
+tmp2   *= scale_fac
+recon  *= scale_fac
+
 abs_recon   = np.linalg.norm(recon,axis=-1)
 
-Gam_bounds = ((Gam_recon.shape[0])**3)*[(0.001,1)]
 
 cost1 = []
 cost2 = []
 
-#fig1, ax1 = py.subplots(4,n_outer+1, figsize = ((n_outer+1)*3,12))
-#vmax = 1.5*abs_f.max()
-#ax1[0,0].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
-#ax1[1,0].imshow(Gam_recon[...,64] - Gam[...,64], vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
-#ax1[2,0].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
-#ax1[3,0].imshow(abs_recon[...,64] - abs_f[...,64], vmax = 0.3, vmin = -0.3, cmap = py.cm.bwr)
-#
+fig1, ax1 = py.subplots(2,n_outer+1, figsize = ((n_outer+1)*3,6))
+vmax = 1.2*abs_recon.max()
+ax1[0,0].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
+ax1[1,0].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+
 #--------------------------------------------------------------------------------------------------
 
 for i in range(n_outer):
 
   print('LBFGS to optimize for recon')
   
-  if i == (n_outer - 1):
-    niter_recon = niter_last
-  else:
-    niter_recon = niter
-
   recon       = recon.flatten()
   
   cb = lambda x: cost2.append(multi_echo_bowsher_cost(x, recon_shape, signal, readout_inds, 
-                             Gam_recon, tr, delta_t, 2, kmask, bet_recon, ninds, ninds2, method))
+                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost,
                       recon, 
                       fprime = multi_echo_bowsher_grad, 
                       args = (recon_shape, signal, readout_inds, 
-                              Gam_recon, tr, delta_t, 2, kmask, bet_recon, ninds, ninds2, method),
+                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens),
                       callback = cb,
-                      maxiter = niter_recon, 
+                      maxiter = niter, 
                       disp = 1)
   
   recon        = res[0].reshape(recon_shape)
   abs_recon    = np.linalg.norm(recon,axis=-1)
   
-  #ax1[2,i+1].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
-  #ax1[3,i+1].imshow(abs_recon[...,64] - abs_f[...,64], vmax = 0.3, vmin = -0.3, cmap = py.cm.bwr)
+  ax1[1,i+1].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
 
   #---------------------------------------
 
@@ -239,13 +255,13 @@ for i in range(n_outer):
   Gam_recon = Gam_recon.flatten()
   
   cb = lambda x: cost1.append(multi_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
-                             recon, tr, delta_t, 2, kmask, bet_gam, ninds, ninds2, method))
+                             recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
                       Gam_recon, 
                       fprime = multi_echo_bowsher_grad_gamma, 
                       args = (recon_shape, signal, readout_inds, 
-                              recon, tr, delta_t, 2, kmask, bet_gam, ninds, ninds2, method),
+                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens),
                       callback = cb,
                       maxiter = niter, 
                       bounds = Gam_bounds,
@@ -254,42 +270,33 @@ for i in range(n_outer):
   Gam_recon = res[0].reshape(recon_shape[:-1])
 
   # reset values in low signal regions
-  Gam_recon[f[...,0] < 0.1*f[...,0].max()] = 1
+  Gam_recon[tmp1 < 0.05*tmp1.max()] = 1
 
-  #ax1[0,i+1].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
-  #ax1[1,i+1].imshow(Gam_recon[...,64] - Gam[...,64], vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
+  ax1[0,i+1].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
 
-import pymirc.viewer as pv
-ims = 4*[{'cmap':py.cm.Greys_r}]
-pv.ThreeAxisViewer([np.flip(f[...,0],1),np.flip(abs_recon,1), np.flip(Gam_recon,1), np.flip(aimg,1)], imshow_kwargs = ims)
+#--------------------------------------------------------------------------------------------------
 
-##--------------------------------------------------------------------------------------------------
-##--------------------------------------------------------------------------------------------------
-#
-#fig1.tight_layout()
-#fig1.savefig(os.path.join(odir,'convergence.png'))
-#fig1.show()
-#
-## save the recons
-#output_file = os.path.join(odir, 'recons.h5')
-#with h5py.File(output_file, 'w') as hf:
-#  grp = hf.create_group('images')
-#  grp.create_dataset('Gam',           data = Gam)
-#  grp.create_dataset('Gam_recon',     data = Gam_recon)
-#  grp.create_dataset('ground_truth',  data = f)
-#  grp.create_dataset('signal',        data = signal)
-#  grp.create_dataset('recon',         data = recon)
-#  grp.create_dataset('ifft',          data = ifft)
-#  grp.create_dataset('ifft_filtered', data = ifft_filtered)
-#  grp.create_dataset('prior_image',   data = aimg)
-#
-##--------------------------------------------------------------------------------------------------
-#
-#
-#ims1 = 2*[{'cmap':py.cm.Greys_r}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}]
-#vi1 = pv.ThreeAxisViewer([abs_ifft[0,...],abs_ifft_filtered[0,...],abs_f], imshow_kwargs = ims1)
-#vi1.fig.savefig(os.path.join(odir,'fig1.png'))
-#
-#ims2 = [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + 2*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
-#vi2  = pv.ThreeAxisViewer([abs_recon,Gam_recon, Gam], imshow_kwargs = ims2)
-#vi2.fig.savefig(os.path.join(odir,'fig2.png'))
+fig1.tight_layout()
+fig1.show()
+fig1.savefig(os.path.join(odir,'convergence.png'))
+
+# generate the sum of squares image
+ref_recon = abs_ifft[:,0,...].sum(0)*scale_fac
+# scale total of ref_recon to joint recon
+ref_recon *= (abs_recon.sum() / ref_recon.sum())
+
+# save the recons
+output_file = os.path.join(odir, 'recons.h5')
+with h5py.File(output_file, 'w') as hf:
+  grp.create_dataset('Gam_recon',     data = Gam_recon)
+  grp.create_dataset('recon',         data = recon)
+  grp.create_dataset('abs_recon',     data = abs_recon)
+  grp.create_dataset('ifft',          data = ref_recon)
+  grp.create_dataset('prior_image',   data = aimg)
+
+#--------------------------------------------------------------------------------------------------
+
+ims2 = [{'cmap':py.cm.Greys_r},{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax},
+        {'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}, {'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
+vi2  = pv.ThreeAxisViewer([aimg, ref_recon, abs_recon,Gam_recon], imshow_kwargs = ims2)
+vi2.fig.savefig(os.path.join(odir,'fig1.png'))
