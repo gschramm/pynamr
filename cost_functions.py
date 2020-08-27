@@ -4,10 +4,10 @@ from apodized_fft import apodized_fft_multi_echo, adjoint_apodized_fft_multi_ech
 from bowsher      import bowsher_prior_cost, bowsher_prior_grad
 
 #--------------------------------------------------------------
-def multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask):
+def multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, sens):
 
   exp_data = apodized_fft_multi_echo(cp.asarray(recon), readout_inds, cp.asarray(Gam), tr, delta_t,
-                                     nechos = nechos).get()
+                                     cp.asarray(sens), nechos = nechos).get()
   diff     = (exp_data - signal)*kmask
   cost     = 0.5*(diff**2).sum()
 
@@ -15,23 +15,25 @@ def multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nech
 
 #--------------------------------------------------------------
 def multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, nechos, 
-                                  kmask, grad_gamma):
+                                  kmask, grad_gamma, sens):
 
   exp_data = apodized_fft_multi_echo(cp.asarray(recon), readout_inds, cp.asarray(Gam), tr, delta_t, 
-                                     nechos = nechos).get()
+                                     cp.asarray(sens), nechos = nechos).get()
   diff     = (exp_data - signal)*kmask
 
   if grad_gamma:
-    grad  = adjoint_apodized_fft_multi_echo(cp.asarray(diff), readout_inds, cp.asarray(Gam), tr, delta_t, grad_gamma = True).get()
+    grad  = adjoint_apodized_fft_multi_echo(cp.asarray(diff), readout_inds, cp.asarray(Gam), tr, delta_t,
+                                            cp.asarray(sens), grad_gamma = True).get()
     grad *= recon
   else:
-    grad  = adjoint_apodized_fft_multi_echo(cp.asarray(diff), readout_inds, cp.asarray(Gam), tr, delta_t, grad_gamma = False).get()
+    grad  = adjoint_apodized_fft_multi_echo(cp.asarray(diff), readout_inds, cp.asarray(Gam), tr, delta_t, 
+                                            cp.asarray(sens), grad_gamma = False).get()
 
   return grad
 
 #--------------------------------------------------------------------
 def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
-                           beta, ninds, ninds2, method):
+                           beta, ninds, ninds2, method, sens):
   # ninds2 is a dummy argument to have the same arguments for
   # cost and its gradient
 
@@ -46,7 +48,7 @@ def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, d
     isflat_Gam = True
     Gam  = Gam.reshape(recon_shape[:-1])
 
-  cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask)
+  cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, sens)
 
   if beta > 0:
     cost += beta*bowsher_prior_cost(recon[...,0], ninds, method)
@@ -62,13 +64,13 @@ def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, d
 
 #--------------------------------------------------------------------
 def multi_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, 
-                                  nechos, kmask, beta, ninds, ninds2, method):
+                                  nechos, kmask, beta, ninds, ninds2, method, sens):
   return multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, 
-                                 nechos, kmask, beta, ninds, ninds2, method)
+                                 nechos, kmask, beta, ninds, ninds2, method, sens)
 
 #--------------------------------------------------------------------
 def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
-                           beta, ninds, ninds2, method):
+                           beta, ninds, ninds2, method, sens):
 
   isflat = False
   if recon.ndim == 1:  
@@ -76,7 +78,7 @@ def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, d
     recon  = recon.reshape(recon_shape)
 
   grad = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, 
-                                       nechos, kmask, False)
+                                       nechos, kmask, False, sens)
 
   if beta > 0:
 
@@ -91,14 +93,14 @@ def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, d
 
 #--------------------------------------------------------------------
 def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, nechos, 
-                                  kmask, beta, ninds, ninds2, method):
+                                  kmask, beta, ninds, ninds2, method, sens):
 
   isflat = False
   if Gam.ndim == 1:  
     isflat = True
     Gam = Gam.reshape(recon_shape[:-1])
 
-  tmp = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, True)
+  tmp = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, True, sens)
 
   grad = tmp[...,0] + tmp[...,1]
 
@@ -110,6 +112,3 @@ def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon,
     grad = grad.flatten()
 
   return grad
-
-
-

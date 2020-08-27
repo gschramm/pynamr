@@ -21,18 +21,19 @@ from argparse import ArgumentParser
 #--------------------------------------------------------------
 
 parser = ArgumentParser(description = '3D na mr dual echo simulation')
-parser.add_argument('--niter',  default = 20, type = int)
-parser.add_argument('--niter_last', default = 20, type = int)
+parser.add_argument('--niter',  default = 10, type = int)
+parser.add_argument('--niter_last', default = 10, type = int)
 parser.add_argument('--n_outer', default = 6, type = int)
 parser.add_argument('--method', default = 0, type = int)
-parser.add_argument('--bet_recon', default = 5., type = float)
-parser.add_argument('--bet_gam', default = 5., type = float)
+parser.add_argument('--bet_recon', default = 1., type = float)
+parser.add_argument('--bet_gam', default = 1., type = float)
 parser.add_argument('--delta_t', default = 5., type = float)
 parser.add_argument('--n', default = 128, type = int)
 parser.add_argument('--noise_level', default = 2.,  type = float)
 parser.add_argument('--nechos',   default = 2,  type = int)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
+parser.add_argument('--ncoils',   default = 1,   type = int)
 
 args = parser.parse_args()
 
@@ -48,6 +49,7 @@ noise_level = args.noise_level
 nechos      = args.nechos
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
+ncoils      = args.ncoils
 
 odir = os.path.join('data','recons_multi_3d', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
@@ -96,6 +98,8 @@ Gam[lab_regrid == 3] = 0.6*np.exp(-delta_t/9) + 0.4*np.exp(-delta_t/18)
 
 f = np.stack((f,np.zeros(f.shape)), axis = -1)
 
+abs_f = np.linalg.norm(f, axis = -1)
+
 #-------------------
 # calc readout times
 #-------------------
@@ -134,20 +138,23 @@ for i in range(n_readout_bins):
   readout_inds.append(rinds)
   read_out_img[rinds] = i + 1
 
+# set up the array for the coil sensitivities
+# the coil sensitivies are complex
+sens        = np.zeros((ncoils,n,n,n,2))
+sens[...,0] = 1.
+
 #------------
 #------------
 
 # calculate signal on GPU
-signal = apodized_fft_multi_echo(cp.asarray(f), readout_inds, cp.asarray(Gam), tr, delta_t, nechos = nechos).get()
+signal = apodized_fft_multi_echo(cp.asarray(f), readout_inds, cp.asarray(Gam), tr, delta_t, nechos = nechos,
+                                 sens = cp.asarray(sens)).get()
 
 kmask  = np.zeros(signal.shape)
-for i in range(nechos):
-  kmask[i,...,0] = (read_out_img > 0).astype(np.float)
-  kmask[i,...,1] = (read_out_img > 0).astype(np.float)
-
-# multiply signal with readout mask
-signal *= kmask
-abs_signal = np.linalg.norm(signal, axis = -1)
+for j in range(ncoils):
+  for i in range(nechos):
+    kmask[j,i,...,0] = (read_out_img > 0).astype(np.float)
+    kmask[j,i,...,1] = (read_out_img > 0).astype(np.float)
 
 # add noise to signal
 if noise_level > 0:
@@ -157,24 +164,23 @@ if noise_level > 0:
 signal *= kmask
 abs_signal = np.linalg.norm(signal, axis = -1)
 
-ifft          = np.zeros((nechos,) + f.shape)
-ifft_filtered = np.zeros((nechos,) + f.shape)
-abs_ifft          = np.zeros((nechos,) + f.shape[:-1])
-abs_ifft_filtered = np.zeros((nechos,) + f.shape[:-1])
-
-abs_f = np.linalg.norm(f, axis = -1)
+ifft          = np.zeros((ncoils,nechos,) + f.shape)
+ifft_filtered = np.zeros((ncoils,nechos,) + f.shape)
+abs_ifft          = np.zeros((ncoils,nechos,) + f.shape[:-1])
+abs_ifft_filtered = np.zeros((ncoils,nechos,) + f.shape[:-1])
 
 # create the han window that we need to multiply to the mask
 h_win = interp1d(np.arange(32), np.hanning(64)[32:], fill_value = 0, bounds_error = False)
 # abs_k was scaled to have the k edge at 32, we have to revert that for the han window
 hmask = h_win(abs_k.flatten()*32/k_edge).reshape(n,n,n)
 
-for i in range(nechos):
-  s = signal[i,...].view(dtype = np.complex128).squeeze().copy()
-  ifft[i,...] = np.ascontiguousarray(np.fft.ifftn(s, norm = 'ortho').view('(2,)float'))
-  ifft_filtered[i,...] = np.ascontiguousarray(np.fft.ifftn(hmask*s, norm = 'ortho').view('(2,)float'))
-  abs_ifft[i,...] = np.linalg.norm(ifft[i,...], axis = -1)
-  abs_ifft_filtered[i,...] = np.linalg.norm(ifft_filtered[i,...], axis = -1)
+for j in range(ncoils):
+  for i in range(nechos):
+    s = signal[j,i,...].view(dtype = np.complex128).squeeze().copy()
+    ifft[j,i,...] = np.ascontiguousarray(np.fft.ifftn(s, norm = 'ortho').view('(2,)float'))
+    ifft_filtered[j,i,...] = np.ascontiguousarray(np.fft.ifftn(hmask*s, norm = 'ortho').view('(2,)float'))
+    abs_ifft[j,i,...] = np.linalg.norm(ifft[j,i,...], axis = -1)
+    abs_ifft_filtered[j,i,...] = np.linalg.norm(ifft_filtered[j,i,...], axis = -1)
 
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
@@ -226,12 +232,12 @@ ninds2 = is_nearest_neighbor_of(ninds)
 #--------------------------------------------------------------------------------------------------
 # initialize variables
 
-Gam_recon = abs_ifft_filtered[1,...] / abs_ifft_filtered[0,...]
-Gam_recon[abs_ifft_filtered[1,...] < 0.1*abs_ifft_filtered[0,...].max()] = 1
+Gam_recon = abs_ifft_filtered[:,1,...].mean(0) / abs_ifft_filtered[:,0,...].mean(0)
+Gam_recon[abs_ifft_filtered[:,1,...].mean(0) < 0.1*abs_ifft_filtered[:,0,...].mean(0).max()] = 1
 Gam_recon[Gam_recon > 1] = 1
 
 # division by 3 is to compensate for norm of adjoint operator
-recon = ifft_filtered[0,...].copy() / 3.
+recon = ifft_filtered[:,0,...].mean(0)
 recon_shape = recon.shape
 abs_recon   = np.linalg.norm(recon,axis=-1)
 
@@ -261,13 +267,13 @@ for i in range(n_outer):
   recon       = recon.flatten()
   
   cb = lambda x: cost2.append(multi_echo_bowsher_cost(x, recon_shape, signal, readout_inds, 
-                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method))
+                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost,
                       recon, 
                       fprime = multi_echo_bowsher_grad, 
                       args = (recon_shape, signal, readout_inds, 
-                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method),
+                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens),
                       callback = cb,
                       maxiter = niter_recon, 
                       disp = 1)
@@ -285,13 +291,13 @@ for i in range(n_outer):
   Gam_recon = Gam_recon.flatten()
   
   cb = lambda x: cost1.append(multi_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
-                             recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method))
+                             recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
                       Gam_recon, 
                       fprime = multi_echo_bowsher_grad_gamma, 
                       args = (recon_shape, signal, readout_inds, 
-                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method),
+                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens),
                       callback = cb,
                       maxiter = niter, 
                       bounds = Gam_bounds,
@@ -300,7 +306,7 @@ for i in range(n_outer):
   Gam_recon = res[0].reshape(recon_shape[:-1])
 
   # reset values in low signal regions
-  Gam_recon[abs_ifft_filtered[1,...] < 0.1*abs_ifft_filtered[0,...].max()] = 1
+  Gam_recon[abs_ifft_filtered[:,1,...].mean(0) < 0.1*abs_ifft_filtered[:,0,...].mean(0).max()] = 1
 
   ax1[0,i+1].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
   ax1[1,i+1].imshow(Gam_recon[...,64] - Gam[...,64], vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
@@ -330,7 +336,7 @@ with h5py.File(output_file, 'w') as hf:
 import pymirc.viewer as pv
 
 ims1 = 2*[{'cmap':py.cm.Greys_r}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}]
-vi1 = pv.ThreeAxisViewer([abs_ifft[0,...],abs_ifft_filtered[0,...],abs_f], imshow_kwargs = ims1)
+vi1 = pv.ThreeAxisViewer([abs_ifft[:,0,...].mean(0),abs_ifft_filtered[:,0,...].mean(0),abs_f], imshow_kwargs = ims1)
 vi1.fig.savefig(os.path.join(odir,'fig1.png'))
 
 ims2 = [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + 2*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
