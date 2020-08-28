@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import h5py
+import cupy as cp
 
 import matplotlib.pyplot as py
 
@@ -23,14 +24,15 @@ parser.add_argument('--niter',  default = 10, type = int)
 parser.add_argument('--niter_last', default = 10, type = int)
 parser.add_argument('--n_outer', default = 6, type = int)
 parser.add_argument('--method', default = 0, type = int)
-parser.add_argument('--bet_recon', default = 3., type = float)
-parser.add_argument('--bet_gam', default = 10., type = float)
+parser.add_argument('--bet_recon', default = 0.1, type = float)
+parser.add_argument('--bet_gam', default = 0.1, type = float)
 parser.add_argument('--delta_t', default = 5., type = float)
 parser.add_argument('--n', default = 128, type = int)
-parser.add_argument('--noise_level', default = 1.,  type = float)
+parser.add_argument('--noise_level', default = 0.2,  type = float)
 parser.add_argument('--nechos',   default = 2,  type = int)
 parser.add_argument('--nnearest', default = 4,   type = int)
 parser.add_argument('--nneigh',   default = 20,  type = int, choices = [8,20])
+parser.add_argument('--ncoils',   default = 1,   type = int)
 
 args = parser.parse_args()
 
@@ -46,6 +48,7 @@ noise_level = args.noise_level
 nechos      = args.nechos
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
+ncoils      = args.ncoils
 
 odir = os.path.join('data','recons_multi', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
@@ -94,6 +97,7 @@ Gam[lab_regrid == 3] = 0.6*np.exp(-delta_t/9) + 0.4*np.exp(-delta_t/18)
 
 f = np.stack((f,np.zeros(f.shape)), axis = -1)
 
+abs_f = np.linalg.norm(f, axis = -1)
 #-------------------
 # calc readout times
 #-------------------
@@ -132,71 +136,50 @@ for i in range(n_readout_bins):
   readout_inds.append(rinds)
   read_out_img[rinds] = i + 1
 
+# set up the array for the coil sensitivities
+# the coil sensitivies are complex
+sens        = np.zeros((ncoils,n,n,2))
+sens[...,0] = 1.
+
+
 #------------
 #------------
 
-signal = apodized_fft_multi_echo(f, readout_inds, Gam, tr, delta_t, nechos = nechos)
+# calculate signal on GPU
+signal = apodized_fft_multi_echo(cp.asarray(f), readout_inds, cp.asarray(Gam), tr, delta_t, nechos = nechos,
+                                 sens = cp.asarray(sens)).get()
 
 kmask  = np.zeros(signal.shape)
-for i in range(nechos):
-  kmask[i,...,0] = (read_out_img > 0).astype(np.float)
-  kmask[i,...,1] = (read_out_img > 0).astype(np.float)
-
-# multiply signal with readout mask
-signal *= kmask
-abs_signal = np.linalg.norm(signal, axis = -1)
-
-# plot central line trough k-space
-fig3, ax3 = py.subplots(3,nechos, figsize = (nechos*3,9))
-for i in range(nechos):
-  ax3[0,i].plot(np.fft.fftshift(signal[i,:,:,0])[n//2,(n//2 - 32):(n//2 + 32)], '-')
-  ax3[0,i].set_title(f'echo {i+1} real part')
-  ax3[1,i].plot(np.fft.fftshift(signal[i,:,:,1])[n//2,(n//2 - 32):(n//2 + 32)], '-')
-  ax3[1,i].set_title(f'echo {i+1} imag part')
-  ax3[2,i].plot(np.fft.fftshift(abs_signal[i,:,:])[n//2,(n//2 - 32):(n//2 + 32)], '-')
-  ax3[2,i].set_title(f'echo {i+1} abs value')
-for axx in ax3[:-1,:].flatten(): 
-  axx.set_ylim(-1,1)
-  axx.grid(ls = ':')
-for axx in ax3[-1,:].flatten(): 
-  axx.set_ylim(0,1)
-  axx.grid(ls = ':')
-fig3.tight_layout()
+for j in range(ncoils):
+  for i in range(nechos):
+    kmask[j,i,...,0] = (read_out_img > 0).astype(np.float)
+    kmask[j,i,...,1] = (read_out_img > 0).astype(np.float)
 
 # add noise to signal
 if noise_level > 0:
-  # sqrt(2/3) is needed to get similar noise level between and 3d becaues of operator rescaling
-  signal += np.sqrt(2./3)*noise_level*(np.random.randn(*signal.shape))*np.sqrt(nechos)/np.sqrt(2)
+  signal += noise_level*(np.random.randn(*signal.shape))*np.sqrt(nechos)/np.sqrt(2)
 
 # multiply signal with readout mask
 signal *= kmask
 abs_signal = np.linalg.norm(signal, axis = -1)
 
-# replot noisy signal
-for i in range(nechos):
-  ax3[0,i].plot(np.fft.fftshift(signal[i,:,:,0])[n//2,(n//2 - 32):(n//2 + 32)], '.')
-  ax3[1,i].plot(np.fft.fftshift(signal[i,:,:,1])[n//2,(n//2 - 32):(n//2 + 32)], '.')
-  ax3[2,i].plot(np.fft.fftshift(abs_signal[i,:,:])[n//2,(n//2 - 32):(n//2 + 32)], '.')
-
-# calculate the inverse FFT of the data for all echos
-ifft_fac = np.sqrt(np.prod(f.shape)) / np.sqrt(4*(signal.ndim - 1))
-
-ifft          = np.zeros((nechos,) + f.shape)
-ifft_filtered = np.zeros((nechos,) + f.shape)
-abs_ifft          = np.zeros((nechos,) + f.shape[:-1])
-abs_ifft_filtered = np.zeros((nechos,) + f.shape[:-1])
+ifft          = np.zeros((ncoils,nechos,) + f.shape)
+ifft_filtered = np.zeros((ncoils,nechos,) + f.shape)
+abs_ifft          = np.zeros((ncoils,nechos,) + f.shape[:-1])
+abs_ifft_filtered = np.zeros((ncoils,nechos,) + f.shape[:-1])
 
 # create the han window that we need to multiply to the mask
 h_win = interp1d(np.arange(32), np.hanning(64)[32:], fill_value = 0, bounds_error = False)
 # abs_k was scaled to have the k edge at 32, we have to revert that for the han window
 hmask = h_win(abs_k.flatten()*32/k_edge).reshape(n,n)
 
-for i in range(nechos):
-  s = signal[i,...].view(dtype = np.complex128).squeeze().copy()
-  ifft[i,...] = np.ascontiguousarray(np.fft.ifft2(s).view('(2,)float') * ifft_fac)
-  ifft_filtered[i,...] = np.ascontiguousarray(np.fft.ifft2(hmask*s).view('(2,)float') * ifft_fac)
-  abs_ifft[i,...] = np.linalg.norm(ifft[i,...], axis = -1)
-  abs_ifft_filtered[i,...] = np.linalg.norm(ifft_filtered[i,...], axis = -1)
+for j in range(ncoils):
+  for i in range(nechos):
+    s = signal[j,i,...].view(dtype = np.complex128).squeeze().copy()
+    ifft[j,i,...] = np.ascontiguousarray(np.fft.ifftn(s, norm = 'ortho').view('(2,)float'))
+    ifft_filtered[j,i,...] = np.ascontiguousarray(np.fft.ifftn(hmask*s, norm = 'ortho').view('(2,)float'))
+    abs_ifft[j,i,...] = np.linalg.norm(ifft[j,i,...], axis = -1)
+    abs_ifft_filtered[j,i,...] = np.linalg.norm(ifft_filtered[j,i,...], axis = -1)
 
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
@@ -223,11 +206,12 @@ ninds2 = is_nearest_neighbor_of(ninds)
 #--------------------------------------------------------------------------------------------------
 # initialize variables
 
-Gam_recon = abs_ifft_filtered[1,...] / abs_ifft_filtered[0,...]
-Gam_recon[abs_ifft_filtered[1,...] < 0.1*abs_ifft_filtered[0,...].max()] = 1
+Gam_recon = abs_ifft_filtered[:,1,...].mean(0) / abs_ifft_filtered[:,0,...].mean(0)
+Gam_recon[abs_ifft_filtered[:,1,...].mean(0) < 0.1*abs_ifft_filtered[:,0,...].mean(0).max()] = 1
 Gam_recon[Gam_recon > 1] = 1
 
-recon = ifft_filtered[0,...].copy()
+# division by 3 is to compensate for norm of adjoint operator
+recon = ifft_filtered[:,0,...].mean(0)
 recon_shape = recon.shape
 abs_recon   = np.linalg.norm(recon,axis=-1)
 
@@ -236,18 +220,13 @@ Gam_bounds = (n**2)*[(0.001,1)]
 cost1 = []
 cost2 = []
 
-py.rc('image', cmap='gray')
-#py.rcParams['text.usetex'] = True
-#py.rcParams['text.latex.preamble'] = [r'\usepackage[cm]{sfmath}']
-#py.rcParams['font.family'] = 'sans-serif'
-#py.rcParams['font.sans-serif'] = 'Computer Modern Sans Serif'
-
 fig1, ax1 = py.subplots(4,n_outer+1, figsize = ((n_outer+1)*3,12))
-vmax = 1.1*np.linalg.norm(f, axis = -1).max()
-ax1[0,0].imshow(Gam_recon, vmin = 0, vmax = 1)
-ax1[1,0].imshow(Gam_recon - Gam, vmin = -0.2, vmax = 0.2, cmap = py.cm.bwr)
-ax1[2,0].imshow(abs_recon, vmin = 0, vmax = vmax)
-ax1[3,0].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
+vmax = 1.5*abs_f.max()
+ax1[0,0].imshow(Gam_recon, vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
+ax1[1,0].imshow(Gam_recon - Gam, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
+ax1[2,0].imshow(abs_recon, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+ax1[3,0].imshow(abs_recon - abs_f, vmax = 0.3, vmin = -0.3, cmap = py.cm.bwr)
+
 #--------------------------------------------------------------------------------------------------
 
 for i in range(n_outer):
@@ -262,13 +241,13 @@ for i in range(n_outer):
   recon       = recon.flatten()
   
   cb = lambda x: cost2.append(multi_echo_bowsher_cost(x, recon_shape, signal, readout_inds, 
-                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method))
+                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost,
                       recon, 
                       fprime = multi_echo_bowsher_grad, 
                       args = (recon_shape, signal, readout_inds, 
-                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method),
+                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens),
                       callback = cb,
                       maxiter = niter_recon, 
                       disp = 1)
@@ -276,8 +255,8 @@ for i in range(n_outer):
   recon        = res[0].reshape(recon_shape)
   abs_recon    = np.linalg.norm(recon,axis=-1)
   
-  ax1[2,i+1].imshow(abs_recon, vmin = 0, vmax = vmax)
-  ax1[3,i+1].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
+  ax1[2,i+1].imshow(abs_recon, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+  ax1[3,i+1].imshow(abs_recon - abs_f, vmax = 0.3, vmin = -0.3, cmap = py.cm.bwr)
 
   #---------------------------------------
 
@@ -286,13 +265,13 @@ for i in range(n_outer):
   Gam_recon = Gam_recon.flatten()
   
   cb = lambda x: cost1.append(multi_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
-                             recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method))
+                             recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
                       Gam_recon, 
                       fprime = multi_echo_bowsher_grad_gamma, 
                       args = (recon_shape, signal, readout_inds, 
-                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method),
+                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens),
                       callback = cb,
                       maxiter = niter, 
                       bounds = Gam_bounds,
@@ -301,12 +280,18 @@ for i in range(n_outer):
   Gam_recon = res[0].reshape(recon_shape[:-1])
 
   # reset values in low signal regions
-  Gam_recon[abs_ifft_filtered[1,...] < 0.1*abs_ifft_filtered[0,...].max()] = 1
+  Gam_recon[abs_ifft_filtered[:,1,...].mean(0) < 0.1*abs_ifft_filtered[:,0,...].mean(0).max()] = 1
 
-  ax1[0,i+1].imshow(Gam_recon, vmin = 0, vmax = 1)
-  ax1[1,i+1].imshow(Gam_recon - Gam, vmin = -0.2, vmax = 0.2, cmap = py.cm.bwr)
+  ax1[0,i+1].imshow(Gam_recon, vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
+  ax1[1,i+1].imshow(Gam_recon - Gam, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
 
-  #--------------------------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------------------------
+
+fig1.tight_layout()
+fig1.savefig(os.path.join(odir,'convergence.png'))
+fig1.show()
+
 # save the recons
 output_file = os.path.join(odir, 'recons.h5')
 with h5py.File(output_file, 'w') as hf:
@@ -320,28 +305,24 @@ with h5py.File(output_file, 'w') as hf:
   grp.create_dataset('ifft_filtered', data = ifft_filtered)
   grp.create_dataset('prior_image',   data = aimg)
 
+
 #--------------------------------------------------------------------------------------------------
-
-fig1.tight_layout()
-fig1.savefig(os.path.join(odir,'convergence.png'))
-fig1.show()
-
 fig, ax = py.subplots(2,5, figsize = (15,6))
-ax[0,0].imshow(np.linalg.norm(f, axis = -1), vmax = vmax)
+ax[0,0].imshow(abs_f, vmax = vmax, cmap = py.cm.Greys_r)
 ax[0,0].set_title('ground truth signal')
-ax[1,0].imshow(Gam, vmax = 1, vmin = 0)
+ax[1,0].imshow(Gam, vmax = 1, vmin = 0, cmap = py.cm.Greys_r)
 ax[1,0].set_title(r'$\Gamma$')
-ax[0,1].imshow(abs_ifft_filtered[0,...], vmax = vmax)
+ax[0,1].imshow(abs_ifft_filtered[0,0,...], vmax = vmax, cmap = py.cm.Greys_r)
 ax[0,1].set_title('filt. IFFT 1st echo')
-ax[1,1].imshow(abs_ifft_filtered[-1,...], vmax = vmax)
+ax[1,1].imshow(abs_ifft_filtered[0,-1,...], vmax = vmax, cmap = py.cm.Greys_r)
 ax[1,1].set_title('filt. IFFT last echo')
-ax[0,2].imshow(abs_ifft[0,...], vmax = vmax)
+ax[0,2].imshow(abs_ifft[0,0,...], vmax = vmax, cmap = py.cm.Greys_r)
 ax[0,2].set_title('IFFT 1st echo')
-ax[1,2].imshow(abs_ifft[-1,...], vmax = vmax)
+ax[1,2].imshow(abs_ifft[0,-1,...], vmax = vmax, cmap = py.cm.Greys_r)
 ax[1,2].set_title('IFFT last echo')
-ax[0,3].imshow(abs_recon, vmax = vmax)
+ax[0,3].imshow(abs_recon, vmax = vmax, cmap = py.cm.Greys_r)
 ax[0,3].set_title(r'recon $\beta$ ' + f'{bet_recon}')
-ax[1,3].imshow(Gam_recon, vmax = 1, vmin = 0)
+ax[1,3].imshow(Gam_recon, vmax = 1, vmin = 0, cmap = py.cm.Greys_r)
 ax[1,3].set_title(r'$\Gamma$ recon $\beta$ ' + f'{bet_gam}')
 ax[0,4].imshow(abs_recon - np.linalg.norm(f, axis = -1), vmax = 0.2, vmin = -0.2, cmap = py.cm.bwr)
 ax[0,4].set_title(r'bias recon $\beta$ ' + f'{bet_recon}')
@@ -350,13 +331,3 @@ ax[1,4].set_title(r'bias $\Gamma$ recon $\beta$ ' + f'{bet_gam}')
 fig.tight_layout()
 fig.savefig(os.path.join(odir,'results.png'))
 fig.show()
-
-fig2,ax2 = py.subplots(1,2, figsize = (6,3))
-ax2[0].semilogy(cost1)
-ax2[1].semilogy(cost2)
-fig2.tight_layout()
-fig2.savefig(os.path.join(odir,'cost.png'))
-fig2.show()
-
-fig3.show()
-fig3.savefig(os.path.join(odir,'kspace_prof.png'))
