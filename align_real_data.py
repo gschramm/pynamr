@@ -11,7 +11,7 @@ import pymirc.metrics as pm
 import pymirc.viewer as pv
 
 pdir = os.path.join('data','sodium_data','BT-007_visit2')
-sdir = 'DeNoise_kw1'
+sdir = 'PhyCha_kw0'
 n    = 256
 
 sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03'))[0], sdir.split('_')[0], sdir)
@@ -37,8 +37,7 @@ if not os.path.exists(odir):
 #----
 # load the complex coil images for first echo
 data_shape  = (64,64,64)
-#recon_shape = (256,256,256) 
-recon_shape = (128,128,128) 
+recon_shape = (n,n,n) 
 
 fnames  = sorted(glob(os.path.join(sdir1, fpattern)))
 fnames2 = sorted(glob(os.path.join(sdir2, fpattern)))
