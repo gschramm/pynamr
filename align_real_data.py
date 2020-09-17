@@ -10,12 +10,12 @@ import pymirc.image_operations as pi
 import pymirc.metrics as pm
 import pymirc.viewer as pv
 
-pdir = os.path.join('data','sodium_data','BT-007_visit2')
-sdir = 'PhyCha_kw0'
-n    = 256
+pdir = os.path.join('data','sodium_data','TBI-n005')
+sdir = 'DeNoise_kw0'
+n    = 128
 
-sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03'))[0], sdir.split('_')[0], sdir)
-sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5'))[0], sdir.split('_')[0], sdir)
+sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03'))[0], sdir.split('_')[0], sdir.split('_')[1])
+sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5'))[0], sdir.split('_')[0], sdir.split('_')[1])
 fpattern = '*.c?'
 
 t1_nii = nib.load(os.path.join(pdir,'mprage.nii'))

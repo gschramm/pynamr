@@ -28,9 +28,10 @@ parser.add_argument('--niter',  default = 10, type = int)
 parser.add_argument('--n_outer', default = 3, type = int)
 parser.add_argument('--bet_recon', default = 1., type = float)
 parser.add_argument('--bet_gam', default = 1., type = float)
-parser.add_argument('--nnearest', default = 13,  type = int)
-parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
+parser.add_argument('--nnearest', default = 4,  type = int)
+parser.add_argument('--nneigh',   default = 20,  type = int, choices = [8,20])
 parser.add_argument('--n',   default = 128,  type = int, choices = [128,256])
+parser.add_argument('--slice2d', default = 56, type = int)
 
 args = parser.parse_args()
 
@@ -41,6 +42,7 @@ bet_gam     = args.bet_gam
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
 n           = args.n
+slice2d     = args.slice2d
 
 method      = 0
 delta_t     = 5.
@@ -54,7 +56,7 @@ delta_t     = 5.
 #-------------------
 
 pdir   = os.path.join('data','sodium_data','TBI-n005','PhyCha_kw0_preprocessed')
-odir   = os.path.join(pdir, datetime.now().strftime("%y%m%d-%H%M%S") + '_' +'__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
+odir   = os.path.join(pdir, datetime.now().strftime("%y%m%d-%H%M%S") + '_2D_' +'__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
 if not os.path.exists(odir):
   os.makedirs(odir)
@@ -80,21 +82,41 @@ for i in range(ncoils):
   signal[i,1,...] = echo2[i,...]
 
 #-------------------
-# calc readout times
+# extract 2D signal
 #-------------------
 
-# setup the frequency array as used in numpy fft
 k0,k1,k2 = np.meshgrid(np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5)
-abs_k = np.sqrt(k0**2 + k1**2 + k2**2)
+
+signal3d = signal.copy()
+signal   = np.zeros(signal3d.shape[:-2] + (2,))
+
+# create the han window that we need to multiply to the mask
+h_win_z = interp1d(np.arange(32), np.hanning(64)[32:], fill_value = 0, bounds_error = False)
+# abs_k was scaled to have the k edge at 32, we have to revert that for the han window
+hmask_z = h_win_z(np.abs(np.fft.fftshift(k2).flatten())).reshape(n,n,n)
+
+for j in range(ncoils):
+  for i in range(nechos):
+    s = signal3d[j,i,...].view(dtype = np.complex128).squeeze().copy()
+    signal[j,i,...] = np.ascontiguousarray(np.fft.ifftn(s*hmask_z, norm = 'ortho', axes = (-1,))[...,slice2d].view('(2,)float'))
+
+sens3d = sens.copy()
+sens   = sens3d[...,slice2d,:]
+
+#----------------------
+# calc 2D readout times
+#----------------------
+
+k0,k1 = np.meshgrid(np.arange(n) - n//2 + 0.5, np.arange(n) - n//2 + 0.5)
+abs_k = np.sqrt(k0**2 + k1**2)
 abs_k = np.fft.fftshift(abs_k)
 
 # rescale abs_k such that k = 1.5 is at r = 32 (the edge)
 k_edge = 1.5
 abs_k *= k_edge/32
 
-# calculate the readout times and the k-spaces locations that
-# are read at a given time
-t_read_3 = 1000*readout_time(abs_k)
+# recalculate 2D readout times and indices
+t_read_2d = 1000*readout_time(abs_k)
 
 n_readout_bins = 32
 
@@ -102,17 +124,17 @@ k_1d = np.linspace(0, k_edge, n_readout_bins + 1)
 
 readout_inds = []
 tr= np.zeros(n_readout_bins)
-t_read_3_binned = np.zeros(t_read_3.shape)
+t_read_2d_binned = np.zeros(t_read_2d.shape)
 
-read_out_img = np.zeros((n,n,n))
+read_out_img = np.zeros((n,n))
 
 for i in range(n_readout_bins):
   k_start = k_1d[i]
   k_end   = k_1d[i+1]
   rinds   = np.where(np.logical_and(abs_k >= k_start, abs_k <= k_end))
 
-  tr[i] = t_read_3[rinds].mean()
-  t_read_3_binned[rinds] = tr[i]
+  tr[i] = t_read_2d[rinds].mean()
+  t_read_2d_binned[rinds] = tr[i]
   readout_inds.append(rinds)
   read_out_img[rinds] = i + 1
 
@@ -137,7 +159,7 @@ abs_ifft_filtered = np.zeros(signal.shape[:-1])
 # create the han window that we need to multiply to the mask
 h_win = interp1d(np.arange(32), np.hanning(64)[32:], fill_value = 0, bounds_error = False)
 # abs_k was scaled to have the k edge at 32, we have to revert that for the han window
-hmask = h_win(abs_k.flatten()*32/k_edge).reshape(n,n,n)
+hmask = h_win(abs_k.flatten()*32/k_edge).reshape(n,n)
 
 for j in range(ncoils):
   for i in range(nechos):
@@ -149,45 +171,20 @@ for j in range(ncoils):
 
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
-aimg = t1_vol.copy()
+aimg = t1_vol.copy()[...,slice2d]
 
-if nneigh == 18:
-  s    = np.array([[[0,1,0], 
-                    [1,1,1], 
-                    [0,1,0]],
-                   [[1,1,1], 
-                    [1,0,1], 
-                    [1,1,1]],
-                   [[0,1,0], 
-                    [1,1,1], 
-                    [0,1,0]]])
-elif nneigh == 80:
-  s = np.array([[[0, 0, 0, 0, 0],
-                 [0, 1, 1, 1, 0],
-                 [0, 1, 1, 1, 0],
-                 [0, 1, 1, 1, 0],
-                 [0, 0, 0, 0, 0]],
-                [[0, 1, 1, 1, 0],
-                 [1, 1, 1, 1, 1],
-                 [1, 1, 1, 1, 1],
-                 [1, 1, 1, 1, 1],
-                 [0, 1, 1, 1, 0]],
-                [[0, 1, 1, 1, 0],
-                 [1, 1, 1, 1, 1],
-                 [1, 1, 0, 1, 1],
-                 [1, 1, 1, 1, 1],
-                 [0, 1, 1, 1, 0]],
-                [[0, 1, 1, 1, 0],
-                 [1, 1, 1, 1, 1],
-                 [1, 1, 1, 1, 1],
-                 [1, 1, 1, 1, 1],
-                 [0, 1, 1, 1, 0]],
-                [[0, 0, 0, 0, 0],
-                 [0, 1, 1, 1, 0],
-                 [0, 1, 1, 1, 0],
-                 [0, 1, 1, 1, 0],
-                 [0, 0, 0, 0, 0]]])
-
+if nneigh == 8:
+  s    = np.array([[1,1,1], 
+                   [1,0,1], 
+                   [1,1,1]])
+                   
+elif nneigh == 20:
+  s = np.array([[0, 1, 1, 1, 0],
+                [1, 1, 1, 1, 1],
+                [1, 1, 0, 1, 1],
+                [1, 1, 1, 1, 1],
+                [0, 1, 1, 1, 0]])
+ 
   
 ninds  = np.zeros((np.prod(aimg.shape),nnearest), dtype = np.uint32)
 nearest_neighbors(aimg,s,nnearest,ninds)
@@ -207,7 +204,7 @@ recon = np.zeros(signal.shape[2:])
 recon[...,0] = tmp1
 
 recon_shape = recon.shape
-Gam_bounds  = ((Gam_recon.shape[0])**3)*[(0.001,1)]
+Gam_bounds  = (n**2)*[(0.001,1)]
 
 # rescale signal and initial recon to get an image with max approx 1
 scale_fac = 1./tmp1.max()
@@ -225,8 +222,8 @@ cost2 = []
 
 fig1, ax1 = py.subplots(2,n_outer+1, figsize = ((n_outer+1)*3,6))
 vmax = 1.2
-ax1[0,0].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
-ax1[1,0].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+ax1[0,0].imshow(Gam_recon.T, vmin = 0, vmax = 1, cmap = py.cm.Greys_r, origin = 'lower')
+ax1[1,0].imshow(abs_recon.T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r, origin = 'lower')
 
 #--------------------------------------------------------------------------------------------------
 
@@ -251,7 +248,7 @@ for i in range(n_outer):
   recon        = res[0].reshape(recon_shape)
   abs_recon    = np.linalg.norm(recon,axis=-1)
   
-  ax1[1,i+1].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+  ax1[1,i+1].imshow(abs_recon.T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r, origin = 'lower')
 
   #---------------------------------------
 
@@ -277,7 +274,7 @@ for i in range(n_outer):
   # reset values in low signal regions
   Gam_recon[tmp1 < 0.05*tmp1.max()] = 1
 
-  ax1[0,i+1].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
+  ax1[0,i+1].imshow(Gam_recon.T, vmin = 0, vmax = 1, cmap = py.cm.Greys_r, origin = 'lower')
 
 #--------------------------------------------------------------------------------------------------
 
@@ -307,6 +304,20 @@ with h5py.File(output_file, 'w') as hf:
 
 #--------------------------------------------------------------------------------------------------
 
-ims2 = [{'cmap':py.cm.Greys_r}] + 3*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
-vi2  = pv.ThreeAxisViewer([np.flip(x,(0,1)) for x in [aimg, ref_recon,ref_recon_filt,abs_recon,Gam_recon]], imshow_kwargs = ims2)
-vi2.fig.savefig(os.path.join(odir,'fig1.png'))
+fig2, ax2 = py.subplots(2,3, figsize = (9,6))
+ax2[0,0].imshow(aimg.T, cmap = py.cm.Greys_r, vmin = 0, origin = 'lower')
+ax2[0,0].set_title('prior image')
+ax2[0,1].imshow(ref_recon.T, cmap = py.cm.Greys_r, vmin = 0, vmax = vmax, origin = 'lower')
+ax2[0,1].set_title('SOS IFFT')
+ax2[0,2].imshow(ref_recon_filt.T, cmap = py.cm.Greys_r, vmin = 0, vmax = vmax, origin = 'lower')
+ax2[0,2].set_title('SOS IFFT filtered')
+ax2[1,1].imshow(abs_recon.T, cmap = py.cm.Greys_r, vmin = 0, vmax = vmax, origin = 'lower')
+ax2[1,1].set_title('it. joint Na recon')
+ax2[1,2].imshow(Gam_recon.T, cmap = py.cm.Greys_r, vmin = 0, vmax = 1, origin = 'lower')
+ax2[1,2].set_title('it. joint Gamma recon')
+
+for axx in ax2.flatten(): axx.set_axis_off()
+
+fig2.tight_layout()
+fig2.savefig(os.path.join(odir,'results.png'))
+fig2.show()
