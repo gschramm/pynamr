@@ -93,6 +93,41 @@ def multi_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon,
   return cost
 
 #--------------------------------------------------------------------
+def multi_echo_bowsher_cost_total(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
+                             beta_recon, beta_gam, ninds, method, sens):
+  # ninds2 is a dummy argument to have the same arguments for
+  # cost and its gradient
+
+  isflat_recon = False
+  isflat_Gam   = False
+
+  if recon.ndim == 1:  
+    isflat_recon = True
+    recon  = recon.reshape(recon_shape)
+
+  if Gam.ndim == 1:  
+    isflat_Gam = True
+    Gam  = Gam.reshape(recon_shape[:-1])
+
+  cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, sens)
+
+  if beta_recon > 0:
+    cost += beta_recon*bowsher_prior_cost(recon[...,0], ninds, method)
+    cost += beta_recon*bowsher_prior_cost(recon[...,1], ninds, method)
+
+  if beta_gam > 0:
+    cost += beta_gam*bowsher_prior_cost(Gam, ninds, method)
+
+  if isflat_recon:
+    recon = recon.flatten()
+
+  if isflat_Gam:
+    Gam = Gam.flatten()
+   
+  return cost
+
+
+#--------------------------------------------------------------------
 def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
                            beta, ninds, ninds2, method, sens):
 

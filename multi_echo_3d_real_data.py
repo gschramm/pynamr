@@ -11,7 +11,8 @@ from scipy.optimize import fmin_l_bfgs_b, fmin_cg
 from nearest_neighbors import nearest_neighbors, is_nearest_neighbor_of
 from readout_time import readout_time
 from apodized_fft import apodized_fft_multi_echo
-from cost_functions import multi_echo_bowsher_cost, multi_echo_bowsher_grad, multi_echo_bowsher_cost_gamma, multi_echo_bowsher_grad_gamma
+from cost_functions import multi_echo_bowsher_cost, multi_echo_bowsher_grad, multi_echo_bowsher_cost_gamma
+from cost_functions import multi_echo_bowsher_grad_gamma, multi_echo_bowsher_cost_total
 
 from scipy.ndimage     import zoom, gaussian_filter
 from scipy.interpolate import interp1d
@@ -219,9 +220,7 @@ recon  *= scale_fac
 
 abs_recon   = np.linalg.norm(recon,axis=-1)
 
-
-cost1 = []
-cost2 = []
+cost = []
 
 fig1, ax1 = py.subplots(2,n_outer+1, figsize = ((n_outer+1)*3,6))
 vmax = 1.2
@@ -236,8 +235,8 @@ for i in range(n_outer):
   
   recon       = recon.flatten()
   
-  cb = lambda x: cost2.append(multi_echo_bowsher_cost(x, recon_shape, signal, readout_inds, 
-                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens))
+  cb = lambda x: cost.append(multi_echo_bowsher_cost_total(x, recon_shape, signal, readout_inds, 
+                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost,
                       recon, 
@@ -259,8 +258,8 @@ for i in range(n_outer):
   
   Gam_recon = Gam_recon.flatten()
   
-  cb = lambda x: cost1.append(multi_echo_bowsher_cost_gamma(x, recon_shape, signal, readout_inds, 
-                             recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens))
+  cb = lambda x: cost.append(multi_echo_bowsher_cost_total(recon, recon_shape, signal, readout_inds, 
+                             x, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
                       Gam_recon, 
@@ -304,6 +303,7 @@ with h5py.File(output_file, 'w') as hf:
   grp.create_dataset('ifft',          data = ref_recon)
   grp.create_dataset('ifft_filt',     data = ref_recon_filt)
   grp.create_dataset('prior_image',   data = aimg)
+  grp.create_dataset('cost',          data = cost)
 
 #--------------------------------------------------------------------------------------------------
 
