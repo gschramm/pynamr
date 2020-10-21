@@ -35,6 +35,7 @@ parser.add_argument('--nechos',   default = 2,  type = int)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
 parser.add_argument('--ncoils',   default = 1,   type = int)
+parser.add_argument('--phantom',  default = 'brain', choices = ['brain','rod'])
 
 args = parser.parse_args()
 
@@ -51,6 +52,7 @@ nechos      = args.nechos
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
 ncoils      = args.ncoils
+phantom     = args.phantom
 
 odir = os.path.join('data','recons_multi_3d', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
@@ -71,34 +73,81 @@ np.random.seed(0)
 # simulate images
 #-------------------
 
-data = np.load('./data/54.npz')
-t1     = data['arr_0']
-labels = data['arr_1']
-lab    = np.pad(labels, ((36,36),(0,0),(36,36)),'constant')
+if phantom == 'brain':
+  data = np.load('./data/54.npz')
+  t1     = data['arr_0']
+  labels = data['arr_1']
+  lab    = np.pad(labels, ((36,36),(0,0),(36,36)),'constant')
+  
+  # CSF = 1, GM = 2, WM = 3
+  csf_inds = np.where(lab == 1) 
+  gm_inds  = np.where(lab == 2)
+  wm_inds  = np.where(lab == 3)
+  
+  # set up array for trans. magnetization
+  f = np.zeros(lab.shape)
+  f[csf_inds] = 1.1
+  f[gm_inds]  = 0.8
+  f[wm_inds]  = 0.7
+  
+  # regrid to a 256 grid
+  f          = zoom(np.expand_dims(f,-1),(n/434,n/434,n/434,1), order = 1, prefilter = False)[...,0]
+  lab_regrid = zoom(lab, (n/434,n/434,n/434), order = 0, prefilter = False) 
+  
+  # set up array for T2* times
+  Gam = np.ones((n,n,n))
+  Gam[lab_regrid == 1] = np.exp(-delta_t/50)
+  Gam[lab_regrid == 2] = 0.6*np.exp(-delta_t/8) + 0.4*np.exp(-delta_t/15)
+  Gam[lab_regrid == 3] = 0.6*np.exp(-delta_t/9) + 0.4*np.exp(-delta_t/18)
 
-# CSF = 1, GM = 2, WM = 3
-csf_inds = np.where(lab == 1) 
-gm_inds  = np.where(lab == 2)
-wm_inds  = np.where(lab == 3)
+elif phantom == 'rod':
+  n4 = 4*n
 
-# set up array for trans. magnetization
-f = np.zeros(lab.shape)
-f[csf_inds] = 1.1
-f[gm_inds]  = 0.8
-f[wm_inds]  = 0.7
+  x = np.arange(n4) - n4/2 + 0.5
+  X,Y,Z = np.meshgrid(x, x, x, indexing = 'ij')
 
-# regrid to a 256 grid
-f          = zoom(np.expand_dims(f,-1),(n/434,n/434,n/434,1), order = 1, prefilter = False)[...,0]
-lab_regrid = zoom(lab, (n/434,n/434,n/434), order = 0, prefilter = False) 
+  # set up sodium content
+  f = np.zeros((n4,n4,n4))
+  f[np.sqrt(X**2 + Y**2) <= 0.4*n4] = 1
 
-# set up array for T2* times
-Gam = np.ones((n,n,n))
-Gam[lab_regrid == 1] = np.exp(-delta_t/50)
-Gam[lab_regrid == 2] = 0.6*np.exp(-delta_t/8) + 0.4*np.exp(-delta_t/15)
-Gam[lab_regrid == 3] = 0.6*np.exp(-delta_t/9) + 0.4*np.exp(-delta_t/18)
+  # add rods
+  f[np.sqrt((X-(n4/4))**2 + Y**2) <= 0.03*n4] = 2
+  f[np.sqrt((X+(n4/4))**2 + Y**2) <= 0.03*n4] = 0
+  f[np.sqrt((X-(n4/8))**2 + Y**2) <= 0.01*n4] = 2
+  f[np.sqrt((X+(n4/8))**2 + Y**2) <= 0.01*n4] = 0
+
+  f[np.sqrt((Y-(n4/4))**2 + X**2) <= 0.03*n4] = 2
+  f[np.sqrt((Y+(n4/4))**2 + X**2) <= 0.03*n4] = 0
+  f[np.sqrt((Y-(n4/8))**2 + X**2) <= 0.01*n4] = 2
+  f[np.sqrt((Y+(n4/8))**2 + X**2) <= 0.01*n4] = 0
+
+  f[np.abs(Z) > 0.3*n4] = 0
+
+  # down sample array
+  f = f.reshape(n,4,n,4,n,4).mean(axis=(1,3,5))
+
+  # set up sodium content
+  Gam = np.ones((n4,n4,n4))
+  Gam[np.sqrt(X**2 + Y**2) <= 0.4*n4] = np.exp(-delta_t/50)
+
+  # add rods
+  Gam[np.sqrt((X-(n4/4))**2 + Y**2) <= 0.03*n4] = np.exp(-delta_t/50)
+  Gam[np.sqrt((X+(n4/4))**2 + Y**2) <= 0.03*n4] = np.exp(-delta_t/50)
+  Gam[np.sqrt((X-(n4/8))**2 + Y**2) <= 0.01*n4] = np.exp(-delta_t/50)
+  Gam[np.sqrt((X+(n4/8))**2 + Y**2) <= 0.01*n4] = np.exp(-delta_t/50)
+
+  Gam[np.sqrt((Y-(n4/4))**2 + X**2) <= 0.03*n4] = 0.6*np.exp(-delta_t/8) + 0.4*np.exp(-delta_t/15)
+  Gam[np.sqrt((Y+(n4/4))**2 + X**2) <= 0.03*n4] = 0.6*np.exp(-delta_t/8) + 0.4*np.exp(-delta_t/15)
+  Gam[np.sqrt((Y-(n4/8))**2 + X**2) <= 0.01*n4] = 0.6*np.exp(-delta_t/8) + 0.4*np.exp(-delta_t/15)
+  Gam[np.sqrt((Y+(n4/8))**2 + X**2) <= 0.01*n4] = 0.6*np.exp(-delta_t/8) + 0.4*np.exp(-delta_t/15)
+
+  Gam[np.abs(Z) > 0.3*n4] = 1
+
+  # down sample array
+  Gam = Gam.reshape(n,4,n,4,n,4).mean(axis=(1,3,5))
+
 
 f = np.stack((f,np.zeros(f.shape)), axis = -1)
-
 abs_f = np.linalg.norm(f, axis = -1)
 
 #-------------------
@@ -247,7 +296,7 @@ cost = []
 
 fig1, ax1 = py.subplots(4,n_outer+1, figsize = ((n_outer+1)*3,12))
 vmax = 1.5*abs_f.max()
-ax1[0,0].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
+ax1[0,0].imshow(Gam_recon[...,64], vmin = 0.5, vmax = 1, cmap = py.cm.Greys_r)
 ax1[1,0].imshow(Gam_recon[...,64] - Gam[...,64], vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
 ax1[2,0].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
 ax1[3,0].imshow(abs_recon[...,64] - abs_f[...,64], vmax = 0.3, vmin = -0.3, cmap = py.cm.bwr)
@@ -305,9 +354,10 @@ for i in range(n_outer):
   Gam_recon = res[0].reshape(recon_shape[:-1])
 
   # reset values in low signal regions
-  Gam_recon[abs_ifft_filtered[:,1,...].mean(0) < 0.1*abs_ifft_filtered[:,0,...].mean(0).max()] = 1
+  if phantom == 'brain':
+    Gam_recon[abs_ifft_filtered[:,1,...].mean(0) < 0.1*abs_ifft_filtered[:,0,...].mean(0).max()] = 1
 
-  ax1[0,i+1].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
+  ax1[0,i+1].imshow(Gam_recon[...,64], vmin = 0.5, vmax = 1, cmap = py.cm.Greys_r)
   ax1[1,i+1].imshow(Gam_recon[...,64] - Gam[...,64], vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
 
 #--------------------------------------------------------------------------------------------------
@@ -339,6 +389,6 @@ ims1 = 2*[{'cmap':py.cm.Greys_r}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vma
 vi1 = pv.ThreeAxisViewer([abs_ifft[:,0,...].mean(0),abs_ifft_filtered[:,0,...].mean(0),abs_f], imshow_kwargs = ims1)
 vi1.fig.savefig(os.path.join(odir,'fig1.png'))
 
-ims2 = [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + 2*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
+ims2 = [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + 2*[{'cmap':py.cm.Greys_r, 'vmin':0.5, 'vmax':1.}]
 vi2  = pv.ThreeAxisViewer([abs_recon,Gam_recon, Gam], imshow_kwargs = ims2)
 vi2.fig.savefig(os.path.join(odir,'fig2.png'))
