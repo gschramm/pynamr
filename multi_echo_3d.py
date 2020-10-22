@@ -2,7 +2,9 @@ import os
 import numpy as np
 import cupy as cp
 import h5py
+import math
 
+import nibabel as nib
 import matplotlib as mpl
 import matplotlib.pyplot as py
 
@@ -16,6 +18,9 @@ from cost_functions import multi_echo_bowsher_grad_gamma, multi_echo_bowsher_cos
 from scipy.ndimage     import zoom, gaussian_filter
 from scipy.interpolate import interp1d
 
+import pymirc.viewer as pv
+from pymirc.image_operations import aff_transform, zoom3d
+
 from argparse import ArgumentParser
 
 #--------------------------------------------------------------
@@ -23,36 +28,37 @@ from argparse import ArgumentParser
 
 parser = ArgumentParser(description = '3D na mr dual echo simulation')
 parser.add_argument('--niter',  default = 10, type = int)
-parser.add_argument('--niter_last', default = 10, type = int)
 parser.add_argument('--n_outer', default = 6, type = int)
-parser.add_argument('--method', default = 0, type = int)
+#parser.add_argument('--method', default = 0, type = int)
 parser.add_argument('--bet_recon', default = 0.1, type = float)
 parser.add_argument('--bet_gam', default = 0.3, type = float)
-parser.add_argument('--delta_t', default = 5., type = float)
-parser.add_argument('--n', default = 128, type = int)
+#parser.add_argument('--delta_t', default = 5., type = float)
+parser.add_argument('--n', default = 128, type = int, choices = [128,256])
 parser.add_argument('--noise_level', default = 0.2,  type = float)
-parser.add_argument('--nechos',   default = 2,  type = int)
+#parser.add_argument('--nechos',   default = 2,  type = int)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
-parser.add_argument('--ncoils',   default = 1,   type = int)
+#parser.add_argument('--ncoils',   default = 1,   type = int)
 parser.add_argument('--phantom',  default = 'brain', choices = ['brain','rod'])
+parser.add_argument('--seed',     default = 0, type = int)
 
 args = parser.parse_args()
 
 niter       = args.niter
-niter_last  = args.niter_last
 n_outer     = args.n_outer
-bet_recon   = args.bet_recon * args.nechos / 2
-bet_gam     = args.bet_gam * args.nechos / 2
-method      = args.method
+bet_recon   = args.bet_recon
+bet_gam     = args.bet_gam
 n           = args.n
-delta_t     = args.delta_t / (args.nechos - 1)
 noise_level = args.noise_level
-nechos      = args.nechos
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
-ncoils      = args.ncoils
 phantom     = args.phantom
+seed        = args.seed
+
+ncoils      = 1
+method      = 0
+nechos      = 2
+delta_t     = 5. / (nechos - 1)
 
 odir = os.path.join('data','recons_multi_3d', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
@@ -67,18 +73,28 @@ with open(os.path.join(odir,'input_params.csv'), 'w') as f:
 #--------------------------------------------------------------
 #--------------------------------------------------------------
 
-np.random.seed(0)
+np.random.seed(seed)
   
 #-------------------
 # simulate images
 #-------------------
 
 if phantom == 'brain':
-  data = np.load('./data/54.npz')
-  t1     = data['arr_0']
-  labels = data['arr_1']
-  lab    = np.pad(labels, ((36,36),(0,0),(36,36)),'constant')
+
+  label_nii = nib.load('data/brainweb54/subject54_crisp_v.mnc.gz')
+  label_nii = nib.as_closest_canonical(label_nii)
   
+  # pad to 512x512x512 voxels
+  lab       = np.pad(label_nii.get_fdata(), ((36,36),(0,0),(36,36)),'constant')
+
+  t1_nii = nib.load('data/brainweb54/subject54_t1w_p4.mnc.gz')
+  t1_nii = nib.as_closest_canonical(t1_nii)
+  t1     = t1_nii.get_fdata()
+
+  lab_affine = label_nii.affine.copy()
+  lab_affine[0,-1] -= 36*lab_affine[0,0]
+  lab_affine[2,-1] -= 36*lab_affine[2,2]
+
   # CSF = 1, GM = 2, WM = 3
   csf_inds = np.where(lab == 1) 
   gm_inds  = np.where(lab == 2)
@@ -87,18 +103,58 @@ if phantom == 'brain':
   # set up array for trans. magnetization
   f = np.zeros(lab.shape)
   f[csf_inds] = 1.1
-  f[gm_inds]  = 0.8
+  f[gm_inds]  = 0.9
   f[wm_inds]  = 0.7
-  
-  # regrid to a 256 grid
-  f          = zoom(np.expand_dims(f,-1),(n/434,n/434,n/434,1), order = 1, prefilter = False)[...,0]
-  lab_regrid = zoom(lab, (n/434,n/434,n/434), order = 0, prefilter = False) 
-  
-  # set up array for T2* times
-  Gam = np.ones((n,n,n))
-  Gam[lab_regrid == 1] = np.exp(-delta_t/50)
-  Gam[lab_regrid == 2] = 0.6*np.exp(-delta_t/8) + 0.4*np.exp(-delta_t/15)
-  Gam[lab_regrid == 3] = 0.6*np.exp(-delta_t/9) + 0.4*np.exp(-delta_t/18)
+
+  # set up array for Gamma (ration between 2nd and 1st echo
+  Gam = np.ones(f.shape)
+  Gam[lab == 1] = np.exp(-delta_t/50)
+  Gam[lab == 2] = 0.6*np.exp(-delta_t/8) + 0.4*np.exp(-delta_t/15)
+  Gam[lab == 3] = 0.6*np.exp(-delta_t/9) + 0.4*np.exp(-delta_t/18)
+
+  # set up image for special ROIs
+  roi_vol = np.zeros(f.shape, dtype = np.int8)
+
+  # add region with lower Gamma due to BO inhomogeneity
+  x = np.linspace(-1,1,Gam.shape[0])
+  X,Y,Z = np.meshgrid(x,x,x, indexing = 'ij')
+  R = np.sqrt((X + 0.15)**2 + (Y - 0.7)**2 + (Z - 0)**2)
+
+  B0weights = gaussian_filter((R<0.15).astype(float), 3)
+  Gam = (1-B0weights)*Gam + 0.4*B0weights
+
+  roi_vol[R<0.15] = 1
+
+  # add stand alone lesion in Na density
+  RL = np.sqrt((X - 0.2)**2 + (Y - 0.4)**2 + (Z - 0)**2)
+  Lweights = gaussian_filter((RL<0.05).astype(float), 1.)
+  f = (1-Lweights)*f + 1.*Lweights
+
+  roi_vol[RL<0.05] = 2
+
+  # interpolate T1 to label grid
+  t1 = aff_transform(t1, np.linalg.inv(t1_nii.affine) @ lab_affine,
+                     f.shape, cval = t1.min()) 
+
+  # add lesion in t1
+  RT = np.sqrt((X + 0.367)**2 + (Y + 0.372)**2 + (Z - 0)**2)
+  Tweights = gaussian_filter((RT<0.05).astype(float), 1.)
+  t1 = (1-Tweights)*t1 + 0.1*Tweights
+
+  roi_vol[RT<0.05] = 3
+
+  # regrid to 128x128x128 or 256x256x256 voxels
+  f   = zoom3d(f,  n/f.shape[0])
+  t1  = zoom3d(t1, n/t1.shape[0])
+  Gam = zoom3d(Gam, n/Gam.shape[0])
+
+  roi_vol = zoom(roi_vol, n/Gam.shape[0], order = 0, prefilter = False)
+
+  # reorient to LPS
+  f   = np.flip(f,(0,1))
+  t1  = np.flip(t1,(0,1))
+  Gam = np.flip(Gam,(0,1))
+  roi_vol = np.flip(roi_vol,(0,1))
 
 elif phantom == 'rod':
   n4 = 4*n
@@ -233,8 +289,7 @@ for j in range(ncoils):
 
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
-aimg  = (f.max() - f[...,0])**0.8
-aimg += 0.001*aimg.max()*np.random.random(aimg.shape)
+aimg  = t1.copy()
 
 if nneigh == 18:
   s    = np.array([[[0,1,0], 
@@ -282,7 +337,6 @@ ninds2 = is_nearest_neighbor_of(ninds)
 # initialize variables
 
 Gam_recon = abs_ifft_filtered[:,1,...].mean(0) / abs_ifft_filtered[:,0,...].mean(0)
-Gam_recon[abs_ifft_filtered[:,1,...].mean(0) < 0.1*abs_ifft_filtered[:,0,...].mean(0).max()] = 1
 Gam_recon[Gam_recon > 1] = 1
 
 # division by 3 is to compensate for norm of adjoint operator
@@ -294,12 +348,13 @@ Gam_bounds = (n**3)*[(0.001,1)]
 
 cost = []
 
-fig1, ax1 = py.subplots(4,n_outer+1, figsize = ((n_outer+1)*3,12))
+fig1, ax1 = py.subplots(4, 7, figsize = (7*3,4*3), constrained_layout = True)
 vmax = 1.5*abs_f.max()
-ax1[0,0].imshow(Gam_recon[...,64], vmin = 0.5, vmax = 1, cmap = py.cm.Greys_r)
-ax1[1,0].imshow(Gam_recon[...,64] - Gam[...,64], vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
-ax1[2,0].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
-ax1[3,0].imshow(abs_recon[...,64] - abs_f[...,64], vmax = 0.3, vmin = -0.3, cmap = py.cm.bwr)
+ax1[0,0].imshow(abs_recon[...,n//2].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+ax1[1,0].imshow(abs_recon[...,n//2].T - abs_f[...,n//2].T, vmax = 0.3, vmin = -0.3, cmap = py.cm.bwr)
+ax1[2,0].imshow(Gam_recon[...,n//2].T, vmin = Gam.min(), vmax = 1, cmap = py.cm.Greys_r)
+ax1[3,0].imshow(Gam_recon[...,n//2].T - Gam[...,n//2].T, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
+ax1[0,0].set_title('init')
 
 #--------------------------------------------------------------------------------------------------
 
@@ -307,12 +362,7 @@ for i in range(n_outer):
 
   print('LBFGS to optimize for recon')
   
-  if i == (n_outer - 1):
-    niter_recon = niter_last
-  else:
-    niter_recon = niter
-
-  recon       = recon.flatten()
+  recon = recon.flatten()
   
   cb = lambda x: cost.append(multi_echo_bowsher_cost_total(x, recon_shape, signal, readout_inds, 
                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens))
@@ -323,14 +373,18 @@ for i in range(n_outer):
                       args = (recon_shape, signal, readout_inds, 
                               Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens),
                       callback = cb,
-                      maxiter = niter_recon, 
+                      maxiter = niter, 
                       disp = 1)
   
   recon        = res[0].reshape(recon_shape)
   abs_recon    = np.linalg.norm(recon,axis=-1)
-  
-  ax1[2,i+1].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
-  ax1[3,i+1].imshow(abs_recon[...,64] - abs_f[...,64], vmax = 0.3, vmin = -0.3, cmap = py.cm.bwr)
+ 
+  if i % math.ceil(n_outer/6) == 0:
+    im0_ax1 = ax1[0, (i//math.ceil(n_outer/6))+1].imshow(abs_recon[...,n//2].T, 
+                                                         vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+    im1_ax1 = ax1[1, (i//math.ceil(n_outer/6))+1].imshow(abs_recon[...,n//2].T - abs_f[...,n//2].T, 
+                                                         vmax = 0.3, vmin = -0.3, cmap = py.cm.bwr)
+    ax1[0, (i//math.ceil(n_outer/6))+1].set_title(f'iter {i+1}')
 
   #---------------------------------------
 
@@ -353,17 +407,25 @@ for i in range(n_outer):
   
   Gam_recon = res[0].reshape(recon_shape[:-1])
 
-  # reset values in low signal regions
-  if phantom == 'brain':
-    Gam_recon[abs_ifft_filtered[:,1,...].mean(0) < 0.1*abs_ifft_filtered[:,0,...].mean(0).max()] = 1
-
-  ax1[0,i+1].imshow(Gam_recon[...,64], vmin = 0.5, vmax = 1, cmap = py.cm.Greys_r)
-  ax1[1,i+1].imshow(Gam_recon[...,64] - Gam[...,64], vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
+  if i % math.ceil(n_outer/6) == 0:
+    last_col = (i//math.ceil(n_outer/6))+1
+    im2_ax1 = ax1[2, (i//math.ceil(n_outer/6))+1].imshow(Gam_recon[...,n//2].T, vmin = Gam.min(), 
+                                                         vmax = 1, cmap = py.cm.Greys_r)
+    im3_ax1 = ax1[3, (i//math.ceil(n_outer/6))+1].imshow(Gam_recon[...,n//2].T - Gam[...,n//2].T, 
+                                                         vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
 
 #--------------------------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------------------------
 
-fig1.tight_layout()
+for axx in ax1.flatten():
+  axx.set_axis_off()
+
+fig1.colorbar(im0_ax1, ax = ax1[0,last_col])
+fig1.colorbar(im1_ax1, ax = ax1[1,last_col])
+fig1.colorbar(im2_ax1, ax = ax1[2,last_col])
+fig1.colorbar(im3_ax1, ax = ax1[3,last_col])
+
+#fig1.tight_layout()
 fig1.savefig(os.path.join(odir,'convergence.png'))
 fig1.show()
 
@@ -376,6 +438,7 @@ with h5py.File(output_file, 'w') as hf:
   grp.create_dataset('ground_truth',  data = f)
   grp.create_dataset('signal',        data = signal)
   grp.create_dataset('recon',         data = recon)
+  grp.create_dataset('roi_vol',       data = roi_vol)
   grp.create_dataset('ifft',          data = ifft)
   grp.create_dataset('ifft_filtered', data = ifft_filtered)
   grp.create_dataset('prior_image',   data = aimg)
@@ -383,10 +446,60 @@ with h5py.File(output_file, 'w') as hf:
 
 #--------------------------------------------------------------------------------------------------
 
-import pymirc.viewer as pv
+fig2, ax2 = py.subplots(3, 4, figsize = (5*3,3*3))
+
+im00_ax2 = ax2[0,0].imshow(abs_f[...,n//2].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+im01_ax2 = ax2[0,1].imshow(abs_ifft[0,0,...,n//2].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+im02_ax2 = ax2[0,2].imshow(abs_ifft_filtered[0,0,...,n//2].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+im03_ax2 = ax2[0,3].imshow(abs_recon[...,n//2].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+
+im11_ax2 = ax2[1,1].imshow(abs_ifft[0,0,...,n//2].T - abs_f[...,n//2].T, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
+im12_ax2 = ax2[1,2].imshow(abs_ifft_filtered[0,0,...,n//2].T - abs_f[...,n//2].T, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
+im13_ax2 = ax2[1,3].imshow(abs_recon[...,n//2].T - abs_f[...,n//2].T, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
+
+im20_ax2 = ax2[2,0].imshow(Gam[...,n//2].T, vmin = Gam.min(), vmax = 1, cmap = py.cm.Greys_r)
+im21_ax2 = ax2[2,1].imshow(Gam_recon[...,n//2].T, vmin = Gam.min(), vmax = 1, cmap = py.cm.Greys_r)
+im22_ax2 = ax2[2,2].imshow(Gam_recon[...,n//2].T - Gam[...,n//2].T, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
+im23_ax2 = ax2[2,3].imshow(aimg[...,n//2].T, cmap = py.cm.Greys_r)
+
+fig2.colorbar(im00_ax2, ax = ax2[0,0], shrink = 0.5)
+fig2.colorbar(im01_ax2, ax = ax2[0,1], shrink = 0.5)
+fig2.colorbar(im02_ax2, ax = ax2[0,2], shrink = 0.5)
+fig2.colorbar(im03_ax2, ax = ax2[0,3], shrink = 0.5)
+
+fig2.colorbar(im11_ax2, ax = ax2[1,1], shrink = 0.5)
+fig2.colorbar(im12_ax2, ax = ax2[1,2], shrink = 0.5)
+fig2.colorbar(im13_ax2, ax = ax2[1,3], shrink = 0.5)
+
+fig2.colorbar(im20_ax2, ax = ax2[2,0], shrink = 0.5)
+fig2.colorbar(im21_ax2, ax = ax2[2,1], shrink = 0.5)
+fig2.colorbar(im22_ax2, ax = ax2[2,2], shrink = 0.5)
+fig2.colorbar(im23_ax2, ax = ax2[2,3], shrink = 0.5)
+
+ax2[0,0].set_title('ground truth Na', size = 'medium')
+ax2[0,1].set_title('IFFT 1st echo', size = 'medium')
+ax2[0,2].set_title('IFFT 1st echo filtered', size = 'medium')
+ax2[0,3].set_title('joint reconstruction', size = 'medium')
+
+ax2[1,1].set_title('bias IFFT 1st echo', size = 'medium')
+ax2[1,2].set_title('bias IFFT 1st echo filtered', size = 'medium')
+ax2[1,3].set_title('bias joint reconstruction', size = 'medium')
+
+ax2[2,0].set_title('ground truth Gamma', size = 'medium')
+ax2[2,1].set_title('joint reconstruction Gamma', size = 'medium')
+ax2[2,2].set_title('bias joint reconstruction Gamma', size = 'medium')
+ax2[2,3].set_title('anat. prior image', size = 'medium')
+
+for axx in ax2.flatten():
+  axx.set_axis_off()
+
+fig2.tight_layout()
+fig2.show()
+fig1.savefig(os.path.join(odir,'results_2d.png'))
+
 
 ims1 = 2*[{'cmap':py.cm.Greys_r}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}]
-vi1 = pv.ThreeAxisViewer([abs_ifft[:,0,...].mean(0),abs_ifft_filtered[:,0,...].mean(0),abs_f], imshow_kwargs = ims1)
+vi1 = pv.ThreeAxisViewer([abs_ifft[0,0,...], abs_ifft_filtered[0,0,...],abs_f], imshow_kwargs = ims1)
 vi1.fig.savefig(os.path.join(odir,'fig1.png'))
 
 ims2 = [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + 2*[{'cmap':py.cm.Greys_r, 'vmin':0.5, 'vmax':1.}]
