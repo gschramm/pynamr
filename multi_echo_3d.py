@@ -495,7 +495,7 @@ for axx in ax2.flatten():
 
 fig2.tight_layout()
 fig2.show()
-fig1.savefig(os.path.join(odir,'results_2d.png'))
+fig2.savefig(os.path.join(odir,'results_2d.png'))
 
 
 ims1 = 2*[{'cmap':py.cm.Greys_r}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}]
