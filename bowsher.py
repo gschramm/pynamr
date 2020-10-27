@@ -53,7 +53,7 @@ def bowsher_prior_cost(img, ninds, method):
 
 #--------------------------------------------------------------------
 @njit(parallel = True)
-def bowsher_prior_grad(img, ninds, ninds2, method):
+def bowsher_prior_grad(img, ninds, ninds2, method, asym = 0):
   img_shape = img.shape
   img       = img.flatten()
   grad      = np.zeros(img.shape, dtype = img.dtype)
@@ -67,10 +67,10 @@ def bowsher_prior_grad(img, ninds, ninds2, method):
         grad[i] += 2*(img[i] - img[ninds[i,j]])
  
       # 2nd term
-      while (counter < ninds2.shape[1]) and (ninds2[0,counter] == i):
-        grad[i] += -2*(img[ninds2[1,counter]] - img[i])
-
-        counter += 1
+      if asym == 0:
+        while (counter < ninds2.shape[1]) and (ninds2[0,counter] == i):
+          grad[i] += -2*(img[ninds2[1,counter]] - img[i])
+          counter += 1
   elif method == 1:
     for i in range(ninds.shape[0]):
       # first term
@@ -78,10 +78,10 @@ def bowsher_prior_grad(img, ninds, ninds2, method):
         grad[i] += grad0_rel_diff(img[i], img[ninds[i,j]])
  
       # 2nd term
-      while (counter < ninds2.shape[1]) and (ninds2[0,counter] == i):
-        grad[i] += grad1_rel_diff(img[ninds2[1,counter]], img[i])
-
-        counter += 1
+      if asym == 0:
+        while (counter < ninds2.shape[1]) and (ninds2[0,counter] == i):
+          grad[i] += grad1_rel_diff(img[ninds2[1,counter]], img[i])
+          counter += 1
 
   img  = img.reshape(img_shape)
   grad = grad.reshape(img_shape)
