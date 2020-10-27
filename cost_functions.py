@@ -33,8 +33,8 @@ def multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t,
 
 #--------------------------------------------------------------------
 def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
-                           beta, ninds, ninds2, method, sens):
-  # ninds2 is a dummy argument to have the same arguments for
+                           beta, ninds, ninds2, method, sens, asym):
+  # ninds2 and asym are dummy arguments to have the same arguments for
   # cost and its gradient
 
   isflat_recon = False
@@ -64,8 +64,8 @@ def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, d
 
 #--------------------------------------------------------------------
 def multi_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, nechos, kmask,
-                           beta, ninds, ninds2, method, sens):
-  # ninds2 is a dummy argument to have the same arguments for
+                           beta, ninds, ninds2, method, sens, asym):
+  # ninds2 and asym are dummy arguments to have the same arguments for
   # cost and its gradient
 
   isflat_recon = False
@@ -94,8 +94,8 @@ def multi_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon,
 
 #--------------------------------------------------------------------
 def multi_echo_bowsher_cost_total(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
-                             beta_recon, beta_gam, ninds, method, sens):
-  # ninds2 is a dummy argument to have the same arguments for
+                             beta_recon, beta_gam, ninds, method, sens, asym):
+  # ninds2 and asym are dummy arguments to have the same arguments for
   # cost and its gradient
 
   isflat_recon = False
@@ -129,7 +129,7 @@ def multi_echo_bowsher_cost_total(recon, recon_shape, signal, readout_inds, Gam,
 
 #--------------------------------------------------------------------
 def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
-                           beta, ninds, ninds2, method, sens):
+                           beta, ninds, ninds2, method, sens, asym):
 
   isflat = False
   if recon.ndim == 1:  
@@ -141,8 +141,8 @@ def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, d
 
   if beta > 0:
 
-    grad[...,0] += beta*bowsher_prior_grad(recon[...,0], ninds, ninds2, method)
-    grad[...,1] += beta*bowsher_prior_grad(recon[...,1], ninds, ninds2, method)
+    grad[...,0] += beta*bowsher_prior_grad(recon[...,0], ninds, ninds2, method, asym)
+    grad[...,1] += beta*bowsher_prior_grad(recon[...,1], ninds, ninds2, method, asym)
 
   if isflat:
     recon = recon.flatten()
@@ -152,7 +152,7 @@ def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, d
 
 #--------------------------------------------------------------------
 def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon, tr, delta_t, nechos, 
-                                  kmask, beta, ninds, ninds2, method, sens):
+                                  kmask, beta, ninds, ninds2, method, sens, asym):
 
   isflat = False
   if Gam.ndim == 1:  
@@ -164,7 +164,7 @@ def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon,
   grad = tmp[...,0] + tmp[...,1]
 
   if beta > 0:
-    grad += beta*bowsher_prior_grad(Gam, ninds, ninds2, method)
+    grad += beta*bowsher_prior_grad(Gam, ninds, ninds2, method, asym)
 
   if isflat:
     Gam  = Gam.flatten()

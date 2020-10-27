@@ -27,20 +27,22 @@ from argparse import ArgumentParser
 #--------------------------------------------------------------
 
 parser = ArgumentParser(description = '3D na mr dual echo simulation')
-parser.add_argument('--niter',  default = 10, type = int)
-parser.add_argument('--n_outer', default = 6, type = int)
-#parser.add_argument('--method', default = 0, type = int)
-parser.add_argument('--bet_recon', default = 0.1, type = float)
-parser.add_argument('--bet_gam', default = 0.3, type = float)
-#parser.add_argument('--delta_t', default = 5., type = float)
+parser.add_argument('--niter',  default = 20, type = int)
+parser.add_argument('--n_outer', default = 12, type = int)
+parser.add_argument('--method', default = 0, type = int)
+parser.add_argument('--bet_recon', default = 0.01, type = float)
+parser.add_argument('--bet_gam', default = 0.03, type = float)
 parser.add_argument('--n', default = 128, type = int, choices = [128,256])
-parser.add_argument('--noise_level', default = 0.2,  type = float)
-#parser.add_argument('--nechos',   default = 2,  type = int)
+parser.add_argument('--noise_level', default = 0.4,  type = float)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
-#parser.add_argument('--ncoils',   default = 1,   type = int)
 parser.add_argument('--phantom',  default = 'brain', choices = ['brain','rod'])
 parser.add_argument('--seed',     default = 0, type = int)
+parser.add_argument('--asym',     default = 0, type = int, choices = [0,1])
+
+#parser.add_argument('--delta_t', default = 5., type = float)
+#parser.add_argument('--nechos',   default = 2,  type = int)
+#parser.add_argument('--ncoils',   default = 1,   type = int)
 
 args = parser.parse_args()
 
@@ -54,9 +56,10 @@ nnearest    = args.nnearest
 nneigh      = args.nneigh
 phantom     = args.phantom
 seed        = args.seed
+asym        = args.asym
+method      = args.method
 
 ncoils      = 1
-method      = 0
 nechos      = 2
 delta_t     = 5. / (nechos - 1)
 
@@ -365,13 +368,13 @@ for i in range(n_outer):
   recon = recon.flatten()
   
   cb = lambda x: cost.append(multi_echo_bowsher_cost_total(x, recon_shape, signal, readout_inds, 
-                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens))
+                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens, asym))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost,
                       recon, 
                       fprime = multi_echo_bowsher_grad, 
                       args = (recon_shape, signal, readout_inds, 
-                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens),
+                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens, asym),
                       callback = cb,
                       maxiter = niter, 
                       disp = 1)
@@ -393,13 +396,13 @@ for i in range(n_outer):
   Gam_recon = Gam_recon.flatten()
   
   cb = lambda x: cost.append(multi_echo_bowsher_cost_total(recon, recon_shape, signal, readout_inds, 
-                             x, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens))
+                             x, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens, asym))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
                       Gam_recon, 
                       fprime = multi_echo_bowsher_grad_gamma, 
                       args = (recon_shape, signal, readout_inds, 
-                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens),
+                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens, asym),
                       callback = cb,
                       maxiter = niter, 
                       bounds = Gam_bounds,
