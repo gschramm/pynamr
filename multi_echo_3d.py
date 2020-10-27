@@ -1,3 +1,5 @@
+# TODO: simulated signal with biexp decay
+
 import os
 import numpy as np
 import cupy as cp
@@ -109,7 +111,7 @@ if phantom == 'brain':
   f[gm_inds]  = 0.9
   f[wm_inds]  = 0.7
 
-  # set up array for Gamma (ration between 2nd and 1st echo
+  # set up array for Gamma (ratio between 2nd and 1st echo)
   Gam = np.ones(f.shape)
   Gam[lab == 1] = np.exp(-delta_t/50)
   Gam[lab == 2] = 0.6*np.exp(-delta_t/8) + 0.4*np.exp(-delta_t/15)
