@@ -346,7 +346,7 @@ fig2.colorbar(im11, ax = ax2[1,1])
 
 fig2.tight_layout()
 fig2.show()
-fig1.savefig(os.path.join(odir,'results_transverse.png'))
+fig2.savefig(os.path.join(odir,'results_transverse.png'))
 
 
 ims2 = [{'cmap':py.cm.Greys_r}] + 3*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + [{'cmap':py.cm.Greys_r, 'vmin':0.5, 'vmax':1.}]
