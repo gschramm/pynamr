@@ -35,6 +35,7 @@ parser.add_argument('--bet_gam', default = 0.3, type = float)
 parser.add_argument('--delta_t', default = 5., type = float)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
+parser.add_argument('--noise_level', default = 0.4,  type = float)
 
 args = parser.parse_args()
 
@@ -49,9 +50,10 @@ delta_t     = args.delta_t
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
 ncoils      = 1
+noise_level = args.noise_level
 
 # scaling factor to get max(recon) close to 1
-scale_fac   = 100
+scale_fac   = 85
 
 odir = os.path.join('data','recons_multi_3d_phantom', '__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
@@ -82,6 +84,12 @@ signal = np.zeros((ncoils,nechos,n,n,n,2))
 # fftshift remains unclear
 signal[0,0,...] = np.roll(np.fft.fftn(echo1, norm = 'ortho').view('(2,)float'), (64,64,64), axis = (0,1,2)) 
 signal[0,1,...] = np.roll(np.fft.fftn(echo2, norm = 'ortho').view('(2,)float'), (64,64,64), axis = (0,1,2)) 
+
+# scale signal and add noise
+signal /= scale_fac
+
+if noise_level > 0:
+  signal += noise_level*(np.random.randn(*signal.shape))*np.sqrt(nechos)/np.sqrt(2)
 
 sens = np.zeros((1,n,n,n,2))
 sens[...,0] = 1
@@ -160,7 +168,7 @@ for j in range(ncoils):
 
 #----------------------------------------------------------------------------------------
 # --- set up stuff for the prior
-aimg = t1_vol.copy()
+aimg = t1_vol / t1_vol.max()
 
 if nneigh == 18:
   s    = np.array([[[0,1,0], 
@@ -224,10 +232,10 @@ abs_recon   = np.linalg.norm(recon,axis=-1)
 
 cost = []
 
-vmax = 1.5*tmp1.max()
+vmax = 1.5
 fig1, ax1 = py.subplots(2,n_outer+1, figsize = ((n_outer+1)*3,6))
-ax1[0,0].imshow(Gam_recon[...,64], vmin = 0.5, vmax = 1, cmap = py.cm.Greys_r)
-ax1[1,0].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+ax1[0,0].imshow(Gam_recon[...,64].T, vmin = 0.5, vmax = 1, cmap = py.cm.Greys_r)
+ax1[1,0].imshow(abs_recon[...,64].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
 
 #--------------------------------------------------------------------------------------------------
 
@@ -252,7 +260,7 @@ for i in range(n_outer):
   recon        = res[0].reshape(recon_shape)
   abs_recon    = np.linalg.norm(recon,axis=-1)
   
-  ax1[1,i+1].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
+  ax1[1,i+1].imshow(abs_recon[...,64].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
 
   #---------------------------------------
 
@@ -279,7 +287,7 @@ for i in range(n_outer):
   #Gam_recon[tmp1 < 0.05*tmp1.max()] = 1
   Gam_recon[abs_recon < 0.05*abs_recon.max()] = 1
 
-  ax1[0,i+1].imshow(Gam_recon[...,64], vmin = 0.5, vmax = 1, cmap = py.cm.Greys_r)
+  ax1[0,i+1].imshow(Gam_recon[...,64].T, vmin = 0.5, vmax = 1, cmap = py.cm.Greys_r)
 
 #--------------------------------------------------------------------------------------------------
 
@@ -310,6 +318,37 @@ with h5py.File(output_file, 'w') as hf:
 
 #--------------------------------------------------------------------------------------------------
 
+sl = 64
+
+fig2,ax2 = py.subplots(2,3, figsize = (3*3.2,2*3))
+im00 = ax2[0,0].imshow(ref_recon[...,sl].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r) 
+ax2[0,0].set_title('IFFT')
+im01 = ax2[0,1].imshow(ref_recon_filt[...,sl].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r) 
+ax2[0,1].set_title('filt. IFFT')
+im02 = ax2[0,2].imshow(aimg[...,sl].T, cmap = py.cm.Greys_r) 
+ax2[0,2].set_title('anat. prior. img.')
+im10 = ax2[1,0].imshow(abs_recon[...,sl].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r) 
+ax2[1,0].set_title(f'joint Na b={bet_recon}')
+im11 = ax2[1,1].imshow(Gam_recon[...,sl].T, vmin = 0.5, vmax = 1, cmap = py.cm.Greys_r) 
+ax2[1,1].set_title(f'joint Gam b={bet_gam}')
+
+for axx in ax2.flatten():
+  axx.set_xticks([])
+  axx.set_yticks([])
+
+im12 = ax2[1,2].set_axis_off()
+
+fig2.colorbar(im00, ax = ax2[0,0])
+fig2.colorbar(im01, ax = ax2[0,1])
+fig2.colorbar(im02, ax = ax2[0,2])
+fig2.colorbar(im10, ax = ax2[1,0])
+fig2.colorbar(im11, ax = ax2[1,1])
+
+fig2.tight_layout()
+fig2.show()
+fig1.savefig(os.path.join(odir,'results_transverse.png'))
+
+
 ims2 = [{'cmap':py.cm.Greys_r}] + 3*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + [{'cmap':py.cm.Greys_r, 'vmin':0.5, 'vmax':1.}]
-vi2  = pv.ThreeAxisViewer([np.flip(x,(0,1)) for x in [aimg, ref_recon,ref_recon_filt,abs_recon,Gam_recon]], imshow_kwargs = ims2)
+vi2  = pv.ThreeAxisViewer([aimg, ref_recon,ref_recon_filt,abs_recon,Gam_recon], imshow_kwargs = ims2)
 vi2.fig.savefig(os.path.join(odir,'fig1.png'))
