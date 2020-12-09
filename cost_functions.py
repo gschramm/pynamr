@@ -2,6 +2,7 @@ import cupy as cp
 
 from apodized_fft import apodized_fft_multi_echo, adjoint_apodized_fft_multi_echo
 from bowsher      import bowsher_prior_cost, bowsher_prior_grad
+from priors       import quadratic_prior, quadratic_prior_grad, logcosh_prior, logcosh_prior_grad
 
 #--------------------------------------------------------------
 def multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, sens):
@@ -37,6 +38,8 @@ def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, d
   # ninds2 and asym are dummy arguments to have the same arguments for
   # cost and its gradient
 
+  # method: 0 -> quad Bowsher, 1 -> rel.diff Bowsher -> 2 quad prior, 3 -> logcosh
+
   isflat_recon = False
   isflat_Gam   = False
 
@@ -51,8 +54,15 @@ def multi_echo_bowsher_cost(recon, recon_shape, signal, readout_inds, Gam, tr, d
   cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, sens)
 
   if beta > 0:
-    cost += beta*bowsher_prior_cost(recon[...,0], ninds, method)
-    cost += beta*bowsher_prior_cost(recon[...,1], ninds, method)
+    if (method == 0) or (method == 1):
+      cost += beta*bowsher_prior_cost(recon[...,0], ninds, method)
+      cost += beta*bowsher_prior_cost(recon[...,1], ninds, method)
+    elif method == 2:
+      cost += beta*quadratic_prior(recon[...,0])
+      cost += beta*quadratic_prior(recon[...,1])
+    elif method == 3:
+      cost += beta*logcosh_prior(recon[...,0])
+      cost += beta*logcosh_prior(recon[...,1])
 
   if isflat_recon:
     recon = recon.flatten()
@@ -82,7 +92,12 @@ def multi_echo_bowsher_cost_gamma(Gam, recon_shape, signal, readout_inds, recon,
   cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, sens)
 
   if beta > 0:
-    cost += beta*bowsher_prior_cost(Gam, ninds, method)
+    if (method == 0) or (method == 1):
+      cost += beta*bowsher_prior_cost(Gam, ninds, method)
+    elif method == 2:
+      cost += beta*quadratic_prior(Gam)
+    elif method == 3:
+      cost += beta*logcosh_prior(Gam)
 
   if isflat_recon:
     recon = recon.flatten()
@@ -112,11 +127,23 @@ def multi_echo_bowsher_cost_total(recon, recon_shape, signal, readout_inds, Gam,
   cost = multi_echo_data_fidelity(recon, signal, readout_inds, Gam, tr, delta_t, nechos, kmask, sens)
 
   if beta_recon > 0:
-    cost += beta_recon*bowsher_prior_cost(recon[...,0], ninds, method)
-    cost += beta_recon*bowsher_prior_cost(recon[...,1], ninds, method)
+    if (method == 0) or (method == 1):
+      cost += beta_recon*bowsher_prior_cost(recon[...,0], ninds, method)
+      cost += beta_recon*bowsher_prior_cost(recon[...,1], ninds, method)
+    elif method == 2: 
+      cost += beta_recon*quadratic_prior(recon[...,0])
+      cost += beta_recon*quadratic_prior(recon[...,1])
+    elif method == 3: 
+      cost += beta_recon*logcosh_prior(recon[...,0])
+      cost += beta_recon*logcosh_prior(recon[...,1])
 
   if beta_gam > 0:
-    cost += beta_gam*bowsher_prior_cost(Gam, ninds, method)
+    if (method == 0) or (method == 1):
+      cost += beta_gam*bowsher_prior_cost(Gam, ninds, method)
+    elif method == 2:
+      cost += beta_gam*quadratic_prior(Gam)
+    elif method == 3:
+      cost += beta_gam*logcosh_prior(Gam)
 
   if isflat_recon:
     recon = recon.flatten()
@@ -140,9 +167,15 @@ def multi_echo_bowsher_grad(recon, recon_shape, signal, readout_inds, Gam, tr, d
                                        nechos, kmask, False, sens)
 
   if beta > 0:
-
-    grad[...,0] += beta*bowsher_prior_grad(recon[...,0], ninds, ninds2, method, asym)
-    grad[...,1] += beta*bowsher_prior_grad(recon[...,1], ninds, ninds2, method, asym)
+    if (method == 0) or (method == 1):
+      grad[...,0] += beta*bowsher_prior_grad(recon[...,0], ninds, ninds2, method, asym)
+      grad[...,1] += beta*bowsher_prior_grad(recon[...,1], ninds, ninds2, method, asym)
+    elif method == 2:
+      grad[...,0] += beta*quadratic_prior_grad(recon[...,0])
+      grad[...,1] += beta*quadratic_prior_grad(recon[...,1])
+    elif method == 3:
+      grad[...,0] += beta*logcosh_prior_grad(recon[...,0])
+      grad[...,1] += beta*logcosh_prior_grad(recon[...,1])
 
   if isflat:
     recon = recon.flatten()
@@ -164,7 +197,12 @@ def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon,
   grad = tmp[...,0] + tmp[...,1]
 
   if beta > 0:
-    grad += beta*bowsher_prior_grad(Gam, ninds, ninds2, method, asym)
+    if (method == 0) or (method == 1):
+      grad += beta*bowsher_prior_grad(Gam, ninds, ninds2, method, asym)
+    elif method == 2:
+      grad += beta*quadratic_prior_grad(Gam)
+    elif method == 3:
+      grad += beta*logcosh_prior_grad(Gam)
 
   if isflat:
     Gam  = Gam.flatten()
