@@ -25,13 +25,16 @@ import pymirc.viewer as pv
 #--------------------------------------------------------------
 
 parser = ArgumentParser(description = '3D na mr dual echo simulation')
+parser.add_argument('case')
+parser.add_argument('--sdir',  default = 'PhyCha_kw0_preprocessed')
 parser.add_argument('--niter',  default = 10, type = int)
-parser.add_argument('--n_outer', default = 3, type = int)
-parser.add_argument('--bet_recon', default = 1., type = float)
-parser.add_argument('--bet_gam', default = 1., type = float)
+parser.add_argument('--n_outer', default = 6, type = int)
+parser.add_argument('--bet_recon', default = 0.01, type = float)
+parser.add_argument('--bet_gam', default = 0.03, type = float)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
 parser.add_argument('--n',   default = 128,  type = int, choices = [128,256])
+parser.add_argument('--method', default = 0,  type = int)
 
 args = parser.parse_args()
 
@@ -42,10 +45,10 @@ bet_gam     = args.bet_gam
 nnearest    = args.nnearest 
 nneigh      = args.nneigh
 n           = args.n
+method      = args.method
 
-method      = 0
 delta_t     = 5.
-
+asym        = 0 
 #--------------------------------------------------------------
 #--------------------------------------------------------------
 
@@ -54,7 +57,7 @@ delta_t     = 5.
 # load the data
 #-------------------
 
-pdir   = os.path.join('data','sodium_data','TBI-n005','PhyCha_kw0_preprocessed')
+pdir   = os.path.join('data','sodium_data', args.case, args.sdir)
 odir   = os.path.join(pdir, datetime.now().strftime("%y%m%d-%H%M%S") + '_' +'__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
 
 if not os.path.exists(odir):
@@ -236,13 +239,13 @@ for i in range(n_outer):
   recon       = recon.flatten()
   
   cb = lambda x: cost.append(multi_echo_bowsher_cost_total(x, recon_shape, signal, readout_inds, 
-                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens))
+                             Gam_recon, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens, asym))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost,
                       recon, 
                       fprime = multi_echo_bowsher_grad, 
                       args = (recon_shape, signal, readout_inds, 
-                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens),
+                              Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens, asym),
                       callback = cb,
                       maxiter = niter, 
                       disp = 1)
@@ -259,13 +262,13 @@ for i in range(n_outer):
   Gam_recon = Gam_recon.flatten()
   
   cb = lambda x: cost.append(multi_echo_bowsher_cost_total(recon, recon_shape, signal, readout_inds, 
-                             x, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens))
+                             x, tr, delta_t, nechos, kmask, bet_recon, bet_gam, ninds, method, sens, asym))
   
   res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
                       Gam_recon, 
                       fprime = multi_echo_bowsher_grad_gamma, 
                       args = (recon_shape, signal, readout_inds, 
-                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens),
+                              recon, tr, delta_t, nechos, kmask, bet_gam, ninds, ninds2, method, sens, asym),
                       callback = cb,
                       maxiter = niter, 
                       bounds = Gam_bounds,
