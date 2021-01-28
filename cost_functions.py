@@ -209,3 +209,33 @@ def multi_echo_bowsher_grad_gamma(Gam, recon_shape, signal, readout_inds, recon,
     grad = grad.flatten()
 
   return grad
+
+#--------------------------------------------------------------------
+# dummy function to return data fidelity and prior grad separately
+def test_grad(recon, recon_shape, signal, readout_inds, Gam, tr, delta_t, nechos, kmask,
+              beta, ninds, ninds2, method, sens, asym):
+
+  isflat = False
+  if recon.ndim == 1:  
+    isflat = True
+    recon  = recon.reshape(recon_shape)
+
+  grad = multi_echo_data_fidelity_grad(recon, signal, readout_inds, Gam, tr, delta_t, 
+                                       nechos, kmask, False, sens)
+
+  if beta > 0:
+    if (method == 0) or (method == 1):
+      grad2 = beta*bowsher_prior_grad(recon[...,0], ninds, ninds2, method, asym)
+      grad3 = beta*bowsher_prior_grad(recon[...,1], ninds, ninds2, method, asym)
+    elif method == 2:
+      grad2 = beta*quadratic_prior_grad(recon[...,0])
+      grad3 = beta*quadratic_prior_grad(recon[...,1])
+    elif method == 3:
+      grad2 = beta*logcosh_prior_grad(recon[...,0])
+      grad3 = beta*logcosh_prior_grad(recon[...,1])
+
+  if isflat:
+    recon = recon.flatten()
+    grad  = grad.flatten()
+
+  return grad, grad2, grad3
