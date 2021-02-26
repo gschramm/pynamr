@@ -15,7 +15,7 @@ from nearest_neighbors import nearest_neighbors, is_nearest_neighbor_of
 from readout_time import readout_time
 from apodized_fft import apodized_fft_multi_echo
 from cost_functions import multi_echo_bowsher_cost, multi_echo_bowsher_grad, multi_echo_bowsher_cost_gamma
-from cost_functions import multi_echo_bowsher_grad_gamma, multi_echo_bowsher_cost_total
+from cost_functions import multi_echo_bowsher_grad_gamma, multi_echo_bowsher_cost_total, test_grad
 
 from scipy.ndimage     import zoom, gaussian_filter
 from scipy.interpolate import interp1d
@@ -25,22 +25,20 @@ from pymirc.image_operations import aff_transform, zoom3d
 
 from argparse import ArgumentParser
 
-from phantoms import ellipse_phantom, downsample4
-
 #--------------------------------------------------------------
 #--------------------------------------------------------------
 
 parser = ArgumentParser(description = '3D na mr dual echo simulation')
-parser.add_argument('--niter',  default = 20, type = int)
-parser.add_argument('--n_outer', default = 10, type = int)
+parser.add_argument('--niter',  default = 10, type = int)
+parser.add_argument('--n_outer', default = 5, type = int)
 parser.add_argument('--method', default = 0, type = int)
-parser.add_argument('--bet_recon', default = 0.01, type = float)
-parser.add_argument('--bet_gam', default = 0.03, type = float)
+parser.add_argument('--bet_recon', default = 0.1, type = float)
+parser.add_argument('--bet_gam', default = 0.3, type = float)
 parser.add_argument('--n', default = 128, type = int, choices = [128,256])
 parser.add_argument('--noise_level', default = 0.4,  type = float)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
-parser.add_argument('--phantom',  default = 'ellipse', choices = ['brain','rod','ellipse','ellipse-small'])
+parser.add_argument('--phantom',  default = 'brain', choices = ['brain','rod'])
 parser.add_argument('--seed',     default = 0, type = int)
 parser.add_argument('--asym',     default = 0, type = int, choices = [0,1])
 
@@ -209,15 +207,6 @@ elif phantom == 'rod':
   # down sample array
   Gam = Gam.reshape(n,4,n,4,n,4).mean(axis=(1,3,5))
 
-elif phantom.startswith('ellipse'):
-  if phantom == 'ellipse-small':
-    f, Gam, t1 = ellipse_phantom(4*n, Rsp = 4*n/36)
-  else:
-    f, Gam, t1 = ellipse_phantom(4*n, Rsp = 4*n/12)
-
-  f   = downsample4(f)
-  Gam = downsample4(Gam)
-  t1  = downsample4(t1)
 
 f = np.stack((f,np.zeros(f.shape)), axis = -1)
 abs_f = np.linalg.norm(f, axis = -1)
@@ -355,8 +344,10 @@ ninds2 = is_nearest_neighbor_of(ninds)
 Gam_recon = abs_ifft_filtered[:,1,...].mean(0) / abs_ifft_filtered[:,0,...].mean(0)
 Gam_recon[Gam_recon > 1] = 1
 
-# division by 3 is to compensate for norm of adjoint operator
-recon = ifft_filtered[:,0,...].mean(0)
+init_recon = ifft_filtered[:,0,...].mean(0)
+abs_init_recon   = np.linalg.norm(init_recon,axis=-1)
+recon = init_recon.copy()
+
 recon_shape = recon.shape
 abs_recon   = np.linalg.norm(recon,axis=-1)
 
@@ -373,6 +364,11 @@ ax1[3,0].imshow(Gam_recon[...,n//2].T - Gam[...,n//2].T, vmin = -0.3, vmax = 0.3
 ax1[0,0].set_title('init')
 
 #--------------------------------------------------------------------------------------------------
+
+#--------------------------------------------------------------------------------------------------
+# calculate the gradients of the data fidelity and prior
+g1,g2,g3 = test_grad(recon,recon_shape, signal, readout_inds, 
+                     Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens, asym)
 
 for i in range(n_outer):
 
@@ -431,94 +427,19 @@ for i in range(n_outer):
                                                          vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
 
 #--------------------------------------------------------------------------------------------------
-#--------------------------------------------------------------------------------------------------
+# calculate the gradients of the data fidelity and prior
 
-for axx in ax1.flatten():
-  axx.set_axis_off()
+g11,g12,g13 = test_grad(recon,recon_shape, signal, readout_inds, 
+                        Gam_recon, tr, delta_t, nechos, kmask, bet_recon, ninds, ninds2, method, sens, asym)
 
-fig1.colorbar(im0_ax1, ax = ax1[0,last_col])
-fig1.colorbar(im1_ax1, ax = ax1[1,last_col])
-fig1.colorbar(im2_ax1, ax = ax1[2,last_col])
-fig1.colorbar(im3_ax1, ax = ax1[3,last_col])
+ims = [{'cmap':py.cm.Greys_r}] + 3*[{'vmin':-0.25,'vmax':0.25,'cmap':py.cm.bwr}]
+vi1 = pv.ThreeAxisViewer([abs_init_recon[66:106,66:106,44:84],g1[66:106,66:106,44:84,0],g2[66:106,66:106,44:84],
+                          g1[66:106,66:106,44:84,0]+g2[66:106,66:106,44:84]], imshow_kwargs=ims)
+vi2 = pv.ThreeAxisViewer([abs_recon[66:106,66:106,44:84],g11[66:106,66:106,44:84,0],g12[66:106,66:106,44:84],
+                          g11[66:106,66:106,44:84,0]+g12[66:106,66:106,44:84]], imshow_kwargs=ims)
 
-#fig1.tight_layout()
-fig1.savefig(os.path.join(odir,'convergence.png'))
-fig1.show()
+# calculate recon from k-space center only
+k  = np.fft.fftn(np.squeeze(recon.view(dtype = np.complex128)))
+r2 = np.fft.ifftn(kmask[0,0,...,0]*k)
 
-# save the recons
-output_file = os.path.join(odir, 'recons.h5')
-with h5py.File(output_file, 'w') as hf:
-  grp = hf.create_group('images')
-  grp.create_dataset('Gam',           data = Gam)
-  grp.create_dataset('Gam_recon',     data = Gam_recon)
-  grp.create_dataset('ground_truth',  data = f)
-  grp.create_dataset('signal',        data = signal)
-  grp.create_dataset('recon',         data = recon)
-  if not phantom.startswith('ellipse'):
-    grp.create_dataset('roi_vol',       data = roi_vol)
-  grp.create_dataset('ifft',          data = ifft)
-  grp.create_dataset('ifft_filtered', data = ifft_filtered)
-  grp.create_dataset('prior_image',   data = aimg)
-  grp.create_dataset('cost',          data = cost)
-
-#--------------------------------------------------------------------------------------------------
-
-fig2, ax2 = py.subplots(3, 4, figsize = (5*3,3*3))
-
-im00_ax2 = ax2[0,0].imshow(abs_f[...,n//2].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
-im01_ax2 = ax2[0,1].imshow(abs_ifft[0,0,...,n//2].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
-im02_ax2 = ax2[0,2].imshow(abs_ifft_filtered[0,0,...,n//2].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
-im03_ax2 = ax2[0,3].imshow(abs_recon[...,n//2].T, vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
-
-im11_ax2 = ax2[1,1].imshow(abs_ifft[0,0,...,n//2].T - abs_f[...,n//2].T, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
-im12_ax2 = ax2[1,2].imshow(abs_ifft_filtered[0,0,...,n//2].T - abs_f[...,n//2].T, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
-im13_ax2 = ax2[1,3].imshow(abs_recon[...,n//2].T - abs_f[...,n//2].T, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
-
-im20_ax2 = ax2[2,0].imshow(Gam[...,n//2].T, vmin = Gam.min(), vmax = 1, cmap = py.cm.Greys_r)
-im21_ax2 = ax2[2,1].imshow(Gam_recon[...,n//2].T, vmin = Gam.min(), vmax = 1, cmap = py.cm.Greys_r)
-im22_ax2 = ax2[2,2].imshow(Gam_recon[...,n//2].T - Gam[...,n//2].T, vmin = -0.3, vmax = 0.3, cmap = py.cm.bwr)
-im23_ax2 = ax2[2,3].imshow(aimg[...,n//2].T, cmap = py.cm.Greys_r)
-
-fig2.colorbar(im00_ax2, ax = ax2[0,0], shrink = 0.5)
-fig2.colorbar(im01_ax2, ax = ax2[0,1], shrink = 0.5)
-fig2.colorbar(im02_ax2, ax = ax2[0,2], shrink = 0.5)
-fig2.colorbar(im03_ax2, ax = ax2[0,3], shrink = 0.5)
-
-fig2.colorbar(im11_ax2, ax = ax2[1,1], shrink = 0.5)
-fig2.colorbar(im12_ax2, ax = ax2[1,2], shrink = 0.5)
-fig2.colorbar(im13_ax2, ax = ax2[1,3], shrink = 0.5)
-
-fig2.colorbar(im20_ax2, ax = ax2[2,0], shrink = 0.5)
-fig2.colorbar(im21_ax2, ax = ax2[2,1], shrink = 0.5)
-fig2.colorbar(im22_ax2, ax = ax2[2,2], shrink = 0.5)
-fig2.colorbar(im23_ax2, ax = ax2[2,3], shrink = 0.5)
-
-ax2[0,0].set_title('ground truth Na', size = 'medium')
-ax2[0,1].set_title('IFFT 1st echo', size = 'medium')
-ax2[0,2].set_title('IFFT 1st echo filtered', size = 'medium')
-ax2[0,3].set_title('joint reconstruction', size = 'medium')
-
-ax2[1,1].set_title('bias IFFT 1st echo', size = 'medium')
-ax2[1,2].set_title('bias IFFT 1st echo filtered', size = 'medium')
-ax2[1,3].set_title('bias joint reconstruction', size = 'medium')
-
-ax2[2,0].set_title('ground truth Gamma', size = 'medium')
-ax2[2,1].set_title('joint reconstruction Gamma', size = 'medium')
-ax2[2,2].set_title('bias joint reconstruction Gamma', size = 'medium')
-ax2[2,3].set_title('anat. prior image', size = 'medium')
-
-for axx in ax2.flatten():
-  axx.set_axis_off()
-
-fig2.tight_layout()
-fig2.show()
-fig2.savefig(os.path.join(odir,'results_2d.png'))
-
-
-ims1 = 2*[{'cmap':py.cm.Greys_r}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}]
-vi1 = pv.ThreeAxisViewer([abs_ifft[0,0,...], abs_ifft_filtered[0,0,...],abs_f], imshow_kwargs = ims1)
-vi1.fig.savefig(os.path.join(odir,'fig1.png'))
-
-ims2 = [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + 2*[{'cmap':py.cm.Greys_r, 'vmin':0.5, 'vmax':1.}]
-vi2  = pv.ThreeAxisViewer([abs_recon,Gam_recon, Gam], imshow_kwargs = ims2)
-vi2.fig.savefig(os.path.join(odir,'fig2.png'))
+vi3 = pv.ThreeAxisViewer([abs_recon, np.abs(r2)], imshow_kwargs={'cmap':py.cm.Greys_r}) 
