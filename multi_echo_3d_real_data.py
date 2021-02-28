@@ -35,6 +35,7 @@ parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
 parser.add_argument('--n',   default = 128,  type = int, choices = [128,256])
 parser.add_argument('--method', default = 0,  type = int)
+parser.add_argument('--mr_name', default = 't1_coreg')
 
 args = parser.parse_args()
 
@@ -46,6 +47,7 @@ nnearest    = args.nnearest
 nneigh      = args.nneigh
 n           = args.n
 method      = args.method
+mr_name     = args.mr_name
 
 delta_t     = 5.
 asym        = 0 
@@ -58,7 +60,7 @@ asym        = 0
 #-------------------
 
 pdir   = os.path.join('data','sodium_data', args.case, args.sdir)
-odir   = os.path.join(pdir, datetime.now().strftime("%y%m%d-%H%M%S") + '_' +'__'.join([x[0] + '_' + str(x[1]) for x in args.__dict__.items()]))
+odir   = os.path.join(pdir, datetime.now().strftime("%y%m%d-%H%M%S"))
 
 if not os.path.exists(odir):
   os.makedirs(odir)
@@ -70,7 +72,7 @@ with open(os.path.join(odir,'input_params.csv'), 'w') as f:
 
 nechos = 2
 
-t1_vol = np.load(os.path.join(pdir,f't1_coreg_{n}.npy'))
+t1_vol = np.load(os.path.join(pdir,f'{mr_name}_{n}.npy'))
 sens   = np.load(os.path.join(pdir,f'sens_{n}.npy')).astype(np.complex128).view('(2,)float')
 echo1  = np.load(os.path.join(pdir,f'echo1_{n}.npy')).astype(np.complex128).view('(2,)float')
 echo2  = np.load(os.path.join(pdir,f'echo2_{n}.npy')).astype(np.complex128).view('(2,)float')
@@ -231,7 +233,6 @@ ax1[0,0].imshow(Gam_recon[...,64], vmin = 0, vmax = 1, cmap = py.cm.Greys_r)
 ax1[1,0].imshow(abs_recon[...,64], vmin = 0, vmax = vmax, cmap = py.cm.Greys_r)
 
 #--------------------------------------------------------------------------------------------------
-
 for i in range(n_outer):
 
   print('LBFGS to optimize for recon')

@@ -28,11 +28,6 @@ cimg1  = np.fromfile(os.path.join(pdir,'Na_TE05.cstack'), dtype = np.complex64).
 # load the second echo
 cimg2  = np.fromfile(os.path.join(pdir,'Na_TE5.cstack'), dtype = np.complex64).reshape((n,n,n))
 
-# generate data as FFT of complex Na images and constant sensitivity
-data1 = np.expand_dims(np.fft.fftn(cimg1, norm = 'ortho'),0)
-data2 = np.expand_dims(np.fft.fftn(cimg2, norm = 'ortho'),0)
-sens  = np.ones(cimg1.shape, dtype = np.complex64)
-
 # load the reference MR in LPS
 mr1_nii = nib.load(os.path.join(pdir,mr1_name,'Image_reoriented.nii'))
 mr1     = mr1_nii.get_fdata()
@@ -56,10 +51,20 @@ na_affine[2,2] = na_fov/cimg1.shape[1]
 csf1_coreg, coreg_aff, coreg_params = pi.rigid_registration(csf1, np.abs(cimg1),csf1_nii.affine,na_affine)
 mr1_coreg = pi.aff_transform(mr1, coreg_aff, cimg1.shape, cval = mr1.min())
 
-# save the results
-np.save(os.path.join(pdir,f'echo1_{n}.npy'), data1)
-np.save(os.path.join(pdir,f'echo2_{n}.npy'), data2)
-np.save(os.path.join(pdir,f'sens_{n}.npy'), sens)
 
-np.save(os.path.join(pdir,f'{mr1_name}_coreg_{n}.npy'), mr1_coreg)
-np.save(os.path.join(pdir,f'{mr1_name}_csf_{n}.npy'), csf1_coreg)
+# generate data as FFT of complex Na images and constant sensitivity
+data1 = np.expand_dims(np.fft.fftshift(np.fft.fftn(cimg1, norm = 'ortho')),0)
+data2 = np.expand_dims(np.fft.fftshift(np.fft.fftn(cimg2, norm = 'ortho')),0)
+sens  = np.ones((1,) + cimg1.shape, dtype = np.complex64)
+
+#---------------------------------------------------------------------------------------
+
+odir = os.path.join(pdir,'preprocessed')
+
+# save the results
+np.save(os.path.join(odir,f'echo1_{n}.npy'), data1)
+np.save(os.path.join(odir,f'echo2_{n}.npy'), data2)
+np.save(os.path.join(odir,f'sens_{n}.npy'), sens)
+
+np.save(os.path.join(odir,f'{mr1_name}_coreg_{n}.npy'), mr1_coreg)
+np.save(os.path.join(odir,f'{mr1_name}_csf_{n}.npy'), csf1_coreg)
