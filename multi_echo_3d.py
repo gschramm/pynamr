@@ -34,15 +34,16 @@ parser = ArgumentParser(description = '3D na mr dual echo simulation')
 parser.add_argument('--niter',  default = 20, type = int)
 parser.add_argument('--n_outer', default = 10, type = int)
 parser.add_argument('--method', default = 0, type = int)
-parser.add_argument('--bet_recon', default = 0.01, type = float)
-parser.add_argument('--bet_gam', default = 0.03, type = float)
+parser.add_argument('--bet_recon', default = 0.03, type = float)
+parser.add_argument('--bet_gam', default = 0.3, type = float)
 parser.add_argument('--n', default = 128, type = int, choices = [128,256])
-parser.add_argument('--noise_level', default = 0.4,  type = float)
+parser.add_argument('--noise_level', default = 0.2,  type = float)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
-parser.add_argument('--phantom',  default = 'ellipse', choices = ['brain','rod','ellipse','ellipse-small'])
+parser.add_argument('--phantom',  default = 'brain', choices = ['brain','rod','ellipse','ellipse-small'])
 parser.add_argument('--seed',     default = 0, type = int)
 parser.add_argument('--asym',     default = 0, type = int, choices = [0,1])
+parser.add_argument('--kspace_traj',  default = 16, type = int, choices = [16,24,32])
 
 #parser.add_argument('--delta_t', default = 5., type = float)
 #parser.add_argument('--nechos',   default = 2,  type = int)
@@ -62,6 +63,7 @@ phantom     = args.phantom
 seed        = args.seed
 asym        = args.asym
 method      = args.method
+kspace_traj = args.kspace_traj
 
 ncoils      = 1
 nechos      = 2
@@ -237,7 +239,7 @@ abs_k *= k_edge/32
 
 # calculate the readout times and the k-spaces locations that
 # are read at a given time
-t_read_3 = 1000*readout_time(abs_k)
+t_read_3 = 1000*readout_time(abs_k, lookup = f'kspace_times_4mm_g{kspace_traj}.ksp')
 
 n_readout_bins = 32
 
