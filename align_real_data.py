@@ -10,12 +10,12 @@ import pymirc.image_operations as pi
 import pymirc.metrics as pm
 import pymirc.viewer as pv
 
-pdir = os.path.join('data','sodium_data','TBI-n005')
-sdir = 'DeNoise_kw0'
+pdir = os.path.join('data','sodium_data','EP-006')
+sdir = 'PhyCha_kw0'
 n    = 128
 
-sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03'))[0], sdir.split('_')[0], sdir.split('_')[1])
-sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5'))[0], sdir.split('_')[0], sdir.split('_')[1])
+sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03'))[0], sdir.split('_')[0], sdir)
+sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5'))[0], sdir.split('_')[0], sdir)
 fpattern = '*.c?'
 
 t1_nii = nib.load(os.path.join(pdir,'mprage.nii'))
@@ -42,6 +42,7 @@ recon_shape = (n,n,n)
 fnames  = sorted(glob(os.path.join(sdir1, fpattern)))
 fnames2 = sorted(glob(os.path.join(sdir2, fpattern)))
 ncoils  = len(fnames)
+
 
 data           = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 data_filt      = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
