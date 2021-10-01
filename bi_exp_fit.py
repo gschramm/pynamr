@@ -25,13 +25,13 @@ def residuals(x, t, y):
 #----------------------------------------------
 
 # true model parameters (amplitude, 1st decay const, 2nd decay const)
-true_params = np.array([1., 1./1, 1./15])
+true_params = np.array([1., 1./8, 1./16])
 
 T           = 10.                      # max acq time
-noiselevel  = 1*true_params[0]/20    # noise level (0.3 low, 1 high)
+noiselevel  = 1.*true_params[0]/20        # noise level (0.3 low, 1 high)
 nreal       = 400                      # number of realizations
-Ns          = np.array([2,3,4,8,50])   # number of acq. points
-n_exp       = 2                        # number of exponents to fit (1 or 2)
+Ns          = np.array([2,3,4,8,32])   # number of acq. points
+n_exp       = 1                        # number of exponents to fit (1 or 2)
 
 #----------------------------------------------
 
@@ -43,13 +43,13 @@ tplot = np.linspace(0,T,100)
 yplot = exp_model(tplot, true_params) 
 
 x  = np.zeros((len(Ns),nreal,n_exp + 1))
-x0 = 0.1*true_params[:(n_exp + 1)]
+x0 = 0.5*true_params[:(n_exp + 1)]
 
 # array for plot prediction
 p  = np.zeros((len(Ns),nreal,tplot.shape[0]))
 
-A_bins     = np.linspace(0.5*true_params[0],1.5*true_params[0],31)
-alpha_bins = np.linspace(-0.5,2,51)
+A_bins     = np.linspace(0.5*true_params[0],1.5*true_params[0],51)
+alpha_bins = np.linspace(-0.1,0.3,51)
 
 fig, ax = plt.subplots(n_exp + 3, len(Ns), figsize = (9*Ns.shape[0]/4,9))
 
@@ -67,7 +67,7 @@ for k,N in enumerate(Ns):
     p[k,i,:] = exp_model(tplot, res.x)
   
   ax[0,k].plot(tplot,yplot)
-  ax[0,k].plot(t,y_noise, '.--')
+  ax[0,k].plot(t,y_noise, '.--', color = 'tab:orange')
   ax[0,k].set_ylim(0, true_params[0]*1.3)
 
   ax[1,k].plot(A_bins[:-1], np.histogram(x[k,:,0], A_bins)[0], drawstyle = 'steps-post')
@@ -86,13 +86,16 @@ for k,N in enumerate(Ns):
   ax[0,k].set_title(f'N = {N}')
   ax[-1,k].fill_between(tplot, p[k].mean(0) + 2*p[k].std(0), p[k].mean(0) - 2*p[k].std(0), 
                         alpha = 0.5, color = 'tab:orange')
-  ax[-1,k].plot(tplot,p[k].mean(0), color = 'tab:orange')
   ax[-1,k].plot(tplot, yplot, color = 'tab:blue')
+  ax[-1,k].plot(tplot,p[k].mean(0), '--', color = 'tab:orange')
   ax[-1,k].set_ylim(0, true_params[0]*1.3)
 
 ax[0,0].set_ylabel('data example + ground truth')
 ax[1,0].set_ylabel('fitted A histogram')
 ax[-1,0].set_ylabel('ground truth + fits')
+
+for axx in ax.ravel(): axx.grid(ls = ':')
+for axx in ax[-1,:].ravel(): axx.set_xlabel('t (ms)')
 
 fig.tight_layout()
 fig.show()
