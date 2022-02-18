@@ -10,12 +10,22 @@ import pymirc.image_operations as pi
 import pymirc.metrics as pm
 import pymirc.viewer as pv
 
-pdir = os.path.join('data','sodium_data','EP-006')
-sdir = 'PhyCha_kw0'
-n    = 128
+from scipy.ndimage import gaussian_filter
+from argparse import ArgumentParser
 
-sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03'))[0], sdir.split('_')[0], sdir)
-sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5'))[0], sdir.split('_')[0], sdir)
+parser = ArgumentParser()
+parser.add_argument('case')
+parser.add_argument('--sdir', default = 'PhyCha_kw0')
+parser.add_argument('--n', default = 128, type = int)
+args = parser.parse_args()
+
+case = args.case
+pdir = os.path.join('data','sodium_data',args.case)
+sdir = args.sdir
+n    = args.n
+
+sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03*'))[0], sdir.split('_')[0], sdir)
+sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5*'))[0], sdir.split('_')[0], sdir)
 fpattern = '*.c?'
 
 t1_nii = nib.load(os.path.join(pdir,'mprage.nii'))
@@ -90,11 +100,13 @@ for i in range(ncoils):
 #-------
 
 # calculate the sum of square image
-sos = np.abs(cimg_pad).sum(axis = 0)
-sos_filt = np.abs(cimg_pad_filt).sum(axis = 0)
+sos = np.sqrt((np.abs(cimg_pad)**2).sum(axis = 0))
+sos_filt = np.sqrt((np.abs(cimg_pad_filt)**2).sum(axis = 0))
 
 for i in range(ncoils):
-  sens[i,...] = cimg_pad_filt[i,...] / sos_filt
+  sens[i,...]  = cimg_pad_filt[i,...] / sos_filt
+
+vi = pv.ThreeAxisViewer([np.abs(sens),np.abs(cimg_pad)])
 
 # save the data and the sensitities
 np.save(os.path.join(odir,f'echo1_{recon_shape[0]}.npy'), data)
@@ -110,31 +122,29 @@ na_voxsize = fov / np.array(recon_shape)
 na_affine = np.diag(np.concatenate((na_voxsize,[1])))
 na_affine[:-1,-1] = -fov/2.
 
-csf_coreg, coreg_aff, coreg_params = pi.rigid_registration(csf, sos, t1_affine, na_affine)
+sos /= sos_filt.max()
+
+metric = lambda x,y: np.sum((x-y)**2)
+csf_coreg, coreg_aff, coreg_params = pi.rigid_registration(csf, sos, t1_affine, na_affine, 
+                                                           metric = metric)
 
 t1_coreg = pi.aff_transform(t1, coreg_aff, recon_shape, cval = t1.min())
 
 ## save the data
 np.save(os.path.join(odir,f't1_coreg_{recon_shape[0]}.npy'), t1_coreg)
 np.save(os.path.join(odir,f'csf_coreg_{recon_shape[0]}.npy'), csf_coreg)
+np.save(os.path.join(odir,f'coreg_affine_{recon_shape[0]}.npy'), coreg_aff)
 
-##nib.save(nib.Nifti1Image(csf_na_grid, na_affine), './data/SodiumExample/csf_128_aligned.nii')
-#nib.save(nib.Nifti1Image(t1_na_grid, na_affine), os.path.join(pdir,f'mprage_{n}_aligned.nii'))
-#nib.save(nib.Nifti1Image(na_interp, na_affine), os.path.join(pdir,f'TE03_{n}_' + sdir + '.nii'))
-#nib.save(nib.Nifti1Image(na2_interp, na_affine), os.path.join(pdir,f'TE5_{n}_' + sdir + '.nii'))
-# 
-#np.savetxt(os.path.join(pdir,'affine_{n}.txt'), regis_aff)
 
 ########################
 import pymirc.viewer as pv
-vi = pv.ThreeAxisViewer([t1_coreg, sos])
+vi = pv.ThreeAxisViewer([t1_coreg, csf_coreg, sos])
 
 ########################
 # show the sensitivity
 
 import matplotlib.pyplot as py
-#for sl in [35,40,45,50,55]:
-for sl in [35,45,55,65]:
+for sl in [45]:
   fig, ax = py.subplots(3,3, figsize = (8,8))
   for i in range(8):
     ax.flatten()[i].imshow(np.abs(sens[i,:,:,sl]).T, origin = 'lower', 

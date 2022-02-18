@@ -29,8 +29,8 @@ parser.add_argument('case')
 parser.add_argument('--sdir',  default = 'PhyCha_kw0_preprocessed')
 parser.add_argument('--niter',  default = 10, type = int)
 parser.add_argument('--n_outer', default = 6, type = int)
-parser.add_argument('--bet_recon', default = 0.01, type = float)
-parser.add_argument('--bet_gam', default = 0.03, type = float)
+parser.add_argument('--bet_recon', default = 0.003, type = float)
+parser.add_argument('--bet_gam', default = 0.003, type = float)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
 parser.add_argument('--n',   default = 128,  type = int, choices = [128,256])
@@ -60,7 +60,7 @@ asym        = 0
 #-------------------
 
 pdir   = os.path.join('data','sodium_data', args.case, args.sdir)
-odir   = os.path.join(pdir, datetime.now().strftime("%y%m%d-%H%M%S"))
+odir   = os.path.join(pdir, f'{datetime.now().strftime("%y%m%d-%H%M%S")}__br_{bet_recon:.1E}__bg_{bet_gam:.1E}')
 
 if not os.path.exists(odir):
   os.makedirs(odir)
