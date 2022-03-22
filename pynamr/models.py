@@ -82,8 +82,6 @@ class DualTESodiumAcqModel:
     self.setup_readout()
 
   def setup_readout(self):
-    print('setting up readout')
-
     # setup the readout time and readout indexes
     k0,k1,k2 = xp.meshgrid(xp.arange(64) - 32 + 0.5, xp.arange(64) - 32 + 0.5, xp.arange(64) - 32 + 0.5)
     abs_k = xp.sqrt(k0**2 + k1**2 + k2**2)
@@ -144,6 +142,82 @@ class DualTESodiumAcqModel:
   @dt.setter
   def dt(self, value):
     self._dt = value
+
+  @property
+  def n_readout_bins(self):
+    return self._n_readout_bins
+
+  @n_readout_bins.setter
+  def n_readout_bins(self, value):
+    self._n_readout_bins = value
+    self.setup_readout()
+
+  @property
+  def tr(self):
+    return self._tr
+
+  @property
+  def eta(self):
+    return self._eta
+
+  @eta.setter
+  def eta(self, value):
+    self._eta = value
+    self.setup_readout()
+
+  @property
+  def c1(self):
+    return self._c1
+
+  @c1.setter
+  def c1(self, value):
+    self._c1 = value
+    self.setup_readout()
+
+  @property
+  def c2(self):
+    return self._c2
+
+  @c2.setter
+  def c2(self, value):
+    self._c2 = value
+    self.setup_readout()
+
+  @property
+  def alpha_sw_tpi(self):
+    return self._alpha_sw_tpi
+
+  @alpha_sw_tpi.setter
+  def alpha_sw_tpi(self, value):
+    self._alpha_sw_tpi = value
+    self.setup_readout()
+
+  @property
+  def beta_sw_tpi(self):
+    return self._beta_sw_tpi
+
+  @beta_sw_tpi.setter
+  def beta_sw_tpi(self, value):
+    self._beta_sw_tpi = value
+    self.setup_readout()
+
+  @property
+  def t0_sw(self):
+    return self._t0_sw
+
+  @t0_sw.setter
+  def t0_sw(self, value):
+    self._t0_sw = value
+    self.setup_readout()
+
+  @property
+  def k_edge(self):
+    return self._k_edge
+
+  @k_edge.setter
+  def k_edge(self, value):
+    self._k_edge = value
+    self.setup_readout()
 
   #------------------------------------------------------------------------------
   def forward(self, f, Gam):
