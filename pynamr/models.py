@@ -239,15 +239,16 @@ class DualTESodiumAcqModel:
     # create a complex view of the input real input array with two channels
     f    = xp.squeeze(f.view(dtype = xp.complex64), axis = -1)
 
-    # downsample f
+    # downsample f and Gamma
     f_ds = downsample(downsample(downsample(f, self._ds, axis = 0), self._ds, axis = 1), self._ds, axis = 2)
     Gam_ds = downsample(downsample(downsample(Gam, self._ds, axis = 0), self._ds, axis = 1), self._ds, axis = 2)
 
     F = xp.zeros((ncoils,2,) + f_ds.shape, dtype = xp.complex64)
 
     for i_sens in range(self._ncoils):
-      F[i_sens,0,...] = xp.fft.fftn(self.sens[i_sens,...] * f_ds, norm = 'ortho')
-      F[i_sens,1,...] = xp.fft.fftn(self.sens[i_sens,...] * Gam_ds*f_ds, norm = 'ortho')
+      for it in range(self._n_readout_bins):
+        F[i_sens,0,...][self._readout_inds[it]] = xp.fft.fftn(self.sens[i_sens,...] * Gam_ds**(self._tr[it]/self._dt) * f_ds, norm = 'ortho')[self._readout_inds[it]]
+        F[i_sens,1,...][self._readout_inds[it]] = xp.fft.fftn(self.sens[i_sens,...] * Gam_ds**((self._tr[it]/self._dt) + 1) * f_ds, norm = 'ortho')[self._readout_inds[it]]
 
     # convert complex64 arrays back to 2 float32 array
     f = xp.stack([f.real, f.imag], axis = -1)
@@ -280,8 +281,15 @@ class DualTESodiumAcqModel:
     Gam_ds = downsample(downsample(downsample(Gam, self._ds, axis = 0), self._ds, axis = 1), self._ds, axis = 2)
 
     for i_sens in range(self._ncoils):
-      f_ds += xp.conj(self.sens[i_sens])*xp.fft.ifftn(F[i_sens,0,...], norm = 'ortho')
-      f_ds += Gam_ds*xp.conj(self.sens[i_sens])*xp.fft.ifftn(F[i_sens,1,...], norm = 'ortho')
+      for it in range(self._n_readout_bins):
+        tmp0 = xp.zeros(F[i_sens,0,...].shape, dtype = F.dtype)
+        tmp0[self._readout_inds[it]] = F[i_sens,0,...][self._readout_inds[it]]
+        f_ds += (Gam_ds**(self._tr[it]/self._dt)) * xp.conj(self.sens[i_sens])*xp.fft.ifftn(tmp0, norm = 'ortho')
+
+        tmp1 = xp.zeros(F[i_sens,1,...].shape, dtype = F.dtype)
+        tmp1[self._readout_inds[it]] = F[i_sens,1,...][self._readout_inds[it]]
+        f_ds += (Gam_ds**((self._tr[it]/self._dt) + 1)) * xp.conj(self.sens[i_sens])*xp.fft.ifftn(tmp1, norm = 'ortho')
+
 
     # upsample f
     f = upsample(upsample(upsample(f_ds, self._ds, axis = 0), self._ds, axis = 1), self._ds, axis = 2)
@@ -295,7 +303,6 @@ class DualTESodiumAcqModel:
   #------------------------------------------------------------------------------
   @staticmethod
   def readout_time(k, eta, c1, c2, alpha_sw_tpi, beta_sw_tpi, t0_sw):
-  
     # the point until the readout is linear
     m = 1126 * 0.16
   
