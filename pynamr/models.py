@@ -99,7 +99,9 @@ class DualTESodiumAcqModel:
     k_1d = xp.linspace(0, self._k_edge, self._n_readout_bins + 1)
     
     self._readout_inds = []
-    self._tr = xp.zeros(self._n_readout_bins)
+    self._tr = xp.zeros(self._n_readout_bins, dtype = xp.float32)
+
+    self._kmask = xp.zeros((64,64,64), dtype = xp.uint8)
     
     for i in range(self._n_readout_bins):
       k_start = k_1d[i]
@@ -108,6 +110,7 @@ class DualTESodiumAcqModel:
     
       self._tr[i] = t_read_3[rinds].mean()
       self._readout_inds.append(rinds)
+      self._kmask[rinds] = 1
 
   @property
   def image_shape(self):
@@ -218,6 +221,10 @@ class DualTESodiumAcqModel:
   def k_edge(self, value):
     self._k_edge = value
     self.setup_readout()
+
+  @property
+  def kmask(self):
+    return self._kmask
 
   #------------------------------------------------------------------------------
   def forward(self, f, Gam):
