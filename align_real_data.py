@@ -12,10 +12,11 @@ import pymirc.viewer as pv
 
 from scipy.ndimage import gaussian_filter
 from argparse import ArgumentParser
+import matplotlib.pyplot as py
 
 parser = ArgumentParser()
 parser.add_argument('case')
-parser.add_argument('--sdir', default = 'PhyCha_kw0')
+parser.add_argument('--sdir', default = 'DeNoise_kw0')
 parser.add_argument('--n', default = 128, type = int)
 args = parser.parse_args()
 
@@ -28,18 +29,7 @@ sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03*'))[0], sdir.split('_')[0], s
 sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5*'))[0], sdir.split('_')[0], sdir)
 fpattern = '*.c?'
 
-t1_nii = nib.load(os.path.join(pdir,'mprage.nii'))
-t1_nii = nib.as_closest_canonical(t1_nii)
-t1     = t1_nii.get_fdata()
-t1_affine = t1_nii.affine
-
-csf_nii = nib.load(os.path.join(pdir,'c3mprage.nii'))
-csf_nii = nib.as_closest_canonical(csf_nii)
-csf     = csf_nii.get_fdata()
-csf_affine = csf_nii.affine
-
 # create the output directory
-
 odir = os.path.join(pdir,sdir + '_preprocessed')
 if not os.path.exists(odir):
   os.makedirs(odir)
@@ -53,6 +43,8 @@ fnames  = sorted(glob(os.path.join(sdir1, fpattern)))
 fnames2 = sorted(glob(os.path.join(sdir2, fpattern)))
 ncoils  = len(fnames)
 
+if (len(fnames) != 8) or (len(fnames2) != 8):
+  raise ValueError('Not enough data files found')
 
 data           = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 data_filt      = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
@@ -106,44 +98,16 @@ sos_filt = np.sqrt((np.abs(cimg_pad_filt)**2).sum(axis = 0))
 for i in range(ncoils):
   sens[i,...]  = cimg_pad_filt[i,...] / sos_filt
 
-vi = pv.ThreeAxisViewer([np.abs(sens),np.abs(cimg_pad)])
+#vi = pv.ThreeAxisViewer([np.abs(sens),np.abs(cimg_pad)])
 
 # save the data and the sensitities
 np.save(os.path.join(odir,f'echo1_{recon_shape[0]}.npy'), data)
 np.save(os.path.join(odir,f'echo2_{recon_shape[0]}.npy'), data2)
 np.save(os.path.join(odir,f'sens_{recon_shape[0]}.npy'), sens)
 
-#------------------------------------------------------------------------------
-#- align T1--------------------------------------------------------------------
-#------------------------------------------------------------------------------
-
-fov = 223.
-na_voxsize = fov / np.array(recon_shape)
-na_affine = np.diag(np.concatenate((na_voxsize,[1])))
-na_affine[:-1,-1] = -fov/2.
-
-sos /= sos_filt.max()
-
-metric = lambda x,y: np.sum((x-y)**2)
-csf_coreg, coreg_aff, coreg_params = pi.rigid_registration(csf, sos, t1_affine, na_affine, 
-                                                           metric = metric)
-
-t1_coreg = pi.aff_transform(t1, coreg_aff, recon_shape, cval = t1.min())
-
-## save the data
-np.save(os.path.join(odir,f't1_coreg_{recon_shape[0]}.npy'), t1_coreg)
-np.save(os.path.join(odir,f'csf_coreg_{recon_shape[0]}.npy'), csf_coreg)
-np.save(os.path.join(odir,f'coreg_affine_{recon_shape[0]}.npy'), coreg_aff)
-
-
-########################
-import pymirc.viewer as pv
-vi = pv.ThreeAxisViewer([t1_coreg, csf_coreg, sos])
-
 ########################
 # show the sensitivity
 
-import matplotlib.pyplot as py
 for sl in [45]:
   fig, ax = py.subplots(3,3, figsize = (8,8))
   for i in range(8):

@@ -23,7 +23,7 @@ def sitk_image_to_numpy_volume(image):
 
 parser = ArgumentParser()
 parser.add_argument('case')
-parser.add_argument('--sdir', default = 'DeNoise_kw0')
+parser.add_argument('--sdir', default = 'DeNoise_kw1')
 parser.add_argument('--n', default = 128, type = int)
 args = parser.parse_args()
 
@@ -81,7 +81,7 @@ registration_method.SetInterpolator(sitk.sitkLinear)
 registration_method.SetOptimizerAsGradientDescentLineSearch(
     learningRate            = 0.3,
     numberOfIterations      = 200,
-    convergenceMinimumValue = 1e-6,
+    convergenceMinimumValue = 1e-7,
     convergenceWindowSize   = 10)
 
 registration_method.SetOptimizerScalesFromPhysicalShift()
