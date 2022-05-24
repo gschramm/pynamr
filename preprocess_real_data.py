@@ -51,6 +51,7 @@ data_filt      = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 cimg           = np.zeros((ncoils,) + data_shape,   dtype = np.complex64)
 cimg_pad       = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 sens           = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
+sens2          = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 cimg_pad_filt  = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 
 data2           = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
@@ -95,27 +96,32 @@ for i in range(ncoils):
 sos = np.sqrt((np.abs(cimg_pad)**2).sum(axis = 0))
 sos_filt = np.sqrt((np.abs(cimg_pad_filt)**2).sum(axis = 0))
 
-for i in range(ncoils):
-  sens[i,...]  = cimg_pad_filt[i,...] / sos_filt
+# load the correction field
+corr_nii = nib.load('data/sodium_data/BigPhantom/correction_field.nii')
+corr_nii = nib.as_closest_canonical(corr_nii)
+corr_field = corr_nii.get_fdata()
 
-#vi = pv.ThreeAxisViewer([np.abs(sens),np.abs(cimg_pad)])
+for i in range(ncoils):
+  sens[i,...]   = cimg_pad_filt[i,...] / sos_filt
+  sens2[i,...]  = cimg_pad_filt[i,...] / (corr_field*sos_filt)
 
 # save the data and the sensitities
 np.save(os.path.join(odir,f'echo1_{recon_shape[0]}.npy'), data)
 np.save(os.path.join(odir,f'echo2_{recon_shape[0]}.npy'), data2)
 np.save(os.path.join(odir,f'sens_{recon_shape[0]}.npy'), sens)
+np.save(os.path.join(odir,f'sens_corr_{recon_shape[0]}.npy'), sens2)
 
-########################
-# show the sensitivity
-
-for sl in [45]:
-  fig, ax = py.subplots(3,3, figsize = (8,8))
-  for i in range(8):
-    ax.flatten()[i].imshow(np.abs(sens[i,:,:,sl]).T, origin = 'lower', 
-                           cmap = py.cm.Greys_r, vmin = 0, vmax = 0.4)
-    ax.flatten()[i].set_title(os.path.basename(fnames[i]))
-  
-  ax.flatten()[8].imshow(np.abs(sos[:,:,sl]).T, origin = 'lower', cmap = py.cm.Greys_r)
-  ax.flatten()[8].set_title('sum(abs(coil imgs))')
-  fig.tight_layout()
-  fig.show()
+#########################
+## show the sensitivity
+#
+#for sl in [45]:
+#  fig, ax = py.subplots(3,3, figsize = (8,8))
+#  for i in range(8):
+#    ax.flatten()[i].imshow(np.abs(sens[i,:,:,sl]).T, origin = 'lower', 
+#                           cmap = py.cm.Greys_r, vmin = 0, vmax = 0.4)
+#    ax.flatten()[i].set_title(os.path.basename(fnames[i]))
+#  
+#  ax.flatten()[8].imshow(np.abs(sos[:,:,sl]).T, origin = 'lower', cmap = py.cm.Greys_r)
+#  ax.flatten()[8].set_title('sum(abs(coil imgs))')
+#  fig.tight_layout()
+#  fig.show()
