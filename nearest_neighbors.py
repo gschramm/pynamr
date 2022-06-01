@@ -3,6 +3,49 @@ from numba import njit, prange
 
 #-------------------------------------------------------------------------------
 @njit(parallel = True)
+def next_neighbors(shape, ninds):
+  """ Calculate the 2/3 next neighbors for all voxels in a 2/3D array.
+      Usefule for standard fwd finite differences (without structural information).
+
+  Parameters
+  ----------
+  shape : tuple
+    shape of the 2D/3D image
+
+  ninds: 2d numpy array used for output
+    of shape (np.prod(img.shape), 2/3).
+    ninds[i,:] contains the indicies of the nearest neighbors of voxel i
+
+  Note
+  ----
+  All voxel indices are "flattened". It is assumed that the numpy arrays
+  are in 'C' order.
+  """
+
+  if len(shape) == 2:
+    d1 = shape[1]
+    
+    for i0 in prange(shape[0]):
+      for i1 in range(shape[1]):
+        j          = i0*d1 + i1
+        ninds[j,0] = i0*d1     + ((i1+1) % shape[1])
+        ninds[j,1] = ((i0+1) % shape[0])*d1 + i1
+
+  elif len(shape) == 3:
+    d12 = shape[1]*shape[2]
+    d2  = shape[2]
+    
+    for i0 in prange(shape[0]):
+      for i1 in range(shape[1]):
+        for i2 in range(shape[2]):
+          j          = i0*d12 + i1*d2 + i2
+          ninds[j,0] = i0*d12 + i1*d2 + ((i2+1) % shape[2])
+          ninds[j,1] = i0*d12 + ((i1+1) % shape[1])*d2 + i2
+          ninds[j,2] = ((i0+1) % shape[0])*d12 + i1*d2 + i2
+
+
+#-------------------------------------------------------------------------------
+@njit(parallel = True)
 def nearest_neighbors_3d(img,s,nnearest,ninds):
   """ Calculate the n nearest neighbors for all voxels in a 3D array
 
