@@ -8,7 +8,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as py
 
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
-from nearest_neighbors import nearest_neighbors, is_nearest_neighbor_of
+from nearest_neighbors import next_neighbors, nearest_neighbors, is_nearest_neighbor_of
 from readout_time import readout_time
 from apodized_fft import apodized_fft_multi_echo
 from cost_functions import multi_echo_bowsher_cost, multi_echo_bowsher_grad, multi_echo_bowsher_cost_gamma
@@ -28,7 +28,7 @@ parser = ArgumentParser(description = '3D na mr dual echo simulation')
 parser.add_argument('case')
 parser.add_argument('--sdir',  default = 'PhyCha_kw0_preprocessed')
 parser.add_argument('--niter',  default = 10, type = int)
-parser.add_argument('--n_outer', default = 6, type = int)
+parser.add_argument('--n_outer', default = 15, type = int)
 parser.add_argument('--bet_recon', default = 0.003, type = float)
 parser.add_argument('--bet_gam', default = 0.003, type = float)
 parser.add_argument('--nnearest', default = 13,  type = int)
@@ -36,18 +36,20 @@ parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
 parser.add_argument('--n',   default = 128,  type = int, choices = [128,256])
 parser.add_argument('--method', default = 0,  type = int)
 parser.add_argument('--mr_name', default = 't1_coreg')
+parser.add_argument('--no_anat_prior', action = 'store_true')
 
 args = parser.parse_args()
 
-niter       = args.niter
-n_outer     = args.n_outer
-bet_recon   = args.bet_recon
-bet_gam     = args.bet_gam
-nnearest    = args.nnearest 
-nneigh      = args.nneigh
-n           = args.n
-method      = args.method
-mr_name     = args.mr_name
+niter         = args.niter
+n_outer       = args.n_outer
+bet_recon     = args.bet_recon
+bet_gam       = args.bet_gam
+nnearest      = args.nnearest 
+nneigh        = args.nneigh
+n             = args.n
+method        = args.method
+mr_name       = args.mr_name
+anat_prior    = not args.no_anat_prior
 
 delta_t     = 5.
 asym        = 0 
@@ -59,8 +61,12 @@ asym        = 0
 # load the data
 #-------------------
 
-pdir   = os.path.join('data','sodium_data', args.case, args.sdir)
-odir   = os.path.join(pdir, f'{datetime.now().strftime("%y%m%d-%H%M%S")}__br_{bet_recon:.1E}__bg_{bet_gam:.1E}__nn_{nneigh}__ne_{nnearest}')
+pdir = os.path.join('data','sodium_data', args.case, args.sdir)
+
+if anat_prior:
+  odir  = os.path.join(pdir, f'{datetime.now().strftime("%y%m%d-%H%M%S")}__br_{bet_recon:.1E}__bg_{bet_gam:.1E}__nn_{nneigh}__ne_{nnearest}')
+else:
+  odir  = os.path.join(pdir, f'{datetime.now().strftime("%y%m%d-%H%M%S")}__br_{bet_recon:.1E}__bg_{bet_gam:.1E}__no_anat')
 
 if not os.path.exists(odir):
   os.makedirs(odir)
@@ -195,8 +201,14 @@ elif nneigh == 80:
                  [0, 0, 0, 0, 0]]])
 
   
-ninds  = np.zeros((np.prod(aimg.shape),nnearest), dtype = np.uint32)
-nearest_neighbors(aimg,s,nnearest,ninds)
+if anat_prior:
+  ninds  = np.zeros((np.prod(aimg.shape), nnearest), dtype = np.uint32)
+  nearest_neighbors(aimg,s,nnearest,ninds)
+else:
+  ninds  = np.zeros((np.prod(aimg.shape), aimg.ndim), dtype = np.uint32)
+  next_neighbors(aimg.shape,ninds)
+  
+
 ninds2 = is_nearest_neighbor_of(ninds)
 
 #--------------------------------------------------------------------------------------------------
