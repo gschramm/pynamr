@@ -53,7 +53,26 @@ def upsample(x_ds, ds, axis = 0):
 #----------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------
 
-class DualTESodiumAcqModel:
+class MonoExpDualTESodiumAcqModel:
+  """ mono exponential decay model for dual TE Na MR data
+
+      Parameters
+      ----------
+
+      image_shape ... tuple
+        shape of the image
+
+      ncoils ... int
+        number of coils
+
+      sens ... 3D complex64 numpy arrays of shape (ncoils, image_shape) 
+        including the coil sensitivities
+
+      dt ... float
+        time difference between the first and second echo in ms
+        the first echo is assumed to be at 0ms
+  """
+
   def __init__(self, image_shape, ncoils, sens, dt):
     # shape of the data
     self._data_shape = (64,64,64)
@@ -229,18 +248,19 @@ class DualTESodiumAcqModel:
   #------------------------------------------------------------------------------
   def forward(self, f, Gam):
     """ Calculate downsampled FFT of an image f
-     ha
+
         Parameters
         ----------
         
-        f : a float64 numpy/cupy array of shape (n0,n1,n2,2)
+        f : a float64 numpy/cupy array of shape (self.image_shape,2)
           [...,0] is considered as the real part
           [...,1] is considered as the imag part
-        
+
+        Gam : a float64 numpy/cupy array of shape (self.image_shape)
         
         Returns
         -------
-        a float64 numpy/cupy array of shape (n0,n1,n2,2)
+        a float64 numpy/cupy array of shape (self.ncoils,self.image_shape,2)
     """
 
     # create a complex view of the input real input array with two channels
@@ -270,14 +290,15 @@ class DualTESodiumAcqModel:
         Parameters
         ----------
         
-        F : a float64 numpy/cupy array of shape (n0,n1,n2,2)
+        F : a float64 numpy/cupy array of shape (self.ncoils,self.image_shape,2)
           [...,0] is considered as the real part
           [...,1] is considered as the imag part
         
+        Gam : a float64 numpy/cupy array of shape (self.image_shape)
         
         Returns
         -------
-        a float64 numpy/cupy array of shape (n0,n1,n2,2)
+        a float64 numpy/cupy array of shape (self.image_shape)
     """
 
     # create a complex view of the input real input array with two channels
@@ -350,7 +371,7 @@ if __name__ == '__main__':
  
   Gam = xp.random.rand(n,n,n).astype(xp.float32)
   
-  m = DualTESodiumAcqModel(a.shape, ncoils, sens, dt)
+  m = MonoExpDualTESodiumAcqModel(a.shape, ncoils, sens, dt)
   
   f_fwd  = m.forward(f, Gam)
   F      = xp.random.rand(*f_fwd.shape).astype(xp.float32)
