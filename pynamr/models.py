@@ -1,6 +1,6 @@
-import cupy as xp
+import numpy as np
 
-def downsample(x, ds, axis = 0):
+def downsample(x, ds, xp, axis = 0):
 
   ds_shape       = list(x.shape)
   ds_shape[axis] = ds_shape[axis] // ds 
@@ -22,9 +22,9 @@ def downsample(x, ds, axis = 0):
     x_ds[sl2] = x[sl1].sum(axis = axis, keepdims = True)
   
   # normalize by sqrt(ds) to get operator norm 1
-  return x_ds / xp.sqrt(ds)
+  return x_ds / np.sqrt(ds)
 
-def upsample(x_ds, ds, axis = 0):
+def upsample(x_ds, ds, xp, axis = 0):
 
   up_shape       = list(x_ds.shape)
   up_shape[axis] = up_shape[axis] * ds 
@@ -46,7 +46,7 @@ def upsample(x_ds, ds, axis = 0):
     x[sl1] = x_ds[sl2]
 
   # normalize by sqrt(ds) to get operator norm 1
-  return x / xp.sqrt(ds)
+  return x / np.sqrt(ds)
 
 
 #----------------------------------------------------------------------------------
@@ -73,13 +73,13 @@ class MonoExpDualTESodiumAcqModel:
         the first echo is assumed to be at 0ms
   """
 
-  def __init__(self, image_shape, ncoils, sens, dt):
+  def __init__(self, data_shape, ds, ncoils, sens, dt, xp):
     # shape of the data
-    self._data_shape = (64,64,64)
-    # shape of the image
-    self._image_shape = image_shape
+    self._data_shape = data_shape
     # downsampling factor
-    self._ds = self._image_shape[0] // self._data_shape[0]
+    self._ds = ds
+    # shape of the image
+    self._image_shape = tuple([ds*x for x in self._data_shape])
 
     # number coils
     self._ncoils = ncoils
@@ -87,6 +87,13 @@ class MonoExpDualTESodiumAcqModel:
     self._sens = sens
     # time between two echos
     self._dt = dt
+
+    # numpy / cupy module to use for ffts
+    self._xp = xp
+
+    # send sens to GPU if needed
+    if self._xp.__name__ == 'cupy':
+      self._sens = self._xp.asarray(self._sens)
 
     # parameters related to the read out trajectory
     self._eta            = 0.9830
@@ -96,36 +103,36 @@ class MonoExpDualTESodiumAcqModel:
     self._beta_sw_tpi    = -0.5171
     self._t0_sw          = 0.0018
     self._k_edge         = 1.8*0.8197
-    self._n_readout_bins = 32
+    self._n_readout_bins = self._data_shape[0] // 2
 
     self.setup_readout()
 
   def setup_readout(self):
     # setup the readout time and readout indexes
-    k0,k1,k2 = xp.meshgrid(xp.arange(64) - 32 + 0.5, xp.arange(64) - 32 + 0.5, xp.arange(64) - 32 + 0.5)
-    abs_k = xp.sqrt(k0**2 + k1**2 + k2**2)
-    abs_k = xp.fft.fftshift(abs_k)
+    k0,k1,k2 = np.meshgrid(np.linspace(-self._k_edge, self._k_edge, self._data_shape[0]),
+                           np.linspace(-self._k_edge, self._k_edge, self._data_shape[1]),
+                           np.linspace(-self._k_edge, self._k_edge, self._data_shape[2]))
 
-    # rescale abs_k such that k = 1.8*0.8197 is at r = 32 (the edge)
-    abs_k *= self._k_edge/31.5
+    abs_k = np.sqrt(k0**2 + k1**2 + k2**2)
+    abs_k = np.fft.fftshift(abs_k)
+
 
     # calculate the readout times and the k-spaces locations that
     # are read at a given time
     t_read_3 = self.readout_time(abs_k, self._eta, self._c1, self._c2, self._alpha_sw_tpi,
                                  self._beta_sw_tpi, self._t0_sw)
-  
-    
-    k_1d = xp.linspace(0, self._k_edge, self._n_readout_bins + 1)
+
+    k_1d = np.linspace(0, self._k_edge, self._n_readout_bins + 1)
     
     self._readout_inds = []
-    self._tr = xp.zeros(self._n_readout_bins, dtype = xp.float32)
+    self._tr = np.zeros(self._n_readout_bins, dtype = np.float32)
 
-    self._kmask = xp.zeros((64,64,64), dtype = xp.uint8)
+    self._kmask = np.zeros(data_shape, dtype = np.uint8)
     
     for i in range(self._n_readout_bins):
       k_start = k_1d[i]
       k_end   = k_1d[i+1]
-      rinds   = xp.where(xp.logical_and(abs_k >= k_start, abs_k <= k_end))
+      rinds   = np.where(np.logical_and(abs_k >= k_start, abs_k <= k_end))
     
       self._tr[i] = t_read_3[rinds].mean()
       self._readout_inds.append(rinds)
@@ -156,6 +163,9 @@ class MonoExpDualTESodiumAcqModel:
   @sens.setter
   def sens(self, value):
     self._sens = value
+    # send sens to GPU if needed
+    if self._xp.__name__ == 'cupy':
+      self._sens = self._xp.asarray(self._sens)
 
   @property
   def dt(self):
@@ -264,22 +274,33 @@ class MonoExpDualTESodiumAcqModel:
     """
 
     # create a complex view of the input real input array with two channels
-    f    = xp.squeeze(f.view(dtype = xp.complex64), axis = -1)
+    f  = np.squeeze(f.view(dtype = np.complex64), axis = -1)
+
+    #----------------------
+    # send f and Gam to GPU
+    if self._xp.__name__ == 'cupy':
+      f   = self._xp.asarray(f)
+      Gam = self._xp.asarray(Gam)
 
     # downsample f and Gamma
-    f_ds = downsample(downsample(downsample(f, self._ds, axis = 0), self._ds, axis = 1), self._ds, axis = 2)
-    Gam_ds = downsample(downsample(downsample(Gam, self._ds, axis = 0), self._ds, axis = 1), self._ds, axis = 2)
+    f_ds = downsample(downsample(downsample(f, self._ds, self._xp, axis = 0), self._ds, self._xp, axis = 1),                                            self._ds, self._xp, axis = 2)
+    Gam_ds = downsample(downsample(downsample(Gam, self._ds, self._xp, axis = 0), 
+                                              self._ds, self._xp, axis = 1), self._ds, self._xp, axis = 2)
 
-    F = xp.zeros((ncoils,2,) + f_ds.shape, dtype = xp.complex64)
+    F = self._xp.zeros((ncoils,2,) + f_ds.shape, dtype = self._xp.complex64)
 
     for i_sens in range(self._ncoils):
       for it in range(self._n_readout_bins):
-        F[i_sens,0,...][self._readout_inds[it]] = xp.fft.fftn(self.sens[i_sens,...] * Gam_ds**(self._tr[it]/self._dt) * f_ds, norm = 'ortho')[self._readout_inds[it]]
-        F[i_sens,1,...][self._readout_inds[it]] = xp.fft.fftn(self.sens[i_sens,...] * Gam_ds**((self._tr[it]/self._dt) + 1) * f_ds, norm = 'ortho')[self._readout_inds[it]]
+        F[i_sens,0,...][self._readout_inds[it]] = self._xp.fft.fftn(self.sens[i_sens,...] * Gam_ds**(self._tr[it]/self._dt) * f_ds, norm = 'ortho')[self._readout_inds[it]]
+        F[i_sens,1,...][self._readout_inds[it]] = self._xp.fft.fftn(self.sens[i_sens,...] * Gam_ds**((self._tr[it]/self._dt) + 1) * f_ds, norm = 'ortho')[self._readout_inds[it]]
+
+    # get f, F, Gam back from GPU
+    if self._xp.__name__ == 'cupy':
+      F   = self._xp.asnumpy(F)
+    #----------------------
 
     # convert complex64 arrays back to 2 float32 array
-    f = xp.stack([f.real, f.imag], axis = -1)
-    F = xp.stack([F.real, F.imag], axis = -1)
+    F = np.stack([F.real, F.imag], axis = -1)
 
     return F
 
@@ -302,29 +323,40 @@ class MonoExpDualTESodiumAcqModel:
     """
 
     # create a complex view of the input real input array with two channels
-    F  = xp.squeeze(F.view(dtype = xp.complex64), axis = -1)
+    F  = np.squeeze(F.view(dtype = np.complex64), axis = -1)
 
-    f_ds = xp.zeros(F.shape[2:], dtype = xp.complex64)
+    #----------------------
+    # send F, Gam to GPU
+    if self._xp.__name__ == 'cupy':
+      F   = self._xp.asarray(F)
+      Gam = self._xp.asarray(Gam)
 
-    Gam_ds = downsample(downsample(downsample(Gam, self._ds, axis = 0), self._ds, axis = 1), self._ds, axis = 2)
+    f_ds = self._xp.zeros(F.shape[2:], dtype = self._xp.complex64)
+
+    Gam_ds = downsample(downsample(downsample(Gam, self._ds, self._xp, axis = 0), 
+                        self._ds, self._xp, axis = 1), self._ds, self._xp, axis = 2)
 
     for i_sens in range(self._ncoils):
       for it in range(self._n_readout_bins):
-        tmp0 = xp.zeros(F[i_sens,0,...].shape, dtype = F.dtype)
+        tmp0 = self._xp.zeros(F[i_sens,0,...].shape, dtype = F.dtype)
         tmp0[self._readout_inds[it]] = F[i_sens,0,...][self._readout_inds[it]]
-        f_ds += (Gam_ds**(self._tr[it]/self._dt)) * xp.conj(self.sens[i_sens])*xp.fft.ifftn(tmp0, norm = 'ortho')
+        f_ds += (Gam_ds**(self._tr[it]/self._dt)) * self._xp.conj(self.sens[i_sens])*self._xp.fft.ifftn(tmp0, norm = 'ortho')
 
-        tmp1 = xp.zeros(F[i_sens,1,...].shape, dtype = F.dtype)
+        tmp1 = self._xp.zeros(F[i_sens,1,...].shape, dtype = F.dtype)
         tmp1[self._readout_inds[it]] = F[i_sens,1,...][self._readout_inds[it]]
-        f_ds += (Gam_ds**((self._tr[it]/self._dt) + 1)) * xp.conj(self.sens[i_sens])*xp.fft.ifftn(tmp1, norm = 'ortho')
-
+        f_ds += (Gam_ds**((self._tr[it]/self._dt) + 1)) * self._xp.conj(self.sens[i_sens])*self._xp.fft.ifftn(tmp1, norm = 'ortho')
 
     # upsample f
-    f = upsample(upsample(upsample(f_ds, self._ds, axis = 0), self._ds, axis = 1), self._ds, axis = 2)
+    f = upsample(upsample(upsample(f_ds, self._ds, self._xp, axis = 0), self._ds, self._xp, axis = 1), 
+                                   self._ds, self._xp, axis = 2)
+
+    # get f, F, Gam back from GPU
+    if self._xp.__name__ == 'cupy':
+      f   = self._xp.asnumpy(f)
+    #----------------------
 
     # convert complex64 arrays back to 2 float32 array
-    f = xp.stack([f.real, f.imag], axis = -1)
-    F = xp.stack([F.real, F.imag], axis = -1)
+    f = np.stack([f.real, f.imag], axis = -1)
 
     return f
 
@@ -336,12 +368,12 @@ class MonoExpDualTESodiumAcqModel:
   
     k_lin = t0_sw * m
   
-    i1 = xp.where(k <= k_lin)
-    i2 = xp.where(k > k_lin)
+    i1 = np.where(k <= k_lin)
+    i2 = np.where(k > k_lin)
   
-    t = xp.zeros(k.shape)
+    t = np.zeros(k.shape)
     t[i1] = k[i1] / m
-    t[i2] = t0_sw + ((c2*(k[i2]**3) - ((c1/eta)*xp.exp(-eta*(k[i2]**3))) - beta_sw_tpi) / (3*alpha_sw_tpi))
+    t[i2] = t0_sw + ((c2*(k[i2]**3) - ((c1/eta)*np.exp(-eta*(k[i2]**3))) - beta_sw_tpi) / (3*alpha_sw_tpi))
 
     # convert to ms
     t *= 1000
@@ -358,22 +390,28 @@ class MonoExpDualTESodiumAcqModel:
 
 if __name__ == '__main__':
 
+  import cupy as cp
+
+  data_shape = (64,64,64)
   ds = 2
-  n  = 128 
-  ncoils = 8
+  ncoils = 4
   dt = 5.
+  xp = cp
 
-  a = xp.pad(xp.random.rand(n-4,n-4,n-4),2).astype(xp.float32)
+  n_ds = data_shape[0] 
+  n    = ds*n_ds
 
-  f = xp.stack([a,a], axis = -1)
 
-  sens = xp.random.rand(ncoils,64,64,64).astype(xp.float32) + 1j*xp.random.rand(ncoils,64,64,64).astype(xp.float32)
+  a = np.pad(np.random.rand(n-4,n-4,n-4),2).astype(np.float32)
+  f = np.stack([a,a], axis = -1)
+
+  sens = np.random.rand(ncoils,n_ds,n_ds,n_ds).astype(np.float32) + 1j*np.random.rand(ncoils,n_ds,n_ds,n_ds).astype(np.float32)
  
-  Gam = xp.random.rand(n,n,n).astype(xp.float32)
+  Gam = np.random.rand(n,n,n).astype(np.float32)
   
-  m = MonoExpDualTESodiumAcqModel(a.shape, ncoils, sens, dt)
+  m = MonoExpDualTESodiumAcqModel(data_shape, ds, ncoils, sens, dt, xp)
   
   f_fwd  = m.forward(f, Gam)
-  F      = xp.random.rand(*f_fwd.shape).astype(xp.float32)
+  F      = np.random.rand(*f_fwd.shape).astype(np.float32)
   F_back = m.adjoint(F, Gam) 
   print((f_fwd*F).sum() / (f*F_back).sum())
