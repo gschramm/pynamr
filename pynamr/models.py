@@ -1,5 +1,9 @@
 import numpy as np
 
+#TODO: - grad_x = adjoint(outer)
+#      - grad_y = inner_gamma(outer)
+#                 "grad_gamma" is similar to adjoint (with different exponent for gamm
+
 def downsample(x, ds, xp, axis = 0):
 
   ds_shape       = list(x.shape)
@@ -65,7 +69,7 @@ class MonoExpDualTESodiumAcqModel:
       ncoils ... int
         number of coils
 
-      sens ... 3D complex64 numpy arrays of shape (ncoils, image_shape) 
+      sens ... 3D complex128 numpy arrays of shape (ncoils, image_shape) 
         including the coil sensitivities
 
       dt ... float
@@ -125,9 +129,9 @@ class MonoExpDualTESodiumAcqModel:
     k_1d = np.linspace(0, self._k_edge, self._n_readout_bins + 1)
     
     self._readout_inds = []
-    self._tr = np.zeros(self._n_readout_bins, dtype = np.float32)
+    self._tr = np.zeros(self._n_readout_bins, dtype = np.float64)
 
-    self._kmask = np.zeros(data_shape, dtype = np.uint8)
+    self._kmask = np.zeros(self._data_shape, dtype = np.uint8)
     
     for i in range(self._n_readout_bins):
       k_start = k_1d[i]
@@ -137,6 +141,9 @@ class MonoExpDualTESodiumAcqModel:
       self._tr[i] = t_read_3[rinds].mean()
       self._readout_inds.append(rinds)
       self._kmask[rinds] = 1
+
+    # convert kmask mask into a pseudo "complex" array
+    self._kmask = np.stack([self._kmask, self._kmask], axis = -1)
 
   @property
   def image_shape(self):
@@ -274,7 +281,7 @@ class MonoExpDualTESodiumAcqModel:
     """
 
     # create a complex view of the input real input array with two channels
-    f  = np.squeeze(f.view(dtype = np.complex64), axis = -1)
+    f = np.squeeze(f.view(dtype = np.complex128), axis = -1)
 
     #----------------------
     # send f and Gam to GPU
@@ -287,7 +294,7 @@ class MonoExpDualTESodiumAcqModel:
     Gam_ds = downsample(downsample(downsample(Gam, self._ds, self._xp, axis = 0), 
                                               self._ds, self._xp, axis = 1), self._ds, self._xp, axis = 2)
 
-    F = self._xp.zeros((ncoils,2,) + f_ds.shape, dtype = self._xp.complex64)
+    F = self._xp.zeros((self._ncoils,2,) + f_ds.shape, dtype = self._xp.complex128)
 
     for i_sens in range(self._ncoils):
       for it in range(self._n_readout_bins):
@@ -299,7 +306,7 @@ class MonoExpDualTESodiumAcqModel:
       F   = self._xp.asnumpy(F)
     #----------------------
 
-    # convert complex64 arrays back to 2 float32 array
+    # convert complex128 arrays back to 2 float64 array
     F = np.stack([F.real, F.imag], axis = -1)
 
     return F
@@ -323,7 +330,7 @@ class MonoExpDualTESodiumAcqModel:
     """
 
     # create a complex view of the input real input array with two channels
-    F  = np.squeeze(F.view(dtype = np.complex64), axis = -1)
+    F  = np.squeeze(F.astype(np.float64).view(dtype = np.complex128), axis = -1)
 
     #----------------------
     # send F, Gam to GPU
@@ -331,7 +338,7 @@ class MonoExpDualTESodiumAcqModel:
       F   = self._xp.asarray(F)
       Gam = self._xp.asarray(Gam)
 
-    f_ds = self._xp.zeros(F.shape[2:], dtype = self._xp.complex64)
+    f_ds = self._xp.zeros(F.shape[2:], dtype = self._xp.complex128)
 
     Gam_ds = downsample(downsample(downsample(Gam, self._ds, self._xp, axis = 0), 
                         self._ds, self._xp, axis = 1), self._ds, self._xp, axis = 2)
@@ -355,10 +362,77 @@ class MonoExpDualTESodiumAcqModel:
       f   = self._xp.asnumpy(f)
     #----------------------
 
-    # convert complex64 arrays back to 2 float32 array
+    # convert complex128 arrays back to 2 float64 array
     f = np.stack([f.real, f.imag], axis = -1)
 
     return f
+
+  #------------------------------------------------------------------------------
+
+  def grad_gam(self, F, Gam, img):
+    """ Calculate the the "inner" derivative with respect to Gamma
+      
+        Parameters
+        ----------
+        
+        F : a float64 numpy/cupy array of shape (self.ncoils,self.image_shape,2)
+            containing the "outer derivative" of the cost function
+          [...,0] is considered as the real part
+          [...,1] is considered as the imag part
+        
+        Gam : a float64 numpy/cupy array of shape (self.image_shape)
+        
+        img : a float64 numpy/cupy array of shape (self.image_shape,2)
+            containing the current Na concentration image
+          [...,0] is considered as the real part
+          [...,1] is considered as the imag part
+
+        Returns
+        -------
+        a float64 numpy/cupy array of shape (self.image_shape)
+    """
+
+    # create a complex view of the input real input array with two channels
+    F  = np.squeeze(F.astype(np.float64).view(dtype = np.complex128), axis = -1)
+
+    #----------------------
+    # send F, Gam to GPU
+    if self._xp.__name__ == 'cupy':
+      F   = self._xp.asarray(F)
+      Gam = self._xp.asarray(Gam)
+
+    f_ds = self._xp.zeros(F.shape[2:], dtype = self._xp.complex128)
+
+    Gam_ds = downsample(downsample(downsample(Gam, self._ds, self._xp, axis = 0), 
+                        self._ds, self._xp, axis = 1), self._ds, self._xp, axis = 2)
+
+    for i_sens in range(self._ncoils):
+      for it in range(self._n_readout_bins):
+        tmp0 = self._xp.zeros(F[i_sens,0,...].shape, dtype = F.dtype)
+        tmp0[self._readout_inds[it]] = F[i_sens,0,...][self._readout_inds[it]]
+        f_ds += (self._tr[it]/self._dt) * (Gam_ds**((self._tr[it]/self._dt) - 1)) * self._xp.conj(self.sens[i_sens])*self._xp.fft.ifftn(tmp0, norm = 'ortho')
+
+        tmp1 = self._xp.zeros(F[i_sens,1,...].shape, dtype = F.dtype)
+        tmp1[self._readout_inds[it]] = F[i_sens,1,...][self._readout_inds[it]]
+        f_ds += ((self._tr[it]/self._dt) + 1) * (Gam_ds**(self._tr[it]/self._dt)) * self._xp.conj(self.sens[i_sens])*self._xp.fft.ifftn(tmp1, norm = 'ortho')
+
+    # upsample f
+    f = upsample(upsample(upsample(f_ds, self._ds, self._xp, axis = 0), self._ds, self._xp, axis = 1), 
+                                   self._ds, self._xp, axis = 2)
+
+    # get f, F, Gam back from GPU
+    if self._xp.__name__ == 'cupy':
+      f   = self._xp.asnumpy(f)
+    #----------------------
+
+    # convert complex128 arrays back to 2 float64 array
+    f = np.stack([f.real, f.imag], axis = -1)
+
+    # multiply by the curent image
+    f *= img
+
+    return f.sum(-1)
+
 
   #------------------------------------------------------------------------------
   @staticmethod
@@ -392,6 +466,8 @@ if __name__ == '__main__':
 
   import cupy as cp
 
+  np.random.seed(1)
+
   data_shape = (64,64,64)
   ds = 2
   ncoils = 4
@@ -402,16 +478,16 @@ if __name__ == '__main__':
   n    = ds*n_ds
 
 
-  a = np.pad(np.random.rand(n-4,n-4,n-4),2).astype(np.float32)
+  a = np.pad(np.random.rand(n-4,n-4,n-4),2).astype(np.float64)
   f = np.stack([a,a], axis = -1)
 
-  sens = np.random.rand(ncoils,n_ds,n_ds,n_ds).astype(np.float32) + 1j*np.random.rand(ncoils,n_ds,n_ds,n_ds).astype(np.float32)
+  sens = np.random.rand(ncoils,n_ds,n_ds,n_ds).astype(np.float64) + 1j*np.random.rand(ncoils,n_ds,n_ds,n_ds).astype(np.float64)
  
-  Gam = np.random.rand(n,n,n).astype(np.float32)
+  Gam = np.random.rand(n,n,n).astype(np.float64)
   
   m = MonoExpDualTESodiumAcqModel(data_shape, ds, ncoils, sens, dt, xp)
   
   f_fwd  = m.forward(f, Gam)
-  F      = np.random.rand(*f_fwd.shape).astype(np.float32)
+  F      = np.random.rand(*f_fwd.shape).astype(np.float64)
   F_back = m.adjoint(F, Gam) 
   print((f_fwd*F).sum() / (f*F_back).sum())
