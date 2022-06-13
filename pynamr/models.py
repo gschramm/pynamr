@@ -395,26 +395,35 @@ class MonoExpDualTESodiumAcqModel:
     # create a complex view of the input real input array with two channels
     F  = np.squeeze(F.astype(np.float64).view(dtype = np.complex128), axis = -1)
 
+    img = np.squeeze(img.view(dtype = np.complex128), axis = -1)
+
     #----------------------
     # send F, Gam to GPU
     if self._xp.__name__ == 'cupy':
       F   = self._xp.asarray(F)
       Gam = self._xp.asarray(Gam)
+      img = self._xp.asarray(img)
 
     f_ds = self._xp.zeros(F.shape[2:], dtype = self._xp.complex128)
 
     Gam_ds = downsample(downsample(downsample(Gam, self._ds, self._xp, axis = 0), 
                         self._ds, self._xp, axis = 1), self._ds, self._xp, axis = 2)
 
+    img_ds = downsample(downsample(downsample(img, self._ds, self._xp, axis = 0), 
+                        self._ds, self._xp, axis = 1), self._ds, self._xp, axis = 2)
+
+
     for i_sens in range(self._ncoils):
       for it in range(self._n_readout_bins):
+        n =  self._tr[it]/self._dt
+
         tmp0 = self._xp.zeros(F[i_sens,0,...].shape, dtype = F.dtype)
         tmp0[self._readout_inds[it]] = F[i_sens,0,...][self._readout_inds[it]]
-        f_ds += (self._tr[it]/self._dt) * (Gam_ds**((self._tr[it]/self._dt) - 1)) * self._xp.conj(self.sens[i_sens])*self._xp.fft.ifftn(tmp0, norm = 'ortho')
+        f_ds += n * (Gam_ds**(n - 1)) * self._xp.conj(img_ds * self.sens[i_sens])*self._xp.fft.ifftn(tmp0, norm = 'ortho')
 
         tmp1 = self._xp.zeros(F[i_sens,1,...].shape, dtype = F.dtype)
         tmp1[self._readout_inds[it]] = F[i_sens,1,...][self._readout_inds[it]]
-        f_ds += ((self._tr[it]/self._dt) + 1) * (Gam_ds**(self._tr[it]/self._dt)) * self._xp.conj(self.sens[i_sens])*self._xp.fft.ifftn(tmp1, norm = 'ortho')
+        f_ds += (n + 1) * (Gam_ds**n) * self._xp.conj(img_ds * self.sens[i_sens])*self._xp.fft.ifftn(tmp1, norm = 'ortho')
 
     # upsample f
     f = upsample(upsample(upsample(f_ds, self._ds, self._xp, axis = 0), self._ds, self._xp, axis = 1), 
@@ -428,10 +437,7 @@ class MonoExpDualTESodiumAcqModel:
     # convert complex128 arrays back to 2 float64 array
     f = np.stack([f.real, f.imag], axis = -1)
 
-    # multiply by the curent image
-    f *= img
-
-    return f.sum(-1)
+    return f[...,0]
 
 
   #------------------------------------------------------------------------------

@@ -65,12 +65,12 @@ if __name__ == '__main__':
   n_ds = data_shape[0] 
   n    = ds*n_ds
 
-  tmp = gaussian_filter(np.pad(np.ones((n//2,n//2,n//2), dtype = np.float64), n//4),2)
-  x   = np.stack([tmp,tmp], axis = -1)
+  x   = np.stack([np.random.randn(n,n,n),np.random.randn(n,n,n)], axis = -1)
 
-  sens = 1e-2*(np.ones((ncoils,n_ds,n_ds,n_ds)).astype(np.float64) + 1j*np.ones((ncoils,n_ds,n_ds,n_ds)).astype(np.float64))
+  sens = np.random.rand(ncoils,n_ds,n_ds,n_ds) + 1j*np.random.rand(ncoils,n_ds,n_ds,n_ds)
+  sens *= 1e-2
  
-  gam = 0.9*np.ones((n,n,n)).astype(np.float64)
+  gam = np.random.rand(n,n,n)
   
   fwd_model = MonoExpDualTESodiumAcqModel(data_shape, ds, ncoils, sens, dt, xp)
   
@@ -82,8 +82,8 @@ if __name__ == '__main__':
   loss = DataFidelityLoss(fwd_model, data)
 
   # inital values
-  x_0   = 1.1*x
-  gam_0 = 0.7*gam
+  x_0   = np.random.rand(*x.shape)
+  gam_0 = np.random.rand(*gam.shape)
 
   # check gradients
   ll = loss.eval_x_first(x_0, gam_0)
@@ -92,16 +92,23 @@ if __name__ == '__main__':
 
   eps = 1e-6
 
-  delta_x = np.zeros(x.shape)
-  delta_x[64,64,64,0] = eps
-  print(gx[64,64,64,0], (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps)
+  vox_nums = [40,51,63]
 
+  for i in vox_nums:
+    delta_x = np.zeros(x.shape)
+    delta_x[i,i,i,0] = eps
+    print(gx[i,i,i,0], (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps)
 
-  for i in [40,51,63]:
+    delta_x = np.zeros(x.shape)
+    delta_x[i,i,i,1] = eps
+    print(gx[i,i,i,1], (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps)
+
+  print('')
+
+  for i in vox_nums:
     delta_g = np.zeros(gam.shape)
     delta_g[i,i,i] = eps
     print(gg[i,i,i], (loss.eval_x_first(x_0, gam_0 + delta_g) - ll) / eps)
-
 
 
 
