@@ -44,6 +44,48 @@ class DataFidelityLoss:
     return self.model.grad_gam(z, gam.reshape(self.model._image_shape), x.reshape(self.model._image_shape + (2,))).reshape(in_shape).copy()
 
 
+#-------------------------------------------------------------------
+
+class TotalLoss:
+  def __init__(self, datafidelityloss, penalty_x, penalty_gam, beta_x, beta_gam):
+    self.datafidelityloss = datafidelityloss
+    self.penalty_x        = penalty_x
+    self.penalty_gam      = penalty_gam
+
+    self.beta_x   = beta_x
+    self.beta_gam = beta_gam
+
+  def eval_x_first(self, x, gam):
+    cost = datafidelityloss.eval_x_first(x, gam)
+
+    if self.beta_x > 0:
+      cost += self.beta_x * self.penalty_x.eval(x[...,0])
+      cost += self.beta_x * self.penalty_x.eval(x[...,1])
+
+    if self.beta_gam > 0:
+      cost += self.beta_gam * self.penalty_gam.eval(gam)
+
+    return cost
+
+  def eval_gam_first(self, gam, x):
+    return self.eval_x_first(x, gam)
+
+  def grad_x(self, x, gam):
+    grad = self.datafidelityloss.grad_x(x, gam)
+
+    if self.beta_x > 0:
+      grad[...,0] += self.beta_x * self.penalty_x.grad(x[...,0])
+      grad[...,1] += self.beta_x * self.penalty_x.grad(x[...,1])
+
+    return grad
+
+  def grad_gam(self, gam, x):
+    grad = self.datafidelityloss.grad_gam(gam, x)
+
+    if self.beta_gam > 0:
+      grad += self.beta_gam * self.penalty_gam.grad(gam)
+
+    return grad
 
 #-------------------------------------------------------------------
 
@@ -52,6 +94,7 @@ if __name__ == '__main__':
   import cupy as cp
   from scipy.ndimage import gaussian_filter
   from models import MonoExpDualTESodiumAcqModel
+  from bowsher_prior import BowsherLoss, nearest_neighbors, is_nearest_neighbor_of
 
   np.random.seed(1)
 
@@ -68,20 +111,13 @@ if __name__ == '__main__':
   n_ds = data_shape[0] 
   n    = ds*n_ds
 
-  #x = np.stack([np.random.randn(n,n,n),np.random.randn(n,n,n)], axis = -1)
-
   tmp = np.pad(np.ones((n//2,n//2,n//2)), n//4)
-  x = np.stack([tmp,tmp], axis = -1)
+  x = np.stack([np.random.randn(n,n,n),np.random.randn(n,n,n)], axis = -1)
 
-  #sens = np.random.rand(ncoils,n_ds,n_ds,n_ds) + 1j*np.random.rand(ncoils,n_ds,n_ds,n_ds)
-  sens = np.ones((ncoils,n_ds,n_ds,n_ds)) + 1j*np.ones((ncoils,n_ds,n_ds,n_ds))
+  sens = np.random.rand(ncoils,n_ds,n_ds,n_ds) + 1j*np.random.rand(ncoils,n_ds,n_ds,n_ds)
   sens *= 1e-2
 
-  #gam = np.random.rand(n,n,n)
-  gam = np.ones((n,n,n))
-  gam[tmp > 0] = 0.3
-  gam[(n//2):,:,:] /= 2
-  gam[tmp == 0] = 1
+  gam = np.random.rand(n,n,n)
   
   fwd_model = MonoExpDualTESodiumAcqModel(data_shape, ds, ncoils, sens, dt, xp)
   
@@ -90,72 +126,53 @@ if __name__ == '__main__':
   data = y + noise_level*np.abs(y).mean()*np.random.randn(*y.shape).astype(np.float64)
 
   # setup data fidelity loss
-  loss = DataFidelityLoss(fwd_model, data)
+  datafidelityloss = DataFidelityLoss(fwd_model, data)
+
+
+  # setup the Bowsher penalty loss
+  prior_image = tmp + 0.01*np.random.randn(*tmp.shape)
+  nnearest    = 4
+
+  s   = np.array([[[0,1,0],[1,1,1],[0,1,0]], 
+                  [[1,1,1],[1,0,1],[1,1,1]], 
+                  [[0,1,0],[1,1,1],[0,1,0]]])
+  
+  nn_inds  = np.zeros((np.prod(prior_image.shape), nnearest), dtype = np.uint32)
+  nearest_neighbors(prior_image, s, nnearest, nn_inds)
+  nn_inds_adj = is_nearest_neighbor_of(nn_inds)   
+ 
+  bowsher_penalty = BowsherLoss(nn_inds, nn_inds_adj)
+
+
+  # setup the combined loss function
+  loss = TotalLoss(datafidelityloss, bowsher_penalty, bowsher_penalty, 1e-2, 1e-2)
+
 
   # inital values
-  #x_0   = np.random.rand(*x.shape)
-  #gam_0 = np.random.rand(*gam.shape)
+  x_0   = np.random.rand(*x.shape)
+  gam_0 = np.random.rand(*gam.shape)
 
-  x_0   = np.ones(x.shape)
-  gam_0 = np.ones(gam.shape)
+  # check gradients
+  ll = loss.eval_x_first(x_0, gam_0)
+  gx = loss.grad_x(x_0, gam_0)
+  gg = loss.grad_gam(gam_0, x_0)
 
+  eps = 1e-5
 
-  ## check gradients
-  #ll = loss.eval_x_first(x_0, gam_0)
-  #gx = loss.grad_x(x_0, gam_0)
-  #gg = loss.grad_gam(gam_0, x_0)
+  vox_nums = [40,51,63]
 
-  #eps = 1e-6
+  for i in vox_nums:
+    delta_x = np.zeros(x.shape)
+    delta_x[i,i,i,0] = eps
+    print(gx[i,i,i,0], (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps)
 
-  #vox_nums = [40,51,63]
+    delta_x = np.zeros(x.shape)
+    delta_x[i,i,i,1] = eps
+    print(gx[i,i,i,1], (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps)
 
-  #for i in vox_nums:
-  #  delta_x = np.zeros(x.shape)
-  #  delta_x[i,i,i,0] = eps
-  #  print(gx[i,i,i,0], (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps)
+  print('')
 
-  #  delta_x = np.zeros(x.shape)
-  #  delta_x[i,i,i,1] = eps
-  #  print(gx[i,i,i,1], (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps)
-
-  #print('')
-
-  #for i in vox_nums:
-  #  delta_g = np.zeros(gam.shape)
-  #  delta_g[i,i,i] = eps
-  #  print(gg[i,i,i], (loss.eval_x_first(x_0, gam_0 + delta_g) - ll) / eps)
-
-
-
-  #----------------------------------------------------------------------------------------------
-  x_0 = gaussian_filter(x, 2)
-  
-  gam_0 = np.ones((n,n,n))
-  gam_0[tmp > 0] = 0.5
-
-  x_r   = x_0.copy().ravel()
-  gam_r = gam_0.copy().ravel()
-
-  gam_bounds = (gam_0.size)*[(0.001,1)]
-
-  # LBFGS
-  for i_out in range(n_outer):
-    res_1 = fmin_l_bfgs_b(loss.eval_x_first, x_r, fprime = loss.grad_x, 
-                              args = (gam_r,), maxiter = n_inner, disp = 1)
-    x_r = res_1[0].copy()
-
-    res_2 = fmin_l_bfgs_b(loss.eval_gam_first, gam_r, fprime = loss.grad_gam, 
-                              args = (x_r,), maxiter = n_inner, disp = 1,
-                              bounds = gam_bounds)
- 
-    gam_r = res_2[0].copy()
-
- 
-  #res_fix_1 = fmin_l_bfgs_b(loss.eval_x_first, x_0.ravel(), fprime = loss.grad_x, 
-  #                          args = (gam.ravel(),), maxiter = n_inner, disp = 1)
-  #x_fix = res_fix_1[0].reshape(x.shape)
-
-  #res_fix_2 = fmin_l_bfgs_b(loss.eval_gam_first, gam_0.ravel(), fprime = loss.grad_gam, 
-  #                          args = (x.ravel(),), maxiter = n_inner, disp = 1,
-  #                          bounds = (gam_0.size)*[(0.001,1)])
-  #gam_fix = res_fix_2[0].reshape(gam.shape)
+  for i in vox_nums:
+    delta_g = np.zeros(gam.shape)
+    delta_g[i,i,i] = eps
+    print(gg[i,i,i], (loss.eval_x_first(x_0, gam_0 + delta_g) - ll) / eps)
