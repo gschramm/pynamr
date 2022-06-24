@@ -55,12 +55,16 @@ class TotalLoss:
     self.beta_x   = beta_x
     self.beta_gam = beta_gam
 
+    self.x_shape   = self.datafidelityloss.model._image_shape +  (2,)
+    self.gam_shape = self.datafidelityloss.model._image_shape
+
   def eval_x_first(self, x, gam):
     cost = self.datafidelityloss.eval_x_first(x, gam)
 
     if self.beta_x > 0:
-      cost += self.beta_x * self.penalty_x.eval(x[...,0])
-      cost += self.beta_x * self.penalty_x.eval(x[...,1])
+      # reshaping of x is necessary since LBFGS will pass flattened arrays
+      cost += self.beta_x * self.penalty_x.eval(x.reshape(self.x_shape)[...,0])
+      cost += self.beta_x * self.penalty_x.eval(x.reshape(self.x_shape)[...,1])
 
     if self.beta_gam > 0:
       cost += self.beta_gam * self.penalty_gam.eval(gam)
@@ -71,13 +75,14 @@ class TotalLoss:
     return self.eval_x_first(x, gam)
 
   def grad_x(self, x, gam):
-    grad = self.datafidelityloss.grad_x(x, gam)
+    # reshaping of x is necessary since LBFGS will pass flattened arrays
+    grad = self.datafidelityloss.grad_x(x, gam).reshape(self.x_shape)
 
     if self.beta_x > 0:
-      grad[...,0] += self.beta_x * self.penalty_x.grad(x[...,0])
-      grad[...,1] += self.beta_x * self.penalty_x.grad(x[...,1])
+      grad[...,0] += self.beta_x * self.penalty_x.grad(x.reshape(self.x_shape)[...,0])
+      grad[...,1] += self.beta_x * self.penalty_x.grad(x.reshape(self.x_shape)[...,1])
 
-    return grad
+    return grad.reshape(x.shape)
 
   def grad_gam(self, gam, x):
     grad = self.datafidelityloss.grad_gam(gam, x)
