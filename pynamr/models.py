@@ -25,8 +25,7 @@ def downsample(x, ds, xp, axis = 0):
 
     x_ds[sl2] = x[sl1].sum(axis = axis, keepdims = True)
   
-  # normalize by sqrt(ds) to get operator norm 1
-  return x_ds / np.sqrt(ds)
+  return x_ds / ds
 
 def upsample(x_ds, ds, xp, axis = 0):
 
@@ -49,8 +48,7 @@ def upsample(x_ds, ds, xp, axis = 0):
 
     x[sl1] = x_ds[sl2]
 
-  # normalize by sqrt(ds) to get operator norm 1
-  return x / np.sqrt(ds)
+  return x / ds
 
 
 #----------------------------------------------------------------------------------
