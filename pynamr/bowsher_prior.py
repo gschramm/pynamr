@@ -1,5 +1,8 @@
+# TODO: jit function
+#       adjoint of Bowsher gradient
+
 import numpy as np
-from numba import njit, prange
+from numba import njit, jit, prange
 
 #-------------------------------------------------------------------------------
 @njit(parallel = True)
@@ -206,20 +209,54 @@ def is_nearest_neighbor_of(ninds):
 
 #-------------------------------------------------------------------------------
 
-if __name__ == "__main__":
-  np.random.seed(0)
-  nnearest = 2
-  img      = np.random.rand(4,4,4)
+@njit(parallel = True)
+def bowsher_cost(img, ninds):
+  img_shape = img.shape
+  img       = img.flatten()
+  cost      = 0.
+
+  for i in prange(ninds.shape[0]):
+    for j in range(ninds.shape[1]):
+      cost += 0.5*(img[i] - img[ninds[i,j]])**2
   
-  if img.ndim == 2:
-    s   = np.array([[0,1,0], 
-                    [1,0,1], 
-                    [0,1,0]])
-  else:   
-    s   = np.array([[[0,1,0],[1,1,1],[0,1,0]], 
-                    [[1,1,1],[1,0,1],[1,1,1]], 
-                    [[0,1,0],[1,1,1],[0,1,0]]])
-  
-  ninds  = np.zeros((np.prod(img.shape),nnearest), dtype = np.uint32)
-  nearest_neighbors(img,s,nnearest,ninds)
-  ninds2 = is_nearest_neighbor_of(ninds)
+  img = img.reshape(img_shape)
+
+  return cost
+
+#-------------------------------------------------------------------------------
+
+@njit(parallel = True)
+def bowsher_grad(img, ninds, ninds_adj):
+  img_shape = img.shape
+  img       = img.flatten()
+  grad      = np.zeros(img.shape, dtype = img.dtype)
+
+  counter = 0
+
+  for i in range(ninds.shape[0]):
+    # first term
+    for j in range(ninds.shape[1]):
+      grad[i] += (img[i] - img[ninds[i,j]])
+
+    # 2nd term
+    while (counter < ninds_adj.shape[1]) and (ninds_adj[0,counter] == i):
+      grad[i] += (img[i] - img[ninds_adj[1,counter]])
+      counter += 1
+
+  img  = img.reshape(img_shape)
+  grad = grad.reshape(img_shape)
+
+  return grad
+
+#-------------------------------------------------------------------------------
+
+class BowsherLoss:
+  def __init__(self, ninds, ninds_adj):
+    self.ninds     = ninds
+    self.ninds_adj = ninds_adj 
+
+  def eval(self, img):
+    return bowsher_cost(img, self.ninds)
+
+  def grad(self, img):
+    return bowsher_grad(img, self.ninds, self.ninds_adj)

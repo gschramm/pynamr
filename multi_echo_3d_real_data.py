@@ -8,7 +8,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as py
 
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
-from nearest_neighbors import nearest_neighbors, is_nearest_neighbor_of
+from nearest_neighbors import next_neighbors, nearest_neighbors, is_nearest_neighbor_of
 from readout_time import readout_time
 from apodized_fft import apodized_fft_multi_echo
 from cost_functions import multi_echo_bowsher_cost, multi_echo_bowsher_grad, multi_echo_bowsher_cost_gamma
@@ -28,26 +28,28 @@ parser = ArgumentParser(description = '3D na mr dual echo simulation')
 parser.add_argument('case')
 parser.add_argument('--sdir',  default = 'PhyCha_kw0_preprocessed')
 parser.add_argument('--niter',  default = 10, type = int)
-parser.add_argument('--n_outer', default = 6, type = int)
-parser.add_argument('--bet_recon', default = 0.01, type = float)
-parser.add_argument('--bet_gam', default = 0.03, type = float)
+parser.add_argument('--n_outer', default = 15, type = int)
+parser.add_argument('--bet_recon', default = 0.003, type = float)
+parser.add_argument('--bet_gam', default = 0.003, type = float)
 parser.add_argument('--nnearest', default = 13,  type = int)
 parser.add_argument('--nneigh',   default = 80,  type = int, choices = [18,80])
 parser.add_argument('--n',   default = 128,  type = int, choices = [128,256])
 parser.add_argument('--method', default = 0,  type = int)
 parser.add_argument('--mr_name', default = 't1_coreg')
+parser.add_argument('--no_anat_prior', action = 'store_true')
 
 args = parser.parse_args()
 
-niter       = args.niter
-n_outer     = args.n_outer
-bet_recon   = args.bet_recon
-bet_gam     = args.bet_gam
-nnearest    = args.nnearest 
-nneigh      = args.nneigh
-n           = args.n
-method      = args.method
-mr_name     = args.mr_name
+niter         = args.niter
+n_outer       = args.n_outer
+bet_recon     = args.bet_recon
+bet_gam       = args.bet_gam
+nnearest      = args.nnearest 
+nneigh        = args.nneigh
+n             = args.n
+method        = args.method
+mr_name       = args.mr_name
+anat_prior    = not args.no_anat_prior
 
 delta_t     = 5.
 asym        = 0 
@@ -59,8 +61,12 @@ asym        = 0
 # load the data
 #-------------------
 
-pdir   = os.path.join('data','sodium_data', args.case, args.sdir)
-odir   = os.path.join(pdir, datetime.now().strftime("%y%m%d-%H%M%S"))
+pdir = os.path.join('data','sodium_data', args.case, args.sdir)
+
+if anat_prior:
+  odir  = os.path.join(pdir, f'{datetime.now().strftime("%y%m%d-%H%M%S")}__br_{bet_recon:.1E}__bg_{bet_gam:.1E}__nn_{nneigh}__ne_{nnearest}')
+else:
+  odir  = os.path.join(pdir, f'{datetime.now().strftime("%y%m%d-%H%M%S")}__br_{bet_recon:.1E}__bg_{bet_gam:.1E}__no_anat')
 
 if not os.path.exists(odir):
   os.makedirs(odir)
@@ -195,8 +201,14 @@ elif nneigh == 80:
                  [0, 0, 0, 0, 0]]])
 
   
-ninds  = np.zeros((np.prod(aimg.shape),nnearest), dtype = np.uint32)
-nearest_neighbors(aimg,s,nnearest,ninds)
+if anat_prior:
+  ninds  = np.zeros((np.prod(aimg.shape), nnearest), dtype = np.uint32)
+  nearest_neighbors(aimg,s,nnearest,ninds)
+else:
+  ninds  = np.zeros((np.prod(aimg.shape), aimg.ndim), dtype = np.uint32)
+  next_neighbors(aimg.shape,ninds)
+  
+
 ninds2 = is_nearest_neighbor_of(ninds)
 
 #--------------------------------------------------------------------------------------------------
@@ -289,13 +301,24 @@ fig1.show()
 fig1.savefig(os.path.join(odir,'convergence.png'))
 
 # generate the sum of squares image
-ref_recon = abs_ifft[:,0,...].sum(0)*scale_fac
+ref_recon = np.sqrt((abs_ifft[:,0,...]**2).sum(0))*scale_fac
 # scale total of ref_recon to joint recon
 ref_recon *= (np.percentile(abs_recon,99.99) / np.percentile(ref_recon,99.99))
 
-ref_recon_filt = abs_ifft_filtered[:,0,...].sum(0)*scale_fac
+ref_recon_filt = np.sqrt((abs_ifft_filtered[:,0,...]**2).sum(0))*scale_fac
 # scale total of ref_recon to joint recon
 ref_recon_filt *= (np.percentile(abs_recon,99.99) / np.percentile(ref_recon_filt,99.99))
+
+# 2nd echo
+# generate the sum of squares image
+ref_recon2 = np.sqrt((abs_ifft[:,1,...]**2).sum(0))*scale_fac
+# scale total of ref_recon to joint recon
+ref_recon2 *= (np.percentile(abs_recon,99.99) / np.percentile(ref_recon2,99.99))
+
+ref_recon_filt2 = np.sqrt((abs_ifft_filtered[:,1,...]**2).sum(0))*scale_fac
+# scale total of ref_recon to joint recon
+ref_recon_filt2 *= (np.percentile(abs_recon,99.99) / np.percentile(ref_recon_filt2,99.99))
+
 
 # save the recons
 output_file = os.path.join(odir, 'recons.h5')
@@ -306,11 +329,15 @@ with h5py.File(output_file, 'w') as hf:
   grp.create_dataset('abs_recon',     data = abs_recon)
   grp.create_dataset('ifft',          data = ref_recon)
   grp.create_dataset('ifft_filt',     data = ref_recon_filt)
+  grp.create_dataset('ifft2',         data = ref_recon2)
+  grp.create_dataset('ifft_filt2',    data = ref_recon_filt2)
   grp.create_dataset('prior_image',   data = aimg)
   grp.create_dataset('cost',          data = cost)
 
 #--------------------------------------------------------------------------------------------------
 
-ims2 = [{'cmap':py.cm.Greys_r}] + 3*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
+vmax = np.percentile(ref_recon_filt,99.9)
+
+ims2 = [{'cmap':py.cm.Greys_r, 'vmax':np.percentile(aimg,99.9)}] + 3*[{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':vmax}] + [{'cmap':py.cm.Greys_r, 'vmin':0, 'vmax':1.}]
 vi2  = pv.ThreeAxisViewer([np.flip(x,(0,1)) for x in [aimg, ref_recon,ref_recon_filt,abs_recon,Gam_recon]], imshow_kwargs = ims2)
 vi2.fig.savefig(os.path.join(odir,'fig1.png'))

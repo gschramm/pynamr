@@ -10,26 +10,26 @@ import pymirc.image_operations as pi
 import pymirc.metrics as pm
 import pymirc.viewer as pv
 
-pdir = os.path.join('data','sodium_data','EP-006')
-sdir = 'PhyCha_kw0'
-n    = 128
+from scipy.ndimage import gaussian_filter
+from argparse import ArgumentParser
+import matplotlib.pyplot as py
 
-sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03'))[0], sdir.split('_')[0], sdir)
-sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5'))[0], sdir.split('_')[0], sdir)
+parser = ArgumentParser()
+parser.add_argument('case')
+parser.add_argument('--sdir', default = 'DeNoise_kw0')
+parser.add_argument('--n', default = 128, type = int)
+args = parser.parse_args()
+
+case = args.case
+pdir = os.path.join('data','sodium_data',args.case)
+sdir = args.sdir
+n    = args.n
+
+sdir1 = os.path.join(glob(os.path.join(pdir,'*TE03*'))[0], sdir.split('_')[0], sdir)
+sdir2 = os.path.join(glob(os.path.join(pdir,'*TE5*'))[0], sdir.split('_')[0], sdir)
 fpattern = '*.c?'
 
-t1_nii = nib.load(os.path.join(pdir,'mprage.nii'))
-t1_nii = nib.as_closest_canonical(t1_nii)
-t1     = t1_nii.get_fdata()
-t1_affine = t1_nii.affine
-
-csf_nii = nib.load(os.path.join(pdir,'c3mprage.nii'))
-csf_nii = nib.as_closest_canonical(csf_nii)
-csf     = csf_nii.get_fdata()
-csf_affine = csf_nii.affine
-
 # create the output directory
-
 odir = os.path.join(pdir,sdir + '_preprocessed')
 if not os.path.exists(odir):
   os.makedirs(odir)
@@ -43,12 +43,15 @@ fnames  = sorted(glob(os.path.join(sdir1, fpattern)))
 fnames2 = sorted(glob(os.path.join(sdir2, fpattern)))
 ncoils  = len(fnames)
 
+if (len(fnames) != 8) or (len(fnames2) != 8):
+  raise ValueError('Not enough data files found')
 
 data           = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 data_filt      = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 cimg           = np.zeros((ncoils,) + data_shape,   dtype = np.complex64)
 cimg_pad       = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 sens           = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
+sens2          = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 cimg_pad_filt  = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 
 data2           = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
@@ -90,58 +93,35 @@ for i in range(ncoils):
 #-------
 
 # calculate the sum of square image
-sos = np.abs(cimg_pad).sum(axis = 0)
-sos_filt = np.abs(cimg_pad_filt).sum(axis = 0)
+sos = np.sqrt((np.abs(cimg_pad)**2).sum(axis = 0))
+sos_filt = np.sqrt((np.abs(cimg_pad_filt)**2).sum(axis = 0))
+
+# load the correction field
+corr_nii = nib.load('data/sodium_data/BigPhantom/correction_field.nii')
+corr_nii = nib.as_closest_canonical(corr_nii)
+corr_field = corr_nii.get_fdata()
 
 for i in range(ncoils):
-  sens[i,...] = cimg_pad_filt[i,...] / sos_filt
+  sens[i,...]   = cimg_pad_filt[i,...] / sos_filt
+  sens2[i,...]  = cimg_pad_filt[i,...] / (corr_field*sos_filt)
 
 # save the data and the sensitities
 np.save(os.path.join(odir,f'echo1_{recon_shape[0]}.npy'), data)
 np.save(os.path.join(odir,f'echo2_{recon_shape[0]}.npy'), data2)
 np.save(os.path.join(odir,f'sens_{recon_shape[0]}.npy'), sens)
+np.save(os.path.join(odir,f'sens_corr_{recon_shape[0]}.npy'), sens2)
 
-#------------------------------------------------------------------------------
-#- align T1--------------------------------------------------------------------
-#------------------------------------------------------------------------------
-
-fov = 223.
-na_voxsize = fov / np.array(recon_shape)
-na_affine = np.diag(np.concatenate((na_voxsize,[1])))
-na_affine[:-1,-1] = -fov/2.
-
-csf_coreg, coreg_aff, coreg_params = pi.rigid_registration(csf, sos, t1_affine, na_affine)
-
-t1_coreg = pi.aff_transform(t1, coreg_aff, recon_shape, cval = t1.min())
-
-## save the data
-np.save(os.path.join(odir,f't1_coreg_{recon_shape[0]}.npy'), t1_coreg)
-np.save(os.path.join(odir,f'csf_coreg_{recon_shape[0]}.npy'), csf_coreg)
-
-##nib.save(nib.Nifti1Image(csf_na_grid, na_affine), './data/SodiumExample/csf_128_aligned.nii')
-#nib.save(nib.Nifti1Image(t1_na_grid, na_affine), os.path.join(pdir,f'mprage_{n}_aligned.nii'))
-#nib.save(nib.Nifti1Image(na_interp, na_affine), os.path.join(pdir,f'TE03_{n}_' + sdir + '.nii'))
-#nib.save(nib.Nifti1Image(na2_interp, na_affine), os.path.join(pdir,f'TE5_{n}_' + sdir + '.nii'))
-# 
-#np.savetxt(os.path.join(pdir,'affine_{n}.txt'), regis_aff)
-
-########################
-import pymirc.viewer as pv
-vi = pv.ThreeAxisViewer([t1_coreg, sos])
-
-########################
-# show the sensitivity
-
-import matplotlib.pyplot as py
-#for sl in [35,40,45,50,55]:
-for sl in [35,45,55,65]:
-  fig, ax = py.subplots(3,3, figsize = (8,8))
-  for i in range(8):
-    ax.flatten()[i].imshow(np.abs(sens[i,:,:,sl]).T, origin = 'lower', 
-                           cmap = py.cm.Greys_r, vmin = 0, vmax = 0.4)
-    ax.flatten()[i].set_title(os.path.basename(fnames[i]))
-  
-  ax.flatten()[8].imshow(np.abs(sos[:,:,sl]).T, origin = 'lower', cmap = py.cm.Greys_r)
-  ax.flatten()[8].set_title('sum(abs(coil imgs))')
-  fig.tight_layout()
-  fig.show()
+#########################
+## show the sensitivity
+#
+#for sl in [45]:
+#  fig, ax = py.subplots(3,3, figsize = (8,8))
+#  for i in range(8):
+#    ax.flatten()[i].imshow(np.abs(sens[i,:,:,sl]).T, origin = 'lower', 
+#                           cmap = py.cm.Greys_r, vmin = 0, vmax = 0.4)
+#    ax.flatten()[i].set_title(os.path.basename(fnames[i]))
+#  
+#  ax.flatten()[8].imshow(np.abs(sos[:,:,sl]).T, origin = 'lower', cmap = py.cm.Greys_r)
+#  ax.flatten()[8].set_title('sum(abs(coil imgs))')
+#  fig.tight_layout()
+#  fig.show()
