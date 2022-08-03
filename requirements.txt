@@ -1,0 +1,5 @@
+numpy >= 1.22
+numba >= 0.55
+scipy >= 1.8
+matplotlib >= 3.5
+cupy[cupy] >= 10.0
