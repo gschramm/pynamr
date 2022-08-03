@@ -1,8 +1,14 @@
 """ simple script to show how to jointly reconstruct simulated "inverse crime" dual echo sodium data
 """
 
-# comment if cupy/GPU is not available + use xp = np below
-import cupy as cp
+import warnings
+
+try:
+    import cupy as cp
+except ImportError:
+    warnings.warn("cupy package not available", RuntimeWarning)
+    
+
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
@@ -26,7 +32,7 @@ dt = 5.
 # realistic noise level to get SNR ca 5 in cylinder phantom with Na conc. 1
 noise_level = 5.
 # numpy/cupy module to use to caluclate all FFTs (use cupy if on a GPU)
-xp = cp
+xp = np
 # number of neasrest neighbors for the Bowhser prior
 nnearest = 13
 # prior weight applied to real and imag part of complex sodium image
@@ -89,15 +95,6 @@ fwd_model = pynamr.MonoExpDualTESodiumAcqModel(data_shape, ds, ncoils, sens,
 y = fwd_model.forward(x, gam)
 data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(
     np.float64)
-
-#d = np.squeeze(data.astype(np.float64).view(dtype = np.complex128), axis = -1)
-#
-#a = np.fft.ifftn(d[0,0,...], norm = 'ortho')
-#b = np.fft.ifftn(d[0,1,...], norm = 'ortho')
-#
-#q  = np.abs(a)
-#qs = qs = gaussian_filter(q,3)
-#mask = (qs > 0.9)
 
 #-------------------------------------------------------------------------------------
 # setup the data fidelity loss fucntion
