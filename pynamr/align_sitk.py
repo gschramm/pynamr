@@ -1,3 +1,5 @@
+""" align 3D images using simple ITK"""
+from typing import Optional
 import SimpleITK as sitk
 
 
@@ -20,8 +22,9 @@ def align_sitk_images(fixed_image: sitk.Image,
                       moving_image: sitk.Image,
                       new_spacing: tuple[float, float, float] = (1., 1., 1.),
                       sampling_rate: float = 0.01,
-                      initial_transform: sitk.Transform = None,
-                      registration_method: sitk.ImageRegistrationMethod = None,
+                      initial_transform: Optional[sitk.Transform] = None,
+                      registration_method: Optional[
+                          sitk.ImageRegistrationMethod] = None,
                       verbose: bool = False) -> tuple[sitk.Image, sitk.Image]:
     """ align two SITK images and interpolate to a nomimal voxel spacing if needed """
 
