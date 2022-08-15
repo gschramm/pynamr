@@ -143,3 +143,5 @@ if __name__ == '__main__':
             sitk.GetArrayViewFromImage(m_image_aligned).swapaxes(0, 2)
         ],
                                 imshow_kwargs={'cmap': plt.cm.Greys_r})
+
+        vi.fig.savefig(m_path.parent / f'{m_path.stem}_aligned.png')
