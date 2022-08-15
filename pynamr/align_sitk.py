@@ -134,9 +134,11 @@ if __name__ == '__main__':
         import pymirc.viewer as pv
         import matplotlib.pyplot as plt
         vi = pv.ThreeAxisViewer([
-            sitk.GetArrayViewFromImage(f_image_interp),
-            sitk.GetArrayViewFromImage(m_image_aligned),
-            sitk.GetArrayViewFromImage(f_image_interp)
-        ], [None, None,
-            sitk.GetArrayViewFromImage(m_image_aligned)],
+            sitk.GetArrayViewFromImage(f_image_interp).swapaxes(0, 2),
+            sitk.GetArrayViewFromImage(m_image_aligned).swapaxes(0, 2),
+            sitk.GetArrayViewFromImage(f_image_interp).swapaxes(0, 2)
+        ], [
+            None, None,
+            sitk.GetArrayViewFromImage(m_image_aligned).swapaxes(0, 2)
+        ],
                                 imshow_kwargs={'cmap': plt.cm.Greys_r})
