@@ -1,4 +1,5 @@
-""" align 3D images using simple ITK"""
+""" align 3D images using simple ITK - see https://simpleitk.org/SPIE2019_COURSE/04_basic_registration.html
+"""
 from typing import Optional
 import SimpleITK as sitk
 
