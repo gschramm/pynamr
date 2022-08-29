@@ -1,4 +1,28 @@
+"""signal models for Na MR reconstruction"""
 import numpy as np
+
+
+def complex_view_of_real_array(x: np.ndarray) -> np.ndarray:
+    """return a complex view of of a real array, by interpreting the last dimension as as real and imaginary part
+       output = input[...,0] + 1j * input[....,1]
+    """
+    if x.dtype == np.float64:
+        return np.squeeze(x.view(dtype=np.complex128), axis=-1)
+    elif x.dtype == np.float32:
+        return np.squeeze(x.view(dtype=np.complex64), axis=-1)
+    elif x.dtype == np.float128:
+        return np.squeeze(x.view(dtype=np.complex256), axis=-1)
+    else:
+        raise ValueError('Input must have dtyoe float32, float64 or float128')
+
+
+def real_view_of_complex_array(x: np.ndarray) -> np.ndarray:
+    """return a real view of a complex array
+       output[...,0] = real(input)
+       output[...,1] = imaginary(input)
+    """
+    return np.stack([x.real, x.imag], axis=-1)
+
 
 def downsample(x, ds, xp, axis=0):
 
@@ -74,6 +98,7 @@ class MonoExpDualTESodiumAcqModel:
         xp ... python module
           numpy or cupy module for calculation of FFTs
     """
+
     def __init__(self, data_shape, ds, ncoils, sens, dt, xp):
         # shape of the data
         self._data_shape = data_shape
