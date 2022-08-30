@@ -304,7 +304,7 @@ class MonoExpDualTESodiumAcqModel:
         """
 
         # create a complex view of the input real input array with two channels
-        f = np.squeeze(f.view(dtype=np.complex128), axis=-1)
+        f = complex_view_of_real_array(f)
 
         #----------------------
         # send f and Gam to GPU
@@ -354,7 +354,7 @@ class MonoExpDualTESodiumAcqModel:
         #----------------------
 
         # convert complex128 arrays back to 2 float64 array
-        F = np.stack([F.real, F.imag], axis=-1)
+        F = real_view_of_complex_array(F)
 
         return F
 
@@ -376,7 +376,7 @@ class MonoExpDualTESodiumAcqModel:
             a float64 numpy/cupy array of shape (self.image_shape)
         """
         # create a complex view of the input real input array with two channels
-        F = np.squeeze(F.astype(np.float64).view(dtype=np.complex128), axis=-1)
+        F = complex_view_of_real_array(F)
 
         #----------------------
         # send F, Gam to GPU
@@ -428,7 +428,7 @@ class MonoExpDualTESodiumAcqModel:
         #----------------------
 
         # convert complex128 arrays back to 2 float64 array
-        f = np.stack([f.real, f.imag], axis=-1)
+        f = real_view_of_complex_array(f)
 
         return f
 
@@ -457,9 +457,8 @@ class MonoExpDualTESodiumAcqModel:
             a float64 numpy/cupy array of shape (self.image_shape)
         """
         # create a complex view of the input real input array with two channels
-        F = np.squeeze(F.astype(np.float64).view(dtype=np.complex128), axis=-1)
-
-        img = np.squeeze(img.view(dtype=np.complex128), axis=-1)
+        F = complex_view_of_real_array(F)
+        img = complex_view_of_real_array(img)
 
         #----------------------
         # send F, Gam to GPU
@@ -525,7 +524,7 @@ class MonoExpDualTESodiumAcqModel:
         #----------------------
 
         # convert complex128 arrays back to 2 float64 array
-        f = np.stack([f.real, f.imag], axis=-1)
+        f = real_view_of_complex_array(f)
 
         return f[..., 0]
 
