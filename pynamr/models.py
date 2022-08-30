@@ -1,5 +1,15 @@
 """signal models for Na MR reconstruction"""
+import typing
+import types
 import numpy as np
+
+# check whether cupy is available
+try:
+    import cupy as cp
+except ModuleNotFoundError:
+    import numpy as cp
+
+XpArray = typing.Union[np.ndarray, cp.ndarray]
 
 
 def complex_view_of_real_array(x: np.ndarray) -> np.ndarray:
@@ -24,7 +34,27 @@ def real_view_of_complex_array(x: np.ndarray) -> np.ndarray:
     return np.stack([x.real, x.imag], axis=-1)
 
 
-def downsample(x, ds, xp, axis=0):
+def downsample(x: XpArray, ds: int, axis: int = 0) -> XpArray:
+    """downsample a numpy/cupy array along a given axis by an integer factor
+    
+       Parameters
+       ----------
+       x : the array to downsample
+
+       ds : the downsampling factor
+
+       axis : axis along which to downsample
+
+       Returns
+       -------
+       Downsampled XpArray
+    """
+
+    # test whether the input is a numpy or cupy array
+    if isinstance(x, np.ndarray):
+        xp = np
+    else:
+        xp = cp
 
     ds_shape = list(x.shape)
     ds_shape[axis] = ds_shape[axis] // ds
@@ -48,7 +78,27 @@ def downsample(x, ds, xp, axis=0):
     return x_ds / ds
 
 
-def upsample(x_ds, ds, xp, axis=0):
+def upsample(x_ds: XpArray, ds: int, axis: int = 0) -> XpArray:
+    """upsample a numpy/cupy array along a given axis by an integer factor
+    
+       Parameters
+       ----------
+       x : the array to upsample
+
+       ds : the upsampling factor
+
+       axis : axis along which to upsample
+
+       Returns
+       -------
+       Upsampled XpArray
+    """
+
+    # test whether the input is a numpy or cupy array
+    if isinstance(x_ds, np.ndarray):
+        xp = np
+    else:
+        xp = cp
 
     up_shape = list(x_ds.shape)
     up_shape[axis] = up_shape[axis] * ds
@@ -313,22 +363,15 @@ class MonoExpDualTESodiumAcqModel:
             Gam = self._xp.asarray(Gam)
 
         # downsample f and Gamma
-        f_ds = downsample(downsample(downsample(f, self._ds, self._xp, axis=0),
+        f_ds = downsample(downsample(downsample(f, self._ds, axis=0),
                                      self._ds,
-                                     self._xp,
                                      axis=1),
                           self._ds,
-                          self._xp,
                           axis=2)
-        Gam_ds = downsample(downsample(downsample(Gam,
-                                                  self._ds,
-                                                  self._xp,
-                                                  axis=0),
+        Gam_ds = downsample(downsample(downsample(Gam, self._ds, axis=0),
                                        self._ds,
-                                       self._xp,
                                        axis=1),
                             self._ds,
-                            self._xp,
                             axis=2)
 
         F = self._xp.zeros((
@@ -386,15 +429,10 @@ class MonoExpDualTESodiumAcqModel:
 
         f_ds = self._xp.zeros(F.shape[2:], dtype=self._xp.complex128)
 
-        Gam_ds = downsample(downsample(downsample(Gam,
-                                                  self._ds,
-                                                  self._xp,
-                                                  axis=0),
+        Gam_ds = downsample(downsample(downsample(Gam, self._ds, axis=0),
                                        self._ds,
-                                       self._xp,
                                        axis=1),
                             self._ds,
-                            self._xp,
                             axis=2)
 
         for i_sens in range(self._ncoils):
@@ -414,12 +452,10 @@ class MonoExpDualTESodiumAcqModel:
                                                                 norm='ortho')
 
         # upsample f
-        f = upsample(upsample(upsample(f_ds, self._ds, self._xp, axis=0),
+        f = upsample(upsample(upsample(f_ds, self._ds, axis=0),
                               self._ds,
-                              self._xp,
                               axis=1),
                      self._ds,
-                     self._xp,
                      axis=2)
 
         # get f, F, Gam back from GPU
@@ -469,26 +505,16 @@ class MonoExpDualTESodiumAcqModel:
 
         f_ds = self._xp.zeros(F.shape[2:], dtype=self._xp.complex128)
 
-        Gam_ds = downsample(downsample(downsample(Gam,
-                                                  self._ds,
-                                                  self._xp,
-                                                  axis=0),
+        Gam_ds = downsample(downsample(downsample(Gam, self._ds, axis=0),
                                        self._ds,
-                                       self._xp,
                                        axis=1),
                             self._ds,
-                            self._xp,
                             axis=2)
 
-        img_ds = downsample(downsample(downsample(img,
-                                                  self._ds,
-                                                  self._xp,
-                                                  axis=0),
+        img_ds = downsample(downsample(downsample(img, self._ds, axis=0),
                                        self._ds,
-                                       self._xp,
                                        axis=1),
                             self._ds,
-                            self._xp,
                             axis=2)
 
         for i_sens in range(self._ncoils):
@@ -510,12 +536,10 @@ class MonoExpDualTESodiumAcqModel:
                         tmp1, norm='ortho')
 
         # upsample f
-        f = upsample(upsample(upsample(f_ds, self._ds, self._xp, axis=0),
+        f = upsample(upsample(upsample(f_ds, self._ds, axis=0),
                               self._ds,
-                              self._xp,
                               axis=1),
                      self._ds,
-                     self._xp,
                      axis=2)
 
         # get f, F, Gam back from GPU
