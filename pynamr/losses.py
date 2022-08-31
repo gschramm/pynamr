@@ -11,6 +11,7 @@ class DataFidelityLoss:
         The model is linear in the first argument (the image x), but non linear
         in the second argument (Gam)
     """
+
     def __init__(self, model, y):
         self.model = model
         self.y = y
@@ -26,7 +27,7 @@ class DataFidelityLoss:
         # reshaping of x/gam is needed since fmin_l_bfgs_b flattens all arrays
         return (self.model.forward(x.reshape(self.model._image_shape + (2, )),
                                    gam.reshape(self.model._image_shape)) -
-                self.y) * self.model._kmask
+                self.y) * self.model.kmask
 
     def grad_x(self, x, gam):
         in_shape = x.shape
@@ -50,6 +51,7 @@ class DataFidelityLoss:
 
 
 class TotalLoss:
+
     def __init__(self, datafidelityloss, penalty_x, penalty_gam, beta_x,
                  beta_gam):
         self.datafidelityloss = datafidelityloss
