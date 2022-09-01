@@ -1,4 +1,4 @@
-#TODO: f_min_l_bfgs seems to only work with 64bit float 1D arrays -> problem with complex64 data
+#TODO: - replace interface to loss with __call__(x, method = 'x_first/gam_first')
 
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg

@@ -456,11 +456,31 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         return x
 
 
+
+
+
 class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
+    """ mono exponential dual TE sodium acquisition model assuming one compartment """
 
     def __init__(self, ds: int, sens: XpArray, dt: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
                  kspace_part: RadialKSpacePartitioner) -> None:
+        """ mono exponential dual TE sodium acquisition model assuming one compartment
+
+        Parameters
+        ----------
+        ds : int
+            downsample factor (image shape / data shape)
+        sens : XpArray
+            complex array with coil sensitivities with shape (ncoils, data_shape)
+        dt : float
+            difference time between the two echos
+        readout_time : typing.Callable[[np.ndarray], np.ndarray]
+            Callable that maps 1d kspace array to readout time for used read out
+        kspace_part : RadialKSpacePartitioner
+            RadialKSpacePartioner that partitions cartesian k-space volume
+            into radial shells of "same" readout time
+        """
         super().__init__(ds, sens, dt, readout_time, kspace_part)
 
     #------------------------------------------------------------------------------

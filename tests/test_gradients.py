@@ -19,36 +19,41 @@ class TestGradients(unittest.TestCase):
 
         self.n_ds = self.data_shape[0]
         self.n = self.ds * self.n_ds
-        self.img_shape = (self.n, self.n, self.n)
-
-        self.x = np.stack([
-            np.random.randn(*self.img_shape),
-            np.random.randn(*self.img_shape)
-        ],
-                          axis=-1)
+        self.image_shape = (self.n, self.n, self.n)
 
         self.sens = np.random.rand(*(
             (self.ncoils, ) + self.data_shape)) + 1j * np.random.rand(*(
                 (self.ncoils, ) + self.data_shape))
         self.sens *= 1e-2
 
-        self.gam = np.random.rand(*self.img_shape)
+        self.gam = np.random.rand(*self.image_shape)
 
         readout_time = pynamr.TPIReadOutTime()
         kspace_part = pynamr.RadialKSpacePartitioner(self.data_shape,
                                                      self.n_readout_bins)
 
-        self.fwd_model = pynamr.MonoExpDualTESodiumAcqModel(
+        # generate mono-exp. data
+        self.mono_exp_model = pynamr.MonoExpDualTESodiumAcqModel(
             self.ds, self.sens, self.dt, readout_time, kspace_part)
 
-        # generate data
-        self.y = self.fwd_model.forward(self.x, self.gam)
+        self.x = np.random.rand(*((self.image_shape) + (2, )))
+        self.y = self.mono_exp_model.forward(self.x, self.gam)
         self.data = self.y + self.noise_level * np.abs(
             self.y).mean() * np.random.randn(*self.y.shape)
 
+        # generate bi-exp dual comp data
+        self.bi_exp_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(
+            self.ds, self.sens, self.dt, readout_time, kspace_part, 2, 20, 4,
+            16, 0.4, 0.2)
+
+        self.x_bi = np.random.rand(*((2, ) + (self.image_shape) + (2, )))
+        self.y_bi = self.bi_exp_model.forward(self.x_bi)
+        self.data_bi = self.y_bi + self.noise_level * np.abs(
+            self.y_bi).mean() * np.random.randn(*self.y_bi.shape)
+
     def test_data_fidelity_gradient(self, i=51, eps=1e-4, rtol=1e-3):
         # setup data fidelity loss
-        loss = pynamr.DataFidelityLoss(self.fwd_model, self.data)
+        loss = pynamr.DataFidelityLoss(self.mono_exp_model, self.data)
 
         # inital values
         x_0 = np.random.rand(*self.x.shape)
@@ -90,17 +95,18 @@ class TestGradients(unittest.TestCase):
                             beta_x=1e-2,
                             beta_gam=1e-2):
         # setup data fidelity loss
-        data_fidelity_loss = pynamr.DataFidelityLoss(self.fwd_model, self.data)
+        data_fidelity_loss = pynamr.DataFidelityLoss(self.mono_exp_model,
+                                                     self.data)
 
         # setup the Bowsher loss
         nnearest = 2
-        aimg = np.random.rand(*self.img_shape)
+        aimg = np.random.rand(*self.image_shape)
 
         s = np.array([[[0, 1, 0], [1, 1, 1], [0, 1, 0]],
                       [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
                       [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
 
-        nn_inds = np.zeros((np.prod(self.img_shape), nnearest),
+        nn_inds = np.zeros((np.prod(self.image_shape), nnearest),
                            dtype=np.uint32)
         pynamr.nearest_neighbors(aimg, s, nnearest, nn_inds)
         nn_inds_adj = pynamr.is_nearest_neighbor_of(nn_inds)
@@ -146,15 +152,15 @@ class TestGradients(unittest.TestCase):
 
     def test_bowsher_gradient(self, eps=1e-7, rtol=1e-3, atol=1e-4):
         nnearest = 2
-        img_shape = (4, 5, 6)
-        aimg = np.random.rand(*img_shape)
-        timg = np.random.rand(*img_shape)
+        image_shape = (4, 5, 6)
+        aimg = np.random.rand(*image_shape)
+        timg = np.random.rand(*image_shape)
 
         s = np.array([[[0, 1, 0], [1, 1, 1], [0, 1, 0]],
                       [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
                       [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
 
-        nn_inds = np.zeros((np.prod(img_shape), nnearest), dtype=np.uint32)
+        nn_inds = np.zeros((np.prod(image_shape), nnearest), dtype=np.uint32)
         pynamr.nearest_neighbors(aimg, s, nnearest, nn_inds)
         nn_inds_adj = pynamr.is_nearest_neighbor_of(nn_inds)
 
@@ -165,12 +171,12 @@ class TestGradients(unittest.TestCase):
         g1 = bl.grad(timg)
 
         # check gradient numerically
-        close = np.zeros(img_shape, dtype=np.uint8)
+        close = np.zeros(image_shape, dtype=np.uint8)
 
-        for i in range(img_shape[0]):
-            for j in range(img_shape[1]):
-                for k in range(img_shape[2]):
-                    delta = np.zeros(img_shape)
+        for i in range(image_shape[0]):
+            for j in range(image_shape[1]):
+                for k in range(image_shape[2]):
+                    delta = np.zeros(image_shape)
                     delta[i, j, k] = eps
 
                     g2 = (bl.eval(timg + delta) - c1) / eps
