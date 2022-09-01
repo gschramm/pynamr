@@ -19,27 +19,27 @@ from .utils import downsample, upsample
 
 
 class DualTESodiumAcqModel(abc.ABC):
-    """ abstract base class for decay models for dual TE Na MR data
-
-        Parameters
-        ----------
-
-        ds ... downsample factor (image shape / data shape)
-
-        sens ... complex array with coil sensitivities with shape (ncoils, data_shape)
-
-        dt ... difference time between the two echos (ms)
-
-        readout_time ... Callable that maps 1d kspace array to readout time [ms]
-                         for used read out
-
-        kspace_part ... RadialKSpacePartioner that partitions cartesian k-space volume
-                        into radial shells of "same" readout time
-    """
+    """ abstract base class for decay models for dual TE Na MR data """
 
     def __init__(self, ds: int, sens: XpArray, dt: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
                  kspace_part: RadialKSpacePartitioner) -> None:
+        """ abstract base class for decay models for dual TE Na MR data
+
+        Parameters
+        ----------
+        ds : int
+            downsample factor (image shape / data shape)
+        sens : XpArray
+            complex array with coil sensitivities with shape (ncoils, data_shape)
+        dt : float
+            difference time between the two echos
+        readout_time : typing.Callable[[np.ndarray], np.ndarray]
+            Callable that maps 1d kspace array to readout time for used read out
+        kspace_part : RadialKSpacePartitioner
+            RadialKSpacePartioner that partitions cartesian k-space volume
+            into radial shells of "same" readout time
+        """
 
         # downsampling factor
         self._ds = ds
@@ -116,6 +116,7 @@ class DualTESodiumAcqModel(abc.ABC):
 
 
 class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
+    """ two compartment dual echo sodium acquisition model with fixed T2star times """
 
     def __init__(
         self,
@@ -131,18 +132,328 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         free_long_frac: float,
         bound_long_frac: float,
     ) -> None:
+        """ two compartment dual echo sodium acquisition model with fixed T2star times
+
+        Parameters
+        ----------
+        ds : int
+            downsample factor (image shape / data shape)
+        sens : XpArray
+            complex array with coil sensitivities with shape (ncoils, data_shape)
+        dt : float
+            difference time between the two echos
+        readout_time : typing.Callable[[np.ndarray], np.ndarray]
+            Callable that maps 1d kspace array to readout time for used read out
+        kspace_part : RadialKSpacePartitioner
+            RadialKSpacePartioner that partitions cartesian k-space volume
+            into radial shells of "same" readout time
+        T2star_free_short : float
+            short T2start time of free compartment
+        T2star_free_long : float
+            long T2start time of free compartment
+        T2star_bound_short : float
+            short T2start time of bound compartment
+        T2star_bound_long : float
+            long T2start time of bound compartment
+        free_long_frac : float
+            fraction of free compartment undergoing long/slow decay
+        bound_long_frac : float
+            fraction of bound compartment undergoing long/slow decay
+        """
+
         super().__init__(ds, sens, dt, readout_time, kspace_part)
 
         self._T2star_free_short = T2star_free_short
         self._T2star_free_long = T2star_free_long
-        self._T2star_short_bound = T2star_bound_short
-        self._T2star_long_bound = T2star_bound_long
+        self._T2star_bound_short = T2star_bound_short
+        self._T2star_bound_long = T2star_bound_long
 
         self._free_long_frac = free_long_frac
         self._bound_long_frac = bound_long_frac
 
         self._free_short_frac = 1 - self._free_long_frac
         self._bound_short_frac = 1 - self._bound_long_frac
+
+    @property
+    def T2star_free_short(self) -> float:
+        return self._T2star_free_short
+
+    @property
+    def T2star_free_long(self) -> float:
+        return self._T2star_free_long
+
+    @property
+    def T2star_bound_short(self) -> float:
+        return self._T2star_bound_short
+
+    @property
+    def T2star_bound_long(self) -> float:
+        return self._T2star_bound_long
+
+    @property
+    def free_long_frac(self) -> float:
+        return self._free_long_frac
+
+    @property
+    def bound_long_frac(self) -> float:
+        return self._bound_long_frac
+
+    @property
+    def free_short_frac(self) -> float:
+        return self._free_short_frac
+
+    @property
+    def bound_short_frac(self) -> float:
+        return self._bound_short_frac
+
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        """ forward step that calculates expected signal
+
+        Parameters
+        ----------
+        x : np.ndarray (real)
+            two compartment image of shape (2,n0,n1,n2,2)
+            first (left most) dimension are the "channels"
+            [0,...] ... bound pool   
+            [1,...] ... free pool
+
+        Returns
+        -------
+        np.ndarray (real)
+            the expected signal in all channels
+            shape (ncoils, data_shape, 2)
+        """ """"""
+
+        # create a complex view of the input real input array with two channels
+        x = complex_view_of_real_array(x)
+
+        #----------------------
+        # send f and gam to GPU
+        if self._xp.__name__ == 'cupy':
+            x = self._xp.asarray(x)
+
+        # downsample the image along the spatial dimensions
+        x_ds = downsample(downsample(downsample(x, self._ds, axis=1),
+                                     self._ds,
+                                     axis=2),
+                          self._ds,
+                          axis=3)
+
+        y = self._xp.zeros((
+            self._ncoils,
+            2,
+        ) + self._data_shape,
+                           dtype=self._xp.complex128)
+
+        for i_sens in range(self._ncoils):
+            for it in range(self.n_readout_bins):
+                if self._bound_long_frac > 0:
+                    # first echo - bound compartment - long
+                    y[i_sens, 0, ...][self.readout_inds[
+                        it]] += self._bound_long_frac * self._xp.fft.fftn(
+                            self.sens[i_sens, ...] * self._xp.exp(
+                                -self._tr[it] / self._T2star_bound_long) *
+                            x_ds[0, ...],
+                            norm='ortho')[self.readout_inds[it]]
+                    # second echo - bound compartment - long
+                    y[i_sens, 1, ...][self.readout_inds[
+                        it]] += self._bound_long_frac * self._xp.fft.fftn(
+                            self.sens[i_sens, ...] * self._xp.exp(
+                                -(self._tr[it] + self._dt) /
+                                self._T2star_bound_long) * x_ds[0, ...],
+                            norm='ortho')[self.readout_inds[it]]
+
+                if self._bound_short_frac > 0:
+                    # first echo - bound compartment - short
+                    y[i_sens, 0, ...][self.readout_inds[
+                        it]] += self._bound_short_frac * self._xp.fft.fftn(
+                            self.sens[i_sens, ...] * self._xp.exp(
+                                -self._tr[it] / self._T2star_bound_short) *
+                            x_ds[0, ...],
+                            norm='ortho')[self.readout_inds[it]]
+                    # second echo - bound compartment - short
+                    y[i_sens, 1, ...][self.readout_inds[
+                        it]] += self._bound_short_frac * self._xp.fft.fftn(
+                            self.sens[i_sens, ...] * self._xp.exp(
+                                -(self._tr[it] + self._dt) /
+                                self._T2star_bound_short) * x_ds[0, ...],
+                            norm='ortho')[self.readout_inds[it]]
+
+                if self._free_long_frac > 0:
+                    # first echo - free compartment - long
+                    y[i_sens, 0, ...][self.readout_inds[
+                        it]] += self._free_long_frac * self._xp.fft.fftn(
+                            self.sens[i_sens, ...] * self._xp.exp(
+                                -self._tr[it] / self._T2star_free_long) *
+                            x_ds[1, ...],
+                            norm='ortho')[self.readout_inds[it]]
+                    # second echo - free compartment - long
+                    y[i_sens, 1, ...][self.readout_inds[
+                        it]] += self._free_long_frac * self._xp.fft.fftn(
+                            self.sens[i_sens, ...] * self._xp.exp(
+                                -(self._tr[it] + self._dt) /
+                                self._T2star_free_long) * x_ds[1, ...],
+                            norm='ortho')[self.readout_inds[it]]
+
+                if self._free_short_frac > 0:
+                    # first echo - free compartment - short
+                    y[i_sens, 0, ...][self.readout_inds[
+                        it]] += self._free_short_frac * self._xp.fft.fftn(
+                            self.sens[i_sens, ...] * self._xp.exp(
+                                -self._tr[it] / self._T2star_free_short) *
+                            x_ds[1, ...],
+                            norm='ortho')[self.readout_inds[it]]
+                    # second echo - free compartment - short
+                    y[i_sens, 1, ...][self.readout_inds[
+                        it]] += self._free_short_frac * self._xp.fft.fftn(
+                            self.sens[i_sens, ...] * self._xp.exp(
+                                -(self._tr[it] + self._dt) /
+                                self._T2star_free_short) * x_ds[1, ...],
+                            norm='ortho')[self.readout_inds[it]]
+
+        # get y back from GPU
+        if self._xp.__name__ == 'cupy':
+            y = self._xp.asnumpy(y)
+        #----------------------
+
+        # convert complex128 arrays back to 2 float64 array
+        y = real_view_of_complex_array(y)
+
+        return y
+
+    def adjoint(self, y: np.ndarray) -> np.ndarray:
+        """ adjoint of forward step 
+
+        Parameters
+        ----------
+        y : np.ndarray (real)
+            a "signal" in data space of shape
+            (ncoils, data_shape, 2)
+
+        Returns
+        -------
+        np.ndarray (real)
+            two compartment image of shape (2,n0,n1,n2,2)
+            first (left most) dimension are the "channels"
+            0 ... bound 
+            1 ... free
+        """
+
+        # create a complex view of the input real input array with two channels
+        y = complex_view_of_real_array(y)
+
+        #----------------------
+        # send y, gam to GPU
+        if self._xp.__name__ == 'cupy':
+            y = self._xp.asarray(y)
+
+        x_ds = self._xp.zeros((2, ) + y.shape[2:], dtype=y.dtype)
+
+        for i_sens in range(self._ncoils):
+            for it in range(self.n_readout_bins):
+                if self._bound_long_frac > 0:
+                    # first echo - bound compartment - long
+                    tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
+                                         dtype=y.dtype)
+                    tmp[self.readout_inds[it]] = y[i_sens, 0,
+                                                   ...][self.readout_inds[it]]
+                    x_ds[0, ...] += self._bound_long_frac * (self._xp.exp(
+                        -self._tr[it] /
+                        self._T2star_bound_long)) * self._xp.conj(
+                            self.sens[i_sens]) * self._xp.fft.ifftn(
+                                tmp, norm='ortho')
+                    # second echo - bound compartment - long
+                    tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
+                                         dtype=y.dtype)
+                    tmp[self.readout_inds[it]] = y[i_sens, 1,
+                                                   ...][self.readout_inds[it]]
+                    x_ds[0, ...] += self._bound_long_frac * (self._xp.exp(
+                        -(self._tr[it] + self._dt) /
+                        self._T2star_bound_long)) * self._xp.conj(
+                            self.sens[i_sens]) * self._xp.fft.ifftn(
+                                tmp, norm='ortho')
+
+                if self._bound_short_frac > 0:
+                    # first echo - bound compartment - long
+                    tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
+                                         dtype=y.dtype)
+                    tmp[self.readout_inds[it]] = y[i_sens, 0,
+                                                   ...][self.readout_inds[it]]
+                    x_ds[0, ...] += self._bound_short_frac * (self._xp.exp(
+                        -self._tr[it] /
+                        self._T2star_bound_short)) * self._xp.conj(
+                            self.sens[i_sens]) * self._xp.fft.ifftn(
+                                tmp, norm='ortho')
+                    # second echo - bound compartment - long
+                    tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
+                                         dtype=y.dtype)
+                    tmp[self.readout_inds[it]] = y[i_sens, 1,
+                                                   ...][self.readout_inds[it]]
+                    x_ds[0, ...] += self._bound_short_frac * (self._xp.exp(
+                        -(self._tr[it] + self._dt) /
+                        self._T2star_bound_short)) * self._xp.conj(
+                            self.sens[i_sens]) * self._xp.fft.ifftn(
+                                tmp, norm='ortho')
+
+                if self._free_long_frac > 0:
+                    # first echo - bound compartment - long
+                    tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
+                                         dtype=y.dtype)
+                    tmp[self.readout_inds[it]] = y[i_sens, 0,
+                                                   ...][self.readout_inds[it]]
+                    x_ds[1, ...] += self._free_long_frac * (self._xp.exp(
+                        -self._tr[it] /
+                        self._T2star_free_long)) * self._xp.conj(
+                            self.sens[i_sens]) * self._xp.fft.ifftn(
+                                tmp, norm='ortho')
+                    # second echo - bound compartment - long
+                    tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
+                                         dtype=y.dtype)
+                    tmp[self.readout_inds[it]] = y[i_sens, 1,
+                                                   ...][self.readout_inds[it]]
+                    x_ds[1, ...] += self._free_long_frac * (self._xp.exp(
+                        -(self._tr[it] + self._dt) /
+                        self._T2star_free_long)) * self._xp.conj(
+                            self.sens[i_sens]) * self._xp.fft.ifftn(
+                                tmp, norm='ortho')
+
+                if self._free_short_frac > 0:
+                    # first echo - bound compartment - long
+                    tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
+                                         dtype=y.dtype)
+                    tmp[self.readout_inds[it]] = y[i_sens, 0,
+                                                   ...][self.readout_inds[it]]
+                    x_ds[1, ...] += self._free_short_frac * (self._xp.exp(
+                        -self._tr[it] /
+                        self._T2star_free_short)) * self._xp.conj(
+                            self.sens[i_sens]) * self._xp.fft.ifftn(
+                                tmp, norm='ortho')
+                    # second echo - bound compartment - long
+                    tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
+                                         dtype=y.dtype)
+                    tmp[self.readout_inds[it]] = y[i_sens, 1,
+                                                   ...][self.readout_inds[it]]
+                    x_ds[1, ...] += self._free_short_frac * (self._xp.exp(
+                        -(self._tr[it] + self._dt) /
+                        self._T2star_free_short)) * self._xp.conj(
+                            self.sens[i_sens]) * self._xp.fft.ifftn(
+                                tmp, norm='ortho')
+
+        # upsample x
+        x = upsample(upsample(upsample(x_ds, self._ds, axis=1),
+                              self._ds,
+                              axis=2),
+                     self._ds,
+                     axis=3)
+
+        # get x gam back from GPU
+        if self._xp.__name__ == 'cupy':
+            x = self._xp.asnumpy(x)
+        #----------------------
+
+        # convert complex128 arrays back to 2 float64 array
+        x = real_view_of_complex_array(x)
+        return x
 
 
 class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
@@ -174,12 +485,12 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         x = complex_view_of_real_array(x)
 
         #----------------------
-        # send f and gam to GPU
+        # send x and gam to GPU
         if self._xp.__name__ == 'cupy':
             x = self._xp.asarray(x)
             gam = self._xp.asarray(gam)
 
-        # downsample f and gamma
+        # downsample x and gamma
         x_ds = downsample(downsample(downsample(x, self._ds, axis=0),
                                      self._ds,
                                      axis=1),
@@ -208,7 +519,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     gam_ds**((self._tr[it] / self._dt) + 1) * x_ds,
                     norm='ortho')[self.readout_inds[it]]
 
-        # get f, F, gam back from GPU
+        # get x from GPU
         if self._xp.__name__ == 'cupy':
             y = self._xp.asnumpy(y)
         #----------------------
@@ -239,7 +550,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         y = complex_view_of_real_array(y)
 
         #----------------------
-        # send F, gam to GPU
+        # send y, gam to GPU
         if self._xp.__name__ == 'cupy':
             y = self._xp.asarray(y)
             gam = self._xp.asarray(gam)
@@ -275,7 +586,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                      self._ds,
                      axis=2)
 
-        # get f, F, gam back from GPU
+        # get x gam back from GPU
         if self._xp.__name__ == 'cupy':
             x = self._xp.asnumpy(x)
         #----------------------
