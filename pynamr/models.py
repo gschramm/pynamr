@@ -106,13 +106,13 @@ class MonoExpDualTESodiumAcqModel:
         return self._kspace_part.kmask
 
     #------------------------------------------------------------------------------
-    def forward(self, f: np.ndarray, gam: np.ndarray) -> np.ndarray:
-        """ Calculate downsampled FFT of an image f
+    def forward(self, x: np.ndarray, gam: np.ndarray) -> np.ndarray:
+        """ Calculate apodized FFT of an image f
 
             Parameters
             ----------
 
-            f : a float64 numpy/cupy array of shape (self.image_shape,2)
+            x : a float64 numpy array of shape (self.image_shape,2)
               [...,0] is considered as the real part
               [...,1] is considered as the imag part
 
@@ -120,20 +120,20 @@ class MonoExpDualTESodiumAcqModel:
 
             Returns
             -------
-            a float64 numpy/cupy array of shape (self.ncoils,self.image_shape,2)
+            a float64 numpy array of shape (self.ncoils,self.image_shape,2)
         """
 
         # create a complex view of the input real input array with two channels
-        f = complex_view_of_real_array(f)
+        x = complex_view_of_real_array(x)
 
         #----------------------
         # send f and gam to GPU
         if self._xp.__name__ == 'cupy':
-            f = self._xp.asarray(f)
+            x = self._xp.asarray(x)
             gam = self._xp.asarray(gam)
 
         # downsample f and gamma
-        f_ds = downsample(downsample(downsample(f, self._ds, axis=0),
+        x_ds = downsample(downsample(downsample(x, self._ds, axis=0),
                                      self._ds,
                                      axis=1),
                           self._ds,
@@ -144,60 +144,60 @@ class MonoExpDualTESodiumAcqModel:
                             self._ds,
                             axis=2)
 
-        F = self._xp.zeros((
+        y = self._xp.zeros((
             self._ncoils,
             2,
-        ) + f_ds.shape,
+        ) + x_ds.shape,
                            dtype=self._xp.complex128)
 
         for i_sens in range(self._ncoils):
             for it in range(self.n_readout_bins):
-                F[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(
+                y[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**(self._tr[it] / self._dt) * f_ds,
+                    gam_ds**(self._tr[it] / self._dt) * x_ds,
                     norm='ortho')[self.readout_inds[it]]
-                F[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(
+                y[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**((self._tr[it] / self._dt) + 1) * f_ds,
+                    gam_ds**((self._tr[it] / self._dt) + 1) * x_ds,
                     norm='ortho')[self.readout_inds[it]]
 
         # get f, F, gam back from GPU
         if self._xp.__name__ == 'cupy':
-            F = self._xp.asnumpy(F)
+            y = self._xp.asnumpy(y)
         #----------------------
 
         # convert complex128 arrays back to 2 float64 array
-        F = real_view_of_complex_array(F)
+        y = real_view_of_complex_array(y)
 
-        return F
+        return y
 
     #------------------------------------------------------------------------------
-    def adjoint(self, F: np.ndarray, gam: np.ndarray) -> np.ndarray:
-        """ Calculate the adjoint of the downsampled FFT of a k-space image F
+    def adjoint(self, y: np.ndarray, gam: np.ndarray) -> np.ndarray:
+        """ Calculate the adjoint of the apodized FFT of a k-space image F
 
             Parameters
             ----------
 
-            F : a float64 numpy/cupy array of shape (self.ncoils,self.image_shape,2)
+            y : a float64 numpy array of shape (self.ncoils,self.image_shape,2)
               [...,0] is considered as the real part
               [...,1] is considered as the imag part
 
-            gam : a float64 numpy/cupy array of shape (self.image_shape)
+            gam : a float64 numpy array of shape (self.image_shape)
 
             Returns
             -------
             a float64 numpy/cupy array of shape (self.image_shape)
         """
         # create a complex view of the input real input array with two channels
-        F = complex_view_of_real_array(F)
+        y = complex_view_of_real_array(y)
 
         #----------------------
         # send F, gam to GPU
         if self._xp.__name__ == 'cupy':
-            F = self._xp.asarray(F)
+            y = self._xp.asarray(y)
             gam = self._xp.asarray(gam)
 
-        f_ds = self._xp.zeros(F.shape[2:], dtype=self._xp.complex128)
+        x_ds = self._xp.zeros(y.shape[2:], dtype=self._xp.complex128)
 
         gam_ds = downsample(downsample(downsample(gam, self._ds, axis=0),
                                        self._ds,
@@ -207,22 +207,22 @@ class MonoExpDualTESodiumAcqModel:
 
         for i_sens in range(self._ncoils):
             for it in range(self.n_readout_bins):
-                tmp0 = self._xp.zeros(F[i_sens, 0, ...].shape, dtype=F.dtype)
-                tmp0[self.readout_inds[it]] = F[i_sens, 0,
+                tmp0 = self._xp.zeros(y[i_sens, 0, ...].shape, dtype=y.dtype)
+                tmp0[self.readout_inds[it]] = y[i_sens, 0,
                                                 ...][self.readout_inds[it]]
-                f_ds += (gam_ds**(self._tr[it] / self._dt)) * self._xp.conj(
+                x_ds += (gam_ds**(self._tr[it] / self._dt)) * self._xp.conj(
                     self.sens[i_sens]) * self._xp.fft.ifftn(tmp0, norm='ortho')
 
-                tmp1 = self._xp.zeros(F[i_sens, 1, ...].shape, dtype=F.dtype)
-                tmp1[self.readout_inds[it]] = F[i_sens, 1,
+                tmp1 = self._xp.zeros(y[i_sens, 1, ...].shape, dtype=y.dtype)
+                tmp1[self.readout_inds[it]] = y[i_sens, 1,
                                                 ...][self.readout_inds[it]]
-                f_ds += (gam_ds**(
+                x_ds += (gam_ds**(
                     (self._tr[it] / self._dt) + 1)) * self._xp.conj(
                         self.sens[i_sens]) * self._xp.fft.ifftn(tmp1,
                                                                 norm='ortho')
 
         # upsample f
-        f = upsample(upsample(upsample(f_ds, self._ds, axis=0),
+        x = upsample(upsample(upsample(x_ds, self._ds, axis=0),
                               self._ds,
                               axis=1),
                      self._ds,
@@ -230,24 +230,24 @@ class MonoExpDualTESodiumAcqModel:
 
         # get f, F, gam back from GPU
         if self._xp.__name__ == 'cupy':
-            f = self._xp.asnumpy(f)
+            x = self._xp.asnumpy(x)
         #----------------------
 
         # convert complex128 arrays back to 2 float64 array
-        f = real_view_of_complex_array(f)
+        x = real_view_of_complex_array(x)
 
-        return f
+        return x
 
     #------------------------------------------------------------------------------
 
-    def grad_gam(self, F: np.ndarray, gam: np.ndarray,
+    def grad_gam(self, y: np.ndarray, gam: np.ndarray,
                  img: np.ndarray) -> np.ndarray:
         """ Calculate the the "inner" derivative with respect to gamma
 
             Parameters
             ----------
 
-            F : a float64 numpy/cupy array of shape (self.ncoils,self.image_shape,2)
+            y : a float64 numpy/cupy array of shape (self.ncoils,self.image_shape,2)
                 containing the "outer derivative" of the cost function
               [...,0] is considered as the real part
               [...,1] is considered as the imag part
@@ -264,17 +264,17 @@ class MonoExpDualTESodiumAcqModel:
             a float64 numpy/cupy array of shape (self.image_shape)
         """
         # create a complex view of the input real input array with two channels
-        F = complex_view_of_real_array(F)
+        y = complex_view_of_real_array(y)
         img = complex_view_of_real_array(img)
 
         #----------------------
-        # send F, gam to GPU
+        # send y, gam to GPU
         if self._xp.__name__ == 'cupy':
-            F = self._xp.asarray(F)
+            y = self._xp.asarray(y)
             gam = self._xp.asarray(gam)
             img = self._xp.asarray(img)
 
-        f_ds = self._xp.zeros(F.shape[2:], dtype=self._xp.complex128)
+        x_ds = self._xp.zeros(y.shape[2:], dtype=self._xp.complex128)
 
         gam_ds = downsample(downsample(downsample(gam, self._ds, axis=0),
                                        self._ds,
@@ -292,22 +292,22 @@ class MonoExpDualTESodiumAcqModel:
             for it in range(self.n_readout_bins):
                 n = self._tr[it] / self._dt
 
-                tmp0 = self._xp.zeros(F[i_sens, 0, ...].shape, dtype=F.dtype)
-                tmp0[self.readout_inds[it]] = F[i_sens, 0,
+                tmp0 = self._xp.zeros(y[i_sens, 0, ...].shape, dtype=y.dtype)
+                tmp0[self.readout_inds[it]] = y[i_sens, 0,
                                                 ...][self.readout_inds[it]]
-                f_ds += n * (gam_ds**(n - 1)) * self._xp.conj(
+                x_ds += n * (gam_ds**(n - 1)) * self._xp.conj(
                     img_ds * self.sens[i_sens]) * self._xp.fft.ifftn(
                         tmp0, norm='ortho')
 
-                tmp1 = self._xp.zeros(F[i_sens, 1, ...].shape, dtype=F.dtype)
-                tmp1[self.readout_inds[it]] = F[i_sens, 1,
+                tmp1 = self._xp.zeros(y[i_sens, 1, ...].shape, dtype=y.dtype)
+                tmp1[self.readout_inds[it]] = y[i_sens, 1,
                                                 ...][self.readout_inds[it]]
-                f_ds += (n + 1) * (gam_ds**n) * self._xp.conj(
+                x_ds += (n + 1) * (gam_ds**n) * self._xp.conj(
                     img_ds * self.sens[i_sens]) * self._xp.fft.ifftn(
                         tmp1, norm='ortho')
 
         # upsample f
-        f = upsample(upsample(upsample(f_ds, self._ds, axis=0),
+        x = upsample(upsample(upsample(x_ds, self._ds, axis=0),
                               self._ds,
                               axis=1),
                      self._ds,
@@ -315,10 +315,10 @@ class MonoExpDualTESodiumAcqModel:
 
         # get f, F, gam back from GPU
         if self._xp.__name__ == 'cupy':
-            f = self._xp.asnumpy(f)
+            x = self._xp.asnumpy(x)
         #----------------------
 
         # convert complex128 arrays back to 2 float64 array
-        f = real_view_of_complex_array(f)
+        x = real_view_of_complex_array(x)
 
-        return f[..., 0]
+        return x[..., 0]
