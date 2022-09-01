@@ -1,5 +1,6 @@
 """signal models for Na MR reconstruction"""
 import typing
+import abc
 import numpy as np
 
 # check whether cupy is available
@@ -17,8 +18,8 @@ from .utils import downsample, upsample
 #----------------------------------------------------------------------------------
 
 
-class MonoExpDualTESodiumAcqModel:
-    """ mono exponential decay model for dual TE Na MR data
+class DualTESodiumAcqModel(abc.ABC):
+    """ abstract base class for decay models for dual TE Na MR data
 
         Parameters
         ----------
@@ -104,6 +105,22 @@ class MonoExpDualTESodiumAcqModel:
     @property
     def kmask(self) -> np.ndarray:
         return self._kspace_part.kmask
+
+    @abc.abstractmethod
+    def forward(self):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def adjoint(self):
+        raise NotImplementedError
+
+
+class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
+
+    def __init__(self, ds: int, sens: XpArray, dt: float,
+                 readout_time: typing.Callable[[np.ndarray], np.ndarray],
+                 kspace_part: RadialKSpacePartitioner) -> None:
+        super().__init__(ds, sens, dt, readout_time, kspace_part)
 
     #------------------------------------------------------------------------------
     def forward(self, x: np.ndarray, gam: np.ndarray) -> np.ndarray:
