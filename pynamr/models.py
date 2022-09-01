@@ -115,6 +115,36 @@ class DualTESodiumAcqModel(abc.ABC):
         raise NotImplementedError
 
 
+class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
+
+    def __init__(
+        self,
+        ds: int,
+        sens: XpArray,
+        dt: float,
+        readout_time: typing.Callable[[np.ndarray], np.ndarray],
+        kspace_part: RadialKSpacePartitioner,
+        T2star_free_short: float,
+        T2star_free_long: float,
+        T2star_bound_short: float,
+        T2star_bound_long: float,
+        free_long_frac: float,
+        bound_long_frac: float,
+    ) -> None:
+        super().__init__(ds, sens, dt, readout_time, kspace_part)
+
+        self._T2star_free_short = T2star_free_short
+        self._T2star_free_long = T2star_free_long
+        self._T2star_short_bound = T2star_bound_short
+        self._T2star_long_bound = T2star_bound_long
+
+        self._free_long_frac = free_long_frac
+        self._bound_long_frac = bound_long_frac
+
+        self._free_short_frac = 1 - self._free_long_frac
+        self._bound_short_frac = 1 - self._bound_long_frac
+
+
 class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
     def __init__(self, ds: int, sens: XpArray, dt: float,
