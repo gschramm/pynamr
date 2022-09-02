@@ -8,6 +8,5 @@ dependencies:
 - numba>=0.55
 - scipy>=1.8
 - matplotlib>=3.5
-- cupy>=10.0 [--no-deps]
-- ipython [--no-deps]
-- pymirc [--no-deps]
+- ipython
+- pymirc

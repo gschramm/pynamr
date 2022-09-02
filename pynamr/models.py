@@ -23,7 +23,7 @@ class DualTESodiumAcqModel(abc.ABC):
 
     def __init__(self, ds: int, sens: XpArray, dt: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
-                 kspace_part: RadialKSpacePartitioner) -> None:
+                 kspace_part: RadialKSpacePartitioner, num_compartments: int = 1) -> None:
         """ abstract base class for decay models for dual TE Na MR data
 
         Parameters
@@ -31,7 +31,7 @@ class DualTESodiumAcqModel(abc.ABC):
         ds : int
             downsample factor (image shape / data shape)
         sens : XpArray
-            complex array with coil sensitivities with shape (ncoils, data_shape)
+            complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
         readout_time : typing.Callable[[np.ndarray], np.ndarray]
@@ -39,6 +39,8 @@ class DualTESodiumAcqModel(abc.ABC):
         kspace_part : RadialKSpacePartitioner
             RadialKSpacePartioner that partitions cartesian k-space volume
             into radial shells of "same" readout time
+        num_compartments: int
+            number of compartments
         """
 
         # downsampling factor
@@ -46,7 +48,7 @@ class DualTESodiumAcqModel(abc.ABC):
         # sensitivity "image" for each coil in downsampled data space
         self._sens = sens
         # number coils
-        self._ncoils = self._sens.shape[0]
+        self._num_coils = self._sens.shape[0]
 
         # time between two echos
         self._dt = dt
@@ -60,6 +62,9 @@ class DualTESodiumAcqModel(abc.ABC):
         # callable that calculates readout time from k array
         self._readout_time = readout_time
 
+        # number of compartments of image
+        self._num_compartments = num_compartments
+
         # object that partions cartesian k-space into radial shells
         self._kspace_part = kspace_part
         # shape of the data
@@ -71,12 +76,16 @@ class DualTESodiumAcqModel(abc.ABC):
         self._tr = self._readout_time(self._kspace_part.k)
 
     @property
+    def data_shape(self) -> tuple[int, int, int]:
+        return self._data_shape
+
+    @property
     def image_shape(self) -> tuple[int, int, int]:
         return self._image_shape
 
     @property
-    def ncoils(self) -> int:
-        return self._ncoils
+    def num_coils(self) -> int:
+        return self._num_coils
 
     @property
     def sens(self) -> XpArray:
@@ -106,12 +115,64 @@ class DualTESodiumAcqModel(abc.ABC):
     def kmask(self) -> np.ndarray:
         return self._kspace_part.kmask
 
+    @property
+    def num_compartments(self) -> int:
+        return self._num_compartments
+    
+    @property
+    def x_shape_complex(self) -> tuple[int,int,int,int]:
+        return (self.num_compartments,) + self.image_shape
+
+    @property
+    def x_ds_shape_complex(self) -> tuple[int,int,int,int]:
+        return (self.num_compartments,) + self.data_shape
+
+    @property
+    def x_shape_real(self) -> tuple[int,int,int,int,int]:
+        return self.x_shape_complex + (2,)
+    
+    @property
+    def y_shape_complex(self) -> tuple[int,int,int,int,int]:
+        return (self.num_coils,) + (2,) + self.data_shape
+
+    @property
+    def y_shape_real(self) -> tuple[int,int,int,int,int,int]:
+        return self.y_shape_complex + (2,)
+
     @abc.abstractmethod
-    def forward(self):
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        """ forward model that maps from image x to data y
+
+        Parameters
+        ----------
+        x : np.ndarray
+            the (multichannel) complex image represented in a real array 
+            with shape (num_compartments, image_shape, 2)
+
+        Returns
+        -------
+        np.ndarray
+            the expected data with shape
+            (num_coils, 2, data_shape, 2)
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def adjoint(self):
+    def adjoint(self, x: np.ndarray) -> np.ndarray:
+        """ adjoint of forward model that maps from data y to image x
+
+        Parameters
+        ----------
+        y : np.ndarray
+            complex multicoil data array represented as real array with shape
+            (num_coils, 2, data_shape, 2)
+
+        Returns
+        -------
+        np.ndarray
+            the (multichannel) complex image represented in a real array 
+            with shape (num_compartments, image_shape, 2)
+        """        
         raise NotImplementedError
 
 
@@ -139,7 +200,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         ds : int
             downsample factor (image shape / data shape)
         sens : XpArray
-            complex array with coil sensitivities with shape (ncoils, data_shape)
+            complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
         readout_time : typing.Callable[[np.ndarray], np.ndarray]
@@ -161,7 +222,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             fraction of bound compartment undergoing long/slow decay
         """
 
-        super().__init__(ds, sens, dt, readout_time, kspace_part)
+        super().__init__(ds, sens, dt, readout_time, kspace_part, num_compartments=2)
 
         self._T2star_free_short = T2star_free_short
         self._T2star_free_long = T2star_free_long
@@ -221,7 +282,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         -------
         np.ndarray (real)
             the expected signal in all channels
-            shape (ncoils, data_shape, 2)
+            shape (num_coils, data_shape, 2)
         """ """"""
 
         # create a complex view of the input real input array with two channels
@@ -239,13 +300,9 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                           self._ds,
                           axis=3)
 
-        y = self._xp.zeros((
-            self._ncoils,
-            2,
-        ) + self._data_shape,
-                           dtype=self._xp.complex128)
+        y = self._xp.zeros(self.y_shape_complex, dtype=self._xp.complex128)
 
-        for i_sens in range(self._ncoils):
+        for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
                 if self._bound_long_frac > 0:
                     # first echo - bound compartment - long
@@ -328,7 +385,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         ----------
         y : np.ndarray (real)
             a "signal" in data space of shape
-            (ncoils, data_shape, 2)
+            (num_coils, data_shape, 2)
 
         Returns
         -------
@@ -347,9 +404,9 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         if self._xp.__name__ == 'cupy':
             y = self._xp.asarray(y)
 
-        x_ds = self._xp.zeros((2, ) + y.shape[2:], dtype=y.dtype)
+        x_ds = self._xp.zeros(self.x_ds_shape_complex, dtype=y.dtype)
 
-        for i_sens in range(self._ncoils):
+        for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
                 if self._bound_long_frac > 0:
                     # first echo - bound compartment - long
@@ -464,7 +521,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
     def __init__(self, ds: int, sens: XpArray, dt: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
-                 kspace_part: RadialKSpacePartitioner) -> None:
+                 kspace_part: RadialKSpacePartitioner, gam: typing.Optional[np.ndarray] = None) -> None:
         """ mono exponential dual TE sodium acquisition model assuming one compartment
 
         Parameters
@@ -472,7 +529,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         ds : int
             downsample factor (image shape / data shape)
         sens : XpArray
-            complex array with coil sensitivities with shape (ncoils, data_shape)
+            complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
         readout_time : typing.Callable[[np.ndarray], np.ndarray]
@@ -481,16 +538,34 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             RadialKSpacePartioner that partitions cartesian k-space volume
             into radial shells of "same" readout time
         """
-        super().__init__(ds, sens, dt, readout_time, kspace_part)
+        super().__init__(ds, sens, dt, readout_time, kspace_part, num_compartments=1)
+
+        if gam is None:
+            self._gam = np.ones(self.image_shape)
+        else:
+            self._gam = gam
+
+    @property
+    def gam(self) -> np.ndarray:
+        return self._gam
+    
+    @gam.setter
+    def gam(self, g: np.ndarray) -> None:
+        if not isinstance(g, np.ndarray):
+            raise ValueError('must set value to numpy array')
+        if self.image_shape != g.shape:
+            raise ValueError('input has wrong shape')
+
+        self._gam = g
 
     #------------------------------------------------------------------------------
-    def forward(self, x: np.ndarray, gam: np.ndarray) -> np.ndarray:
+    def forward(self, x: np.ndarray) -> np.ndarray:
         """ Calculate apodized FFT of an image f
 
             Parameters
             ----------
 
-            x : a float64 numpy array of shape (self.image_shape,2)
+            x : a float64 numpy array of shape (1,self.image_shape,2)
               [...,0] is considered as the real part
               [...,1] is considered as the imag part
 
@@ -498,11 +573,13 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
             Returns
             -------
-            a float64 numpy array of shape (self.ncoils,self.image_shape,2)
+            a float64 numpy array of shape (self.num_coils,self.image_shape,2)
         """
 
         # create a complex view of the input real input array with two channels
         x = complex_view_of_real_array(x)
+
+        gam = self._gam
 
         #----------------------
         # send x and gam to GPU
@@ -511,32 +588,29 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             gam = self._xp.asarray(gam)
 
         # downsample x and gamma
-        x_ds = downsample(downsample(downsample(x, self._ds, axis=0),
+        x_ds = downsample(downsample(downsample(x, self._ds, axis=1),
                                      self._ds,
-                                     axis=1),
+                                     axis=2),
                           self._ds,
-                          axis=2)
+                          axis=3)
         gam_ds = downsample(downsample(downsample(gam, self._ds, axis=0),
                                        self._ds,
                                        axis=1),
                             self._ds,
                             axis=2)
 
-        y = self._xp.zeros((
-            self._ncoils,
-            2,
-        ) + x_ds.shape,
-                           dtype=self._xp.complex128)
+        y = self._xp.zeros(self.y_shape_complex, dtype=self._xp.complex128)
+                           
 
-        for i_sens in range(self._ncoils):
+        for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
                 y[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**(self._tr[it] / self._dt) * x_ds,
+                    gam_ds**(self._tr[it] / self._dt) * x_ds[0,...],
                     norm='ortho')[self.readout_inds[it]]
                 y[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**((self._tr[it] / self._dt) + 1) * x_ds,
+                    gam_ds**((self._tr[it] / self._dt) + 1) * x_ds[0,...],
                     norm='ortho')[self.readout_inds[it]]
 
         # get x from GPU
@@ -550,24 +624,24 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         return y
 
     #------------------------------------------------------------------------------
-    def adjoint(self, y: np.ndarray, gam: np.ndarray) -> np.ndarray:
+    def adjoint(self, y: np.ndarray) -> np.ndarray:
         """ Calculate the adjoint of the apodized FFT of a k-space image F
 
             Parameters
             ----------
 
-            y : a float64 numpy array of shape (self.ncoils,self.image_shape,2)
+            y : a float64 numpy array of shape (self.num_coils,2,self.image_shape,2)
               [...,0] is considered as the real part
               [...,1] is considered as the imag part
 
-            gam : a float64 numpy array of shape (self.image_shape)
-
             Returns
             -------
-            a float64 numpy/cupy array of shape (self.image_shape)
+            a float64 numpy array of shape (1,self.image_shape,2)
         """
         # create a complex view of the input real input array with two channels
         y = complex_view_of_real_array(y)
+
+        gam = self._gam
 
         #----------------------
         # send y, gam to GPU
@@ -575,7 +649,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             y = self._xp.asarray(y)
             gam = self._xp.asarray(gam)
 
-        x_ds = self._xp.zeros(y.shape[2:], dtype=self._xp.complex128)
+        x_ds = self._xp.zeros(self.x_ds_shape_complex, dtype=self._xp.complex128)
 
         gam_ds = downsample(downsample(downsample(gam, self._ds, axis=0),
                                        self._ds,
@@ -583,28 +657,28 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                             self._ds,
                             axis=2)
 
-        for i_sens in range(self._ncoils):
+        for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
                 tmp0 = self._xp.zeros(y[i_sens, 0, ...].shape, dtype=y.dtype)
                 tmp0[self.readout_inds[it]] = y[i_sens, 0,
                                                 ...][self.readout_inds[it]]
-                x_ds += (gam_ds**(self._tr[it] / self._dt)) * self._xp.conj(
+                x_ds[0,...] += (gam_ds**(self._tr[it] / self._dt)) * self._xp.conj(
                     self.sens[i_sens]) * self._xp.fft.ifftn(tmp0, norm='ortho')
 
                 tmp1 = self._xp.zeros(y[i_sens, 1, ...].shape, dtype=y.dtype)
                 tmp1[self.readout_inds[it]] = y[i_sens, 1,
                                                 ...][self.readout_inds[it]]
-                x_ds += (gam_ds**(
+                x_ds[0,...] += (gam_ds**(
                     (self._tr[it] / self._dt) + 1)) * self._xp.conj(
                         self.sens[i_sens]) * self._xp.fft.ifftn(tmp1,
                                                                 norm='ortho')
 
         # upsample f
-        x = upsample(upsample(upsample(x_ds, self._ds, axis=0),
+        x = upsample(upsample(upsample(x_ds, self._ds, axis=1),
                               self._ds,
-                              axis=1),
+                              axis=2),
                      self._ds,
-                     axis=2)
+                     axis=3)
 
         # get x gam back from GPU
         if self._xp.__name__ == 'cupy':
@@ -618,32 +692,31 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
     #------------------------------------------------------------------------------
 
-    def grad_gam(self, y: np.ndarray, gam: np.ndarray,
-                 img: np.ndarray) -> np.ndarray:
+    def grad_gam(self, y: np.ndarray, img: np.ndarray) -> np.ndarray:
         """ Calculate the the "inner" derivative with respect to gamma
 
             Parameters
             ----------
 
-            y : a float64 numpy/cupy array of shape (self.ncoils,self.image_shape,2)
+            y : a float64 numpy array of shape (self.num_coils,2,self.image_shape,2)
                 containing the "outer derivative" of the cost function
               [...,0] is considered as the real part
               [...,1] is considered as the imag part
 
-            gam : a float64 numpy/cupy array of shape (self.image_shape)
-
-            img : a float64 numpy/cupy array of shape (self.image_shape,2)
+            img : a float64 numpy array of shape (1,self.image_shape,2)
                 containing the current Na concentration image
               [...,0] is considered as the real part
               [...,1] is considered as the imag part
 
             Returns
             -------
-            a float64 numpy/cupy array of shape (self.image_shape)
+            a float64 numpy array of shape (1,self.image_shape)
         """
         # create a complex view of the input real input array with two channels
         y = complex_view_of_real_array(y)
         img = complex_view_of_real_array(img)
+
+        gam = self._gam
 
         #----------------------
         # send y, gam to GPU
@@ -652,7 +725,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             gam = self._xp.asarray(gam)
             img = self._xp.asarray(img)
 
-        x_ds = self._xp.zeros(y.shape[2:], dtype=self._xp.complex128)
+        x_ds = self._xp.zeros(self.x_ds_shape_complex, dtype=self._xp.complex128)
 
         gam_ds = downsample(downsample(downsample(gam, self._ds, axis=0),
                                        self._ds,
@@ -660,38 +733,38 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                             self._ds,
                             axis=2)
 
-        img_ds = downsample(downsample(downsample(img, self._ds, axis=0),
+        img_ds = downsample(downsample(downsample(img, self._ds, axis=1),
                                        self._ds,
-                                       axis=1),
+                                       axis=2),
                             self._ds,
-                            axis=2)
+                            axis=3)
 
-        for i_sens in range(self._ncoils):
+        for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
                 n = self._tr[it] / self._dt
 
                 tmp0 = self._xp.zeros(y[i_sens, 0, ...].shape, dtype=y.dtype)
                 tmp0[self.readout_inds[it]] = y[i_sens, 0,
                                                 ...][self.readout_inds[it]]
-                x_ds += n * (gam_ds**(n - 1)) * self._xp.conj(
+                x_ds[0,...] += n * (gam_ds**(n - 1)) * self._xp.conj(
                     img_ds * self.sens[i_sens]) * self._xp.fft.ifftn(
                         tmp0, norm='ortho')
 
                 tmp1 = self._xp.zeros(y[i_sens, 1, ...].shape, dtype=y.dtype)
                 tmp1[self.readout_inds[it]] = y[i_sens, 1,
                                                 ...][self.readout_inds[it]]
-                x_ds += (n + 1) * (gam_ds**n) * self._xp.conj(
+                x_ds[0,...] += (n + 1) * (gam_ds**n) * self._xp.conj(
                     img_ds * self.sens[i_sens]) * self._xp.fft.ifftn(
                         tmp1, norm='ortho')
 
         # upsample f
-        x = upsample(upsample(upsample(x_ds, self._ds, axis=0),
+        x = upsample(upsample(upsample(x_ds, self._ds, axis=1),
                               self._ds,
-                              axis=1),
+                              axis=2),
                      self._ds,
-                     axis=2)
+                     axis=3)
 
-        # get f, F, gam back from GPU
+        # get x gam back from GPU
         if self._xp.__name__ == 'cupy':
             x = self._xp.asnumpy(x)
         #----------------------

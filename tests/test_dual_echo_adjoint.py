@@ -20,10 +20,6 @@ class TestModelAdjoint(unittest.TestCase):
         n = self.ds * self.data_shape[0]
         self.image_shape = (n, n, n)
 
-        #a = np.pad(np.random.rand(n - 4, n - 4, n - 4), 2).astype(np.float64)
-        #b = np.pad(np.random.rand(n - 4, n - 4, n - 4), 2).astype(np.float64)
-        #self.x = np.stack([a, b], axis=-1)
-
         self.sens = np.random.rand(*(
             (self.ncoils, ) + self.data_shape)).astype(
                 np.float64) + 1j * np.random.rand(*(
@@ -41,11 +37,12 @@ class TestModelAdjoint(unittest.TestCase):
                                                self.readout_time,
                                                self.kspace_part)
 
-        x = np.random.rand(*((self.image_shape) + (2, )))
+        x = np.random.rand(*((1,) + (self.image_shape) + (2, )))
 
-        x_fwd = m.forward(x, gam)
+        m.gam = gam
+        x_fwd = m.forward(x)
         y = np.random.rand(*x_fwd.shape).astype(np.float64)
-        y_back = m.adjoint(y, gam)
+        y_back = m.adjoint(y)
 
         self.assertTrue(np.isclose((x_fwd * y).sum(), (x * y_back).sum()))
 
