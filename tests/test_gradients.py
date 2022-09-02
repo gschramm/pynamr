@@ -39,10 +39,10 @@ class TestGradients(unittest.TestCase):
 
         # generate mono-exp. data
         self.mono_exp_model = pynamr.MonoExpDualTESodiumAcqModel(
-            self.ds, self.sens, self.dt, readout_time, kspace_part)
+            self.ds, self.sens, self.dt, readout_time, kspace_part, gam=self.gam)
 
-        self.x = np.random.rand(*((self.image_shape) + (2, )))
-        self.y = self.mono_exp_model.forward(self.x, self.gam)
+        self.x = np.random.rand(*((1,) + (self.image_shape) + (2, )))
+        self.y = self.mono_exp_model.forward(self.x)
         self.data = self.y + self.noise_level * np.abs(
             self.y).mean() * np.random.randn(*self.y.shape)
 
@@ -183,7 +183,7 @@ class TestGradients(unittest.TestCase):
 
         bl = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
 
-        c1 = bl.eval(timg)
+        c1 = bl(timg)
 
         g1 = bl.grad(timg)
 
@@ -196,7 +196,7 @@ class TestGradients(unittest.TestCase):
                     delta = np.zeros(image_shape)
                     delta[i, j, k] = eps
 
-                    g2 = (bl.eval(timg + delta) - c1) / eps
+                    g2 = (bl(timg + delta) - c1) / eps
 
                     close[i, j, k] = np.isclose(g1[i, j, k],
                                                 g2,
