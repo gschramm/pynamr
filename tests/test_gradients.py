@@ -1,5 +1,10 @@
 import unittest
 import numpy as np
+try:
+    import cupy as cp
+except:
+    cp = np
+
 import pynamr
 
 
@@ -21,8 +26,8 @@ class TestGradients(unittest.TestCase):
         self.n = self.ds * self.n_ds
         self.image_shape = (self.n, self.n, self.n)
 
-        self.sens = np.random.rand(*(
-            (self.ncoils, ) + self.data_shape)) + 1j * np.random.rand(*(
+        self.sens = cp.random.rand(*(
+            (self.ncoils, ) + self.data_shape)) + 1j * cp.random.rand(*(
                 (self.ncoils, ) + self.data_shape))
         self.sens *= 1e-2
 
