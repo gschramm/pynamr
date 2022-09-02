@@ -65,33 +65,39 @@ class TestGradients(unittest.TestCase):
         gam_0 = np.random.rand(*self.gam.shape)
 
         # check gradients
-        ll = loss.eval_x_first(x_0, gam_0)
-        gx = loss.grad_x(x_0, gam_0)
-        gg = loss.grad_gam(gam_0, x_0)
+        ll = loss(x_0, pynamr.CallingMode.XFIRST, gam_0)
+        gx = loss.grad(x_0, pynamr.CallingMode.XFIRST, gam_0)
+        gg = loss.grad(gam_0, pynamr.CallingMode.GAMFIRST, x_0)
 
         # test gradient with respect to Na image (real part)
         delta_x = np.zeros(x_0.shape)
         delta_x[i, i, i, 0] = eps
         self.assertTrue(
-            np.isclose(gx[i, i, i, 0],
-                       (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps,
-                       rtol=rtol))
+            np.isclose(
+                gx[i, i, i, 0],
+                (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST, gam_0) - ll) /
+                eps,
+                rtol=rtol))
 
         # test gradient with respect to Na image (imag part)
         delta_x = np.zeros(x_0.shape)
         delta_x[i, i, i, 1] = eps
         self.assertTrue(
-            np.isclose(gx[i, i, i, 1],
-                       (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps,
-                       rtol=rtol))
+            np.isclose(
+                gx[i, i, i, 1],
+                (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST, gam_0) - ll) /
+                eps,
+                rtol=rtol))
 
         # test gradient with respect to Gamma image
         delta_g = np.zeros(gam_0.shape)
         delta_g[i, i, i] = eps
         self.assertTrue(
-            np.isclose(gg[i, i, i],
-                       (loss.eval_x_first(x_0, gam_0 + delta_g) - ll) / eps,
-                       rtol=rtol))
+            np.isclose(
+                gg[i, i, i],
+                (loss(x_0, pynamr.CallingMode.XFIRST, gam_0 + delta_g) - ll) /
+                eps,
+                rtol=rtol))
 
     def test_total_gradient(self,
                             i=51,
@@ -127,33 +133,39 @@ class TestGradients(unittest.TestCase):
         gam_0 = np.random.rand(*self.gam.shape)
 
         # check gradients
-        ll = loss.eval_x_first(x_0, gam_0)
-        gx = loss.grad_x(x_0, gam_0)
-        gg = loss.grad_gam(gam_0, x_0)
+        ll = loss(x_0, pynamr.CallingMode.XFIRST, gam_0)
+        gx = loss.grad(x_0, pynamr.CallingMode.XFIRST, gam_0)
+        gg = loss.grad(gam_0, pynamr.CallingMode.GAMFIRST, x_0)
 
         # test gradient with respect to Na image (real part)
         delta_x = np.zeros(x_0.shape)
         delta_x[i, i, i, 0] = eps
         self.assertTrue(
-            np.isclose(gx[i, i, i, 0],
-                       (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps,
-                       rtol=rtol))
+            np.isclose(
+                gx[i, i, i, 0],
+                (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST, gam_0) - ll) /
+                eps,
+                rtol=rtol))
 
         # test gradient with respect to Na image (imag part)
         delta_x = np.zeros(x_0.shape)
         delta_x[i, i, i, 1] = eps
         self.assertTrue(
-            np.isclose(gx[i, i, i, 1],
-                       (loss.eval_x_first(x_0 + delta_x, gam_0) - ll) / eps,
-                       rtol=rtol))
+            np.isclose(
+                gx[i, i, i, 1],
+                (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST, gam_0) - ll) /
+                eps,
+                rtol=rtol))
 
         # test gradient with respect to Gamma image
         delta_g = np.zeros(gam_0.shape)
         delta_g[i, i, i] = eps
         self.assertTrue(
-            np.isclose(gg[i, i, i],
-                       (loss.eval_x_first(x_0, gam_0 + delta_g) - ll) / eps,
-                       rtol=rtol))
+            np.isclose(
+                gg[i, i, i],
+                (loss(x_0, pynamr.CallingMode.XFIRST, gam_0 + delta_g) - ll) /
+                eps,
+                rtol=rtol))
 
     def test_bowsher_gradient(self, eps=1e-7, rtol=1e-3, atol=1e-4):
         nnearest = 2

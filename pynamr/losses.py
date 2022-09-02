@@ -1,9 +1,18 @@
-#TODO: - replace interface to loss with __call__(x, method = 'x_first/gam_first')
-
+import enum
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b, fmin_cg
 
+from .models import DualTESodiumAcqModel
+from .models import TwoCompartmentBiExpDualTESodiumAcqModel
+from .models import MonoExpDualTESodiumAcqModel
+
 #-------------------------------------------------------------------
+
+
+class CallingMode(enum.Enum):
+    SINGLE = 'SINGLE'
+    XFIRST = 'XFIRST'
+    GAMFIRST = 'GAMFIRST'
 
 
 class DataFidelityLoss:
@@ -12,39 +21,62 @@ class DataFidelityLoss:
         in the second argument (Gam)
     """
 
-    def __init__(self, model, y):
+    def __init__(self, model: DualTESodiumAcqModel, y: np.ndarray) -> None:
         self.model = model
         self.y = y
 
-    def eval_x_first(self, x, gam):
-        z = self.diff(x, gam)
-        return 0.5 * (z**2).sum()
+    def __call__(self, in1: np.ndarray, mode: CallingMode, *args) -> float:
+        d = self.diff(in1, mode, *args)
+        return 0.5 * (d**2).sum()
 
-    def eval_gam_first(self, gam, x):
-        return self.eval_x_first(x, gam)
+    def diff(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
+        if isinstance(self.model, TwoCompartmentBiExpDualTESodiumAcqModel):
+            diff = (self.model.forward(
+                in1.reshape((2, ) + self.model.image_shape +
+                            (2, ))) - self.y) * self.model.kmask
+        elif isinstance(self.model, MonoExpDualTESodiumAcqModel):
+            if mode == CallingMode.XFIRST:
+                x = in1
+                gam = args[0]
+            elif mode == CallingMode.GAMFIRST:
+                x = args[0]
+                gam = in1
+            else:
+                raise ValueError
 
-    def diff(self, x, gam):
+            diff = (self.model.forward(
+                x.reshape(self.model.image_shape +
+                          (2, )), gam.reshape(self.model.image_shape)) -
+                    self.y) * self.model.kmask
+        else:
+            raise NotImplementedError
+
+        return diff
+
+    def grad(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
+        z = self.diff(in1, mode, *args)
+
         # reshaping of x/gam is needed since fmin_l_bfgs_b flattens all arrays
-        return (self.model.forward(x.reshape(self.model._image_shape + (2, )),
-                                   gam.reshape(self.model._image_shape)) -
-                self.y) * self.model.kmask
+        if isinstance(self.model, TwoCompartmentBiExpDualTESodiumAcqModel):
+            grad = self.model.adjoint(z).reshape(in1.shape)
+        elif isinstance(self.model, MonoExpDualTESodiumAcqModel):
+            if mode == CallingMode.XFIRST:
+                # gradient with respect to x
+                grad = self.model.adjoint(
+                    z,
+                    args[0].reshape(self.model.image_shape)).reshape(in1.shape)
+            elif mode == CallingMode.GAMFIRST:
+                # gradient with respect to gam
+                grad = self.model.grad_gam(
+                    z, in1.reshape(self.model.image_shape),
+                    args[0].reshape(self.model.image_shape + (2, ))).reshape(
+                        in1.shape)
+            else:
+                raise ValueError
+        else:
+            raise NotImplementedError
 
-    def grad_x(self, x, gam):
-        in_shape = x.shape
-        z = self.diff(x, gam)
-
-        # reshaping of x/gam is needed since fmin_l_bfgs_b flattens all arrays
-        return self.model.adjoint(z, gam.reshape(
-            self.model._image_shape)).reshape(in_shape)
-
-    def grad_gam(self, gam, x):
-        in_shape = gam.shape
-        z = self.diff(x, gam)
-
-        # reshaping of x/gam is needed since fmin_l_bfgs_b flattens all arrays
-        return self.model.grad_gam(z, gam.reshape(self.model._image_shape),
-                                   x.reshape(self.model._image_shape +
-                                             (2, ))).reshape(in_shape).copy()
+        return grad
 
 
 #-------------------------------------------------------------------
@@ -61,43 +93,92 @@ class TotalLoss:
         self.beta_x = beta_x
         self.beta_gam = beta_gam
 
-        self.x_shape = self.datafidelityloss.model._image_shape + (2, )
-        self.gam_shape = self.datafidelityloss.model._image_shape
+        if isinstance(self.datafidelityloss.model,
+                      MonoExpDualTESodiumAcqModel):
+            self.x_shape = self.datafidelityloss.model.image_shape + (2, )
+        elif isinstance(self.datafidelityloss.model,
+                        TwoCompartmentBiExpDualTESodiumAcqModel):
+            self.x_shape = (2, ) + self.datafidelityloss.model.image_shape + (
+                2, )
 
-    def eval_x_first(self, x, gam):
-        cost = self.datafidelityloss.eval_x_first(x, gam)
+        self.gam_shape = self.datafidelityloss.model.image_shape
 
-        if self.beta_x > 0:
-            # reshaping of x is necessary since LBFGS will pass flattened arrays
-            cost += self.beta_x * self.penalty_x.eval(
-                x.reshape(self.x_shape)[..., 0])
-            cost += self.beta_x * self.penalty_x.eval(
-                x.reshape(self.x_shape)[..., 1])
+    def __call__(self, in1: np.ndarray, mode: CallingMode, *args) -> float:
+        cost = self.datafidelityloss(in1, mode, *args)
 
-        if self.beta_gam > 0:
-            cost += self.beta_gam * self.penalty_gam.eval(gam)
+        if isinstance(self.datafidelityloss.model,
+                      MonoExpDualTESodiumAcqModel):
+            if mode == CallingMode.XFIRST:
+                x = in1
+                gam = args[0]
+            elif mode == CallingMode.GAMFIRST:
+                x = args[0]
+                gam = in1
+            else:
+                raise ValueError
+
+            if self.beta_x > 0:
+                # reshaping of x is necessary since LBFGS will pass flattened arrays
+                cost += self.beta_x * self.penalty_x.eval(
+                    x.reshape(self.x_shape)[..., 0])
+                cost += self.beta_x * self.penalty_x.eval(
+                    x.reshape(self.x_shape)[..., 1])
+
+            if self.beta_gam > 0:
+                cost += self.beta_gam * self.penalty_gam.eval(gam)
+
+        elif isinstance(self.datafidelityloss.model,
+                        TwoCompartmentBiExpDualTESodiumAcqModel):
+            x = in1
+
+            if self.beta_x > 0:
+                # reshaping of x is necessary since LBFGS will pass flattened arrays
+                cost += self.beta_x * self.penalty_x.eval(
+                    x.reshape(self.x_shape)[0, ..., 0])
+                cost += self.beta_x * self.penalty_x.eval(
+                    x.reshape(self.x_shape)[0, ..., 1])
+                cost += self.beta_x * self.penalty_x.eval(
+                    x.reshape(self.x_shape)[1, ..., 0])
+                cost += self.beta_x * self.penalty_x.eval(
+                    x.reshape(self.x_shape)[1, ..., 1])
 
         return cost
 
-    def eval_gam_first(self, gam, x):
-        return self.eval_x_first(x, gam)
+    def grad(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
 
-    def grad_x(self, x, gam):
+        grad = self.datafidelityloss.grad(in1, mode, *args)
+
         # reshaping of x is necessary since LBFGS will pass flattened arrays
-        grad = self.datafidelityloss.grad_x(x, gam).reshape(self.x_shape)
+        if isinstance(self.datafidelityloss.model,
+                      MonoExpDualTESodiumAcqModel):
+            if mode == CallingMode.XFIRST:
+                x = in1
+                if self.beta_x > 0:
+                    grad[..., 0] += self.beta_x * self.penalty_x.grad(
+                        x.reshape(self.x_shape)[..., 0])
+                    grad[..., 1] += self.beta_x * self.penalty_x.grad(
+                        x.reshape(self.x_shape)[..., 1])
+            elif mode == CallingMode.GAMFIRST:
+                gam = in1
+                if self.beta_gam > 0:
+                    grad += self.beta_gam * self.penalty_gam.grad(gam)
+            else:
+                raise ValueError
 
-        if self.beta_x > 0:
-            grad[..., 0] += self.beta_x * self.penalty_x.grad(
-                x.reshape(self.x_shape)[..., 0])
-            grad[..., 1] += self.beta_x * self.penalty_x.grad(
-                x.reshape(self.x_shape)[..., 1])
+        elif isinstance(self.datafidelityloss.model,
+                        TwoCompartmentBiExpDualTESodiumAcqModel):
+            x = in1
+            if self.beta_x > 0:
+                grad[0, ..., 0] += self.beta_x * self.penalty_x.grad(
+                    x.reshape(self.x_shape)[0, ..., 0])
+                grad[0, ..., 1] += self.beta_x * self.penalty_x.grad(
+                    x.reshape(self.x_shape)[0, ..., 1])
+                grad[1, ..., 0] += self.beta_x * self.penalty_x.grad(
+                    x.reshape(self.x_shape)[1, ..., 0])
+                grad[1, ..., 1] += self.beta_x * self.penalty_x.grad(
+                    x.reshape(self.x_shape)[1, ..., 1])
 
-        return grad.reshape(x.shape)
+        else:
+            raise NotImplementedError
 
-    def grad_gam(self, gam, x):
-        grad = self.datafidelityloss.grad_gam(gam, x)
-
-        if self.beta_gam > 0:
-            grad += self.beta_gam * self.penalty_gam.grad(gam)
-
-        return grad
+        return grad.reshape(in1.shape)
