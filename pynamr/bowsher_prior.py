@@ -1,11 +1,7 @@
-# TODO: jit function
-#       adjoint of Bowsher gradient
-
 import numpy as np
 from numba import njit, jit, prange
 
 
-#-------------------------------------------------------------------------------
 @njit(parallel=True)
 def next_neighbors(shape: tuple[int, int], ninds: np.ndarray) -> None:
     """ Calculate the 2/3 next neighbors for all voxels in a 2/3D array.
@@ -48,7 +44,6 @@ def next_neighbors(shape: tuple[int, int], ninds: np.ndarray) -> None:
                     ninds[j, 2] = ((i0 + 1) % shape[0]) * d12 + i1 * d2 + i2
 
 
-#-------------------------------------------------------------------------------
 @njit(parallel=True)
 def nearest_neighbors_3d(img: np.ndarray, s: np.ndarray, nnearest: int,
                          ninds: np.ndarray) -> None:
@@ -84,8 +79,6 @@ def nearest_neighbors_3d(img: np.ndarray, s: np.ndarray, nnearest: int,
     d12 = img.shape[1] * img.shape[2]
     d2 = img.shape[2]
 
-    mask_center_offset = s.shape[0] * s.shape[1] * s.shape[2] // 2
-
     for i0 in prange(img.shape[0]):
         for i1 in range(img.shape[1]):
             for i2 in range(img.shape[2]):
@@ -120,7 +113,6 @@ def nearest_neighbors_3d(img: np.ndarray, s: np.ndarray, nnearest: int,
                     absdiff.flatten())[:nnearest]]
 
 
-#-------------------------------------------------------------------------------
 def nearest_neighbors_2d(img: np.ndarray, s: np.ndarray, nnearest: int,
                          ninds: np.ndarray):
     """ Calculate the n nearest neighbors for all voxels in a 2D array
@@ -156,7 +148,6 @@ def nearest_neighbors_2d(img: np.ndarray, s: np.ndarray, nnearest: int,
     nearest_neighbors_3d(np.expand_dims(img, 0), s2, nnearest, ninds)
 
 
-#-------------------------------------------------------------------------------
 def nearest_neighbors(img: np.ndarray, s: np.ndarray, nnearest: int,
                       ninds: np.ndarray) -> None:
     """ Calculate the n nearest neighbors for all voxels in a 2D or 3D array
@@ -195,7 +186,6 @@ def nearest_neighbors(img: np.ndarray, s: np.ndarray, nnearest: int,
         raise ValueError("input image must be 2d or 3d")
 
 
-#-------------------------------------------------------------------------------
 def is_nearest_neighbor_of(ninds: np.ndarray) -> np.ndarray:
     """ Given an 2d array of nearest neighbors for each voxel, calculate
         for which voxels the voxel is a nearest neighbor
@@ -220,9 +210,6 @@ def is_nearest_neighbor_of(ninds: np.ndarray) -> np.ndarray:
     return ninds_adjoint
 
 
-#-------------------------------------------------------------------------------
-
-
 @njit(parallel=True)
 def bowsher_cost(img: np.ndarray, ninds: np.ndarray) -> float:
     img_shape = img.shape
@@ -236,9 +223,6 @@ def bowsher_cost(img: np.ndarray, ninds: np.ndarray) -> float:
     img = img.reshape(img_shape)
 
     return cost
-
-
-#-------------------------------------------------------------------------------
 
 
 @njit(parallel=True)
@@ -264,9 +248,6 @@ def bowsher_grad(img: np.ndarray, ninds: np.ndarray,
     grad = grad.reshape(img_shape)
 
     return grad
-
-
-#-------------------------------------------------------------------------------
 
 
 class BowsherLoss:
