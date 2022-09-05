@@ -7,7 +7,7 @@ from numba import njit, jit, prange
 
 #-------------------------------------------------------------------------------
 @njit(parallel=True)
-def next_neighbors(shape: tuple[int,int], ninds: np.ndarray) -> None:
+def next_neighbors(shape: tuple[int, int], ninds: np.ndarray) -> None:
     """ Calculate the 2/3 next neighbors for all voxels in a 2/3D array.
         Usefule for standard fwd finite differences (without structural information).
 
@@ -50,7 +50,8 @@ def next_neighbors(shape: tuple[int,int], ninds: np.ndarray) -> None:
 
 #-------------------------------------------------------------------------------
 @njit(parallel=True)
-def nearest_neighbors_3d(img: np.ndarray, s: np.ndarray, nnearest: int, ninds:np.ndarray) -> None:
+def nearest_neighbors_3d(img: np.ndarray, s: np.ndarray, nnearest: int,
+                         ninds: np.ndarray) -> None:
     """ Calculate the n nearest neighbors for all voxels in a 3D array
 
         Parameters
@@ -120,7 +121,8 @@ def nearest_neighbors_3d(img: np.ndarray, s: np.ndarray, nnearest: int, ninds:np
 
 
 #-------------------------------------------------------------------------------
-def nearest_neighbors_2d(img: np.ndarray, s: np.ndarray, nnearest: int, ninds: np.ndarray):
+def nearest_neighbors_2d(img: np.ndarray, s: np.ndarray, nnearest: int,
+                         ninds: np.ndarray):
     """ Calculate the n nearest neighbors for all voxels in a 2D array
 
         Parameters
@@ -155,7 +157,8 @@ def nearest_neighbors_2d(img: np.ndarray, s: np.ndarray, nnearest: int, ninds: n
 
 
 #-------------------------------------------------------------------------------
-def nearest_neighbors(img: np.ndarray, s: np.ndarray, nnearest: int, ninds: np.ndarray) -> None:
+def nearest_neighbors(img: np.ndarray, s: np.ndarray, nnearest: int,
+                      ninds: np.ndarray) -> None:
     """ Calculate the n nearest neighbors for all voxels in a 2D or 3D array
 
         Parameters
@@ -239,7 +242,8 @@ def bowsher_cost(img: np.ndarray, ninds: np.ndarray) -> float:
 
 
 @njit(parallel=True)
-def bowsher_grad(img: np.ndarray, ninds: np.ndarray, ninds_adj: np.ndarray) -> np.ndarray:
+def bowsher_grad(img: np.ndarray, ninds: np.ndarray,
+                 ninds_adj: np.ndarray) -> np.ndarray:
     img_shape = img.shape
     img = img.flatten()
     grad = np.zeros(img.shape, dtype=img.dtype)
@@ -266,12 +270,13 @@ def bowsher_grad(img: np.ndarray, ninds: np.ndarray, ninds_adj: np.ndarray) -> n
 
 
 class BowsherLoss:
-    def __init__(self, ninds: np.ndarray, ninds_adj:np.ndarray) -> None:
+
+    def __init__(self, ninds: np.ndarray, ninds_adj: np.ndarray) -> None:
         self.ninds = ninds
         self.ninds_adj = ninds_adj
 
     def __call__(self, img: np.ndarray) -> float:
         return bowsher_cost(img, self.ninds)
 
-    def grad(self, img:np.ndarray) -> np.ndarray:
+    def grad(self, img: np.ndarray) -> np.ndarray:
         return bowsher_grad(img, self.ninds, self.ninds_adj)

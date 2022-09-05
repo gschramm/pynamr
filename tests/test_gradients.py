@@ -38,10 +38,14 @@ class TestGradients(unittest.TestCase):
                                                      self.n_readout_bins)
 
         # generate mono-exp. data
-        self.mono_exp_model = pynamr.MonoExpDualTESodiumAcqModel(
-            self.ds, self.sens, self.dt, readout_time, kspace_part, gam=self.gam)
+        self.mono_exp_model = pynamr.MonoExpDualTESodiumAcqModel(self.ds,
+                                                                 self.sens,
+                                                                 self.dt,
+                                                                 readout_time,
+                                                                 kspace_part,
+                                                                 gam=self.gam)
 
-        self.x = np.random.rand(*((1,) + (self.image_shape) + (2, )))
+        self.x = np.random.rand(*((1, ) + (self.image_shape) + (2, )))
         self.y = self.mono_exp_model.forward(self.x)
         self.data = self.y + self.noise_level * np.abs(
             self.y).mean() * np.random.randn(*self.y.shape)
@@ -75,11 +79,10 @@ class TestGradients(unittest.TestCase):
                 delta_x = np.zeros(x_0.shape)
                 delta_x[comp, i, i, i, j] = eps
                 self.assertTrue(
-                    np.isclose(
-                        gx[comp, i, i, i, j],
-                        (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST, gam_0) - ll) /
-                        eps,
-                        rtol=rtol))
+                    np.isclose(gx[comp, i, i, i, j],
+                               (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST,
+                                     gam_0) - ll) / eps,
+                               rtol=rtol))
 
         # test gradient with respect to Gamma image
         delta_g = np.zeros(gam_0.shape)
@@ -112,8 +115,6 @@ class TestGradients(unittest.TestCase):
                         (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST) - ll) /
                         eps,
                         rtol=rtol))
-
-
 
     def test_total_gradient_mono_exp(self,
                                      i=51,
@@ -159,11 +160,10 @@ class TestGradients(unittest.TestCase):
                 delta_x = np.zeros(x_0.shape)
                 delta_x[comp, i, i, i, j] = eps
                 self.assertTrue(
-                    np.isclose(
-                        gx[comp, i, i, i, j],
-                        (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST, gam_0) - ll) /
-                        eps,
-                        rtol=rtol))
+                    np.isclose(gx[comp, i, i, i, j],
+                               (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST,
+                                     gam_0) - ll) / eps,
+                               rtol=rtol))
 
         # test gradient with respect to Gamma image
         delta_g = np.zeros(gam_0.shape)
@@ -176,11 +176,11 @@ class TestGradients(unittest.TestCase):
                 rtol=rtol))
 
     def test_total_gradient_bi_exp(self,
-                                     i=51,
-                                     eps=1e-4,
-                                     rtol=1e-3,
-                                     beta_x=1e-2,
-                                     beta_gam=1e-2):
+                                   i=51,
+                                   eps=1e-4,
+                                   rtol=1e-3,
+                                   beta_x=1e-2,
+                                   beta_gam=1e-2):
         # setup data fidelity loss
         data_fidelity_loss = pynamr.DataFidelityLoss(self.bi_exp_model,
                                                      self.data_bi)
@@ -219,7 +219,8 @@ class TestGradients(unittest.TestCase):
                 self.assertTrue(
                     np.isclose(
                         gx[comp, i, i, i, j],
-                        (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST) - ll) / eps,
+                        (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST) - ll) /
+                        eps,
                         rtol=rtol))
 
     def test_bowsher_gradient(self, eps=1e-7, rtol=1e-3, atol=1e-4):

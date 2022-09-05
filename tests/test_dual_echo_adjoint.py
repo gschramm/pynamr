@@ -37,7 +37,7 @@ class TestModelAdjoint(unittest.TestCase):
                                                self.readout_time,
                                                self.kspace_part)
 
-        x = np.random.rand(*((1,) + (self.image_shape) + (2, )))
+        x = np.random.rand(*((1, ) + (self.image_shape) + (2, )))
 
         m.gam = gam
         x_fwd = m.forward(x)

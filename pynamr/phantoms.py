@@ -1,5 +1,6 @@
 import numpy as np
 
+
 def rod_phantom(n=512,
                 r=0.9,
                 r_rod=0.08,

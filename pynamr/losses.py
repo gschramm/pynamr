@@ -32,11 +32,14 @@ class DataFidelityLoss:
     def diff(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
         if isinstance(self.model, TwoCompartmentBiExpDualTESodiumAcqModel):
             x = in1
-            diff = (self.model.forward(x.reshape(self.model.x_shape_real)) - self.y) * self.model.kmask
+            diff = (self.model.forward(x.reshape(self.model.x_shape_real)) -
+                    self.y) * self.model.kmask
 
         elif isinstance(self.model, MonoExpDualTESodiumAcqModel):
             if len(args) == 0:
-                raise TypeError('Data fidelity loss with MonoExpDualTESodiumAcqModel requires 3 input arguments.')
+                raise TypeError(
+                    'Data fidelity loss with MonoExpDualTESodiumAcqModel requires 3 input arguments.'
+                )
 
             if mode == CallingMode.XFIRST:
                 x = in1
@@ -48,7 +51,8 @@ class DataFidelityLoss:
                 raise ValueError
 
             self.model.gam = gam
-            diff = (self.model.forward(x.reshape(self.model.x_shape_real)) - self.y) * self.model.kmask
+            diff = (self.model.forward(x.reshape(self.model.x_shape_real)) -
+                    self.y) * self.model.kmask
 
         else:
             raise NotImplementedError
@@ -68,7 +72,9 @@ class DataFidelityLoss:
             elif mode == CallingMode.GAMFIRST:
                 # gradient with respect to gam
                 self.model.gam = in1.reshape(self.model.image_shape)
-                grad = self.model.grad_gam(z, args[0].reshape(self.model.x_shape_real)).reshape(in1.shape)
+                grad = self.model.grad_gam(
+                    z, args[0].reshape(self.model.x_shape_real)).reshape(
+                        in1.shape)
             else:
                 raise ValueError
         else:
@@ -144,8 +150,9 @@ class TotalLoss:
                 if self.beta_x > 0:
                     for ch in range(self.x_shape[0]):
                         for j in range(2):
-                            grad[ch, ..., j] += self.beta_x * self.penalty_x.grad(
-                                x.reshape(self.x_shape)[ch, ..., j])
+                            grad[ch, ...,
+                                 j] += self.beta_x * self.penalty_x.grad(
+                                     x.reshape(self.x_shape)[ch, ..., j])
 
             elif mode == CallingMode.GAMFIRST:
                 gam = in1
