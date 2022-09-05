@@ -126,6 +126,11 @@ class DataFidelityLoss:
         if isinstance(self.model, TwoCompartmentBiExpDualTESodiumAcqModel):
             grad = self.model.adjoint(z).reshape(in1.shape)
         elif isinstance(self.model, MonoExpDualTESodiumAcqModel):
+            if len(args) == 0:
+                raise TypeError(
+                    'Data fidelity loss gradient with MonoExpDualTESodiumAcqModel requires 3 input arguments.'
+                )
+
             if mode == CallingMode.XFIRST:
                 # gradient with respect to x
                 grad = self.model.adjoint(z).reshape(in1.shape)
