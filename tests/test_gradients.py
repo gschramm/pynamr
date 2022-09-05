@@ -192,6 +192,53 @@ class TestGradients(unittest.TestCase):
                 eps,
                 rtol=rtol))
 
+    def test_total_gradient_bi_exp(self,
+                                     i=51,
+                                     eps=1e-4,
+                                     rtol=1e-3,
+                                     beta_x=1e-2,
+                                     beta_gam=1e-2):
+        # setup data fidelity loss
+        data_fidelity_loss = pynamr.DataFidelityLoss(self.bi_exp_model,
+                                                     self.data_bi)
+
+        # setup the Bowsher loss
+        nnearest = 2
+        aimg = np.random.rand(*self.image_shape)
+
+        s = np.array([[[0, 1, 0], [1, 1, 1], [0, 1, 0]],
+                      [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
+                      [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
+
+        nn_inds = np.zeros((np.prod(self.image_shape), nnearest),
+                           dtype=np.uint32)
+        pynamr.nearest_neighbors(aimg, s, nnearest, nn_inds)
+        nn_inds_adj = pynamr.is_nearest_neighbor_of(nn_inds)
+
+        bowsher_loss = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
+
+        # setup the combined loss function
+        loss = pynamr.TotalLoss(data_fidelity_loss, bowsher_loss, bowsher_loss,
+                                beta_x, beta_gam)
+
+        # inital values
+        x_0 = np.random.rand(*self.x_bi.shape)
+
+        # check gradients
+        ll = loss(x_0, pynamr.CallingMode.XFIRST)
+        gx = loss.grad(x_0, pynamr.CallingMode.XFIRST)
+
+        # test gradient with respect to Na image (real part)
+        for comp in range(loss.datafidelityloss.model.num_compartments):
+            for j in range(2):
+                delta_x = np.zeros(x_0.shape)
+                delta_x[comp, i, i, i, j] = eps
+                self.assertTrue(
+                    np.isclose(
+                        gx[comp, i, i, i, j],
+                        (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST) - ll) / eps,
+                        rtol=rtol))
+
     def test_bowsher_gradient(self, eps=1e-7, rtol=1e-3, atol=1e-4):
         nnearest = 2
         image_shape = (4, 5, 6)
