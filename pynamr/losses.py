@@ -31,10 +31,13 @@ class DataFidelityLoss:
 
     def diff(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
         if isinstance(self.model, TwoCompartmentBiExpDualTESodiumAcqModel):
-            diff = (self.model.forward(
-                in1.reshape((2, ) + self.model.image_shape +
-                            (2, ))) - self.y) * self.model.kmask
+            x = in1
+            diff = (self.model.forward(x.reshape(self.model.x_shape_real)) - self.y) * self.model.kmask
+
         elif isinstance(self.model, MonoExpDualTESodiumAcqModel):
+            if len(args) == 0:
+                raise TypeError('Data fidelity loss with MonoExpDualTESodiumAcqModel requires 3 input arguments.')
+
             if mode == CallingMode.XFIRST:
                 x = in1
                 gam = args[0]
@@ -44,10 +47,9 @@ class DataFidelityLoss:
             else:
                 raise ValueError
 
-            diff = (self.model.forward(
-                x.reshape(self.model.image_shape +
-                          (2, )), gam.reshape(self.model.image_shape)) -
-                    self.y) * self.model.kmask
+            self.model.gam = gam
+            diff = (self.model.forward(x.reshape(self.model.x_shape_real)) - self.y) * self.model.kmask
+
         else:
             raise NotImplementedError
 
@@ -62,15 +64,11 @@ class DataFidelityLoss:
         elif isinstance(self.model, MonoExpDualTESodiumAcqModel):
             if mode == CallingMode.XFIRST:
                 # gradient with respect to x
-                grad = self.model.adjoint(
-                    z,
-                    args[0].reshape(self.model.image_shape)).reshape(in1.shape)
+                grad = self.model.adjoint(z).reshape(in1.shape)
             elif mode == CallingMode.GAMFIRST:
                 # gradient with respect to gam
-                grad = self.model.grad_gam(
-                    z, in1.reshape(self.model.image_shape),
-                    args[0].reshape(self.model.image_shape + (2, ))).reshape(
-                        in1.shape)
+                self.model.gam = in1.reshape(self.model.image_shape)
+                grad = self.model.grad_gam(z, args[0].reshape(self.model.x_shape_real)).reshape(in1.shape)
             else:
                 raise ValueError
         else:

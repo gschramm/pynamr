@@ -659,12 +659,14 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
+                # 1st echo
                 tmp0 = self._xp.zeros(y[i_sens, 0, ...].shape, dtype=y.dtype)
                 tmp0[self.readout_inds[it]] = y[i_sens, 0,
                                                 ...][self.readout_inds[it]]
                 x_ds[0,...] += (gam_ds**(self._tr[it] / self._dt)) * self._xp.conj(
                     self.sens[i_sens]) * self._xp.fft.ifftn(tmp0, norm='ortho')
 
+                # 2nd echo
                 tmp1 = self._xp.zeros(y[i_sens, 1, ...].shape, dtype=y.dtype)
                 tmp1[self.readout_inds[it]] = y[i_sens, 1,
                                                 ...][self.readout_inds[it]]
@@ -743,21 +745,23 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             for it in range(self.n_readout_bins):
                 n = self._tr[it] / self._dt
 
+                # 1st echo
                 tmp0 = self._xp.zeros(y[i_sens, 0, ...].shape, dtype=y.dtype)
                 tmp0[self.readout_inds[it]] = y[i_sens, 0,
                                                 ...][self.readout_inds[it]]
                 x_ds[0,...] += n * (gam_ds**(n - 1)) * self._xp.conj(
-                    img_ds * self.sens[i_sens]) * self._xp.fft.ifftn(
+                    img_ds.squeeze() * self.sens[i_sens]) * self._xp.fft.ifftn(
                         tmp0, norm='ortho')
 
+                # 2nd echo
                 tmp1 = self._xp.zeros(y[i_sens, 1, ...].shape, dtype=y.dtype)
                 tmp1[self.readout_inds[it]] = y[i_sens, 1,
                                                 ...][self.readout_inds[it]]
                 x_ds[0,...] += (n + 1) * (gam_ds**n) * self._xp.conj(
-                    img_ds * self.sens[i_sens]) * self._xp.fft.ifftn(
+                    img_ds.squeeze() * self.sens[i_sens]) * self._xp.fft.ifftn(
                         tmp1, norm='ortho')
 
-        # upsample f
+        # upsample x
         x = upsample(upsample(upsample(x_ds, self._ds, axis=1),
                               self._ds,
                               axis=2),
