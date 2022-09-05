@@ -69,25 +69,17 @@ class TestGradients(unittest.TestCase):
         gx = loss.grad(x_0, pynamr.CallingMode.XFIRST, gam_0)
         gg = loss.grad(gam_0, pynamr.CallingMode.GAMFIRST, x_0)
 
-        # test gradient with respect to Na image (real part)
-        delta_x = np.zeros(x_0.shape)
-        delta_x[0, i, i, i, 0] = eps
-        self.assertTrue(
-            np.isclose(
-                gx[0, i, i, i, 0],
-                (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST, gam_0) - ll) /
-                eps,
-                rtol=rtol))
-
-        # test gradient with respect to Na image (imag part)
-        delta_x = np.zeros(x_0.shape)
-        delta_x[0, i, i, i, 1] = eps
-        self.assertTrue(
-            np.isclose(
-                gx[0, i, i, i, 1],
-                (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST, gam_0) - ll) /
-                eps,
-                rtol=rtol))
+        # test gradient with respect to Na image
+        for comp in range(self.mono_exp_model.num_compartments):
+            for j in range(2):
+                delta_x = np.zeros(x_0.shape)
+                delta_x[comp, i, i, i, j] = eps
+                self.assertTrue(
+                    np.isclose(
+                        gx[comp, i, i, i, j],
+                        (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST, gam_0) - ll) /
+                        eps,
+                        rtol=rtol))
 
         # test gradient with respect to Gamma image
         delta_g = np.zeros(gam_0.shape)
@@ -110,26 +102,17 @@ class TestGradients(unittest.TestCase):
         ll = loss(x_0, pynamr.CallingMode.XFIRST)
         gx = loss.grad(x_0, pynamr.CallingMode.XFIRST)
 
-        for ch in range(2):
-          # test gradient with respect - real part
-          delta_x = np.zeros(x_0.shape)
-          delta_x[ch, i, i, i, 0] = eps
-          self.assertTrue(
-              np.isclose(
-                  gx[ch, i, i, i, 0],
-                  (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST) - ll) /
-                  eps,
-                  rtol=rtol))
+        for comp in range(self.bi_exp_model.num_compartments):
+            for j in range(2):
+                delta_x = np.zeros(x_0.shape)
+                delta_x[comp, i, i, i, j] = eps
+                self.assertTrue(
+                    np.isclose(
+                        gx[comp, i, i, i, j],
+                        (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST) - ll) /
+                        eps,
+                        rtol=rtol))
 
-          # test gradient with respect - imag part
-          delta_x = np.zeros(x_0.shape)
-          delta_x[ch, i, i, i, 1] = eps
-          self.assertTrue(
-              np.isclose(
-                  gx[ch, i, i, i, 1],
-                  (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST) - ll) /
-                  eps,
-                  rtol=rtol))
 
 
     def test_total_gradient_mono_exp(self,
