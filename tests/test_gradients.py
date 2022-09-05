@@ -99,6 +99,39 @@ class TestGradients(unittest.TestCase):
                 eps,
                 rtol=rtol))
 
+    def test_data_fidelity_gradient_bi_exp(self, i=51, eps=1e-4, rtol=1e-3):
+        # setup data fidelity loss
+        loss = pynamr.DataFidelityLoss(self.bi_exp_model, self.data_bi)
+
+        # inital values
+        x_0 = np.random.rand(*self.x_bi.shape)
+
+        # check gradients
+        ll = loss(x_0, pynamr.CallingMode.XFIRST)
+        gx = loss.grad(x_0, pynamr.CallingMode.XFIRST)
+
+        for ch in range(2):
+          # test gradient with respect - real part
+          delta_x = np.zeros(x_0.shape)
+          delta_x[ch, i, i, i, 0] = eps
+          self.assertTrue(
+              np.isclose(
+                  gx[ch, i, i, i, 0],
+                  (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST) - ll) /
+                  eps,
+                  rtol=rtol))
+
+          # test gradient with respect - imag part
+          delta_x = np.zeros(x_0.shape)
+          delta_x[ch, i, i, i, 1] = eps
+          self.assertTrue(
+              np.isclose(
+                  gx[ch, i, i, i, 1],
+                  (loss(x_0 + delta_x, pynamr.CallingMode.XFIRST) - ll) /
+                  eps,
+                  rtol=rtol))
+
+
 #    def test_total_gradient(self,
 #                            i=51,
 #                            eps=1e-4,
