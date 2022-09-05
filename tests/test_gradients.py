@@ -142,8 +142,7 @@ class TestGradients(unittest.TestCase):
         bowsher_loss = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
 
         # setup the combined loss function
-        loss = pynamr.TotalLoss(data_fidelity_loss, bowsher_loss, bowsher_loss,
-                                beta_x, beta_gam)
+        loss = pynamr.TotalLoss(data_fidelity_loss,  bowsher_loss, beta_x, bowsher_loss, beta_gam)
 
         # inital values
         x_0 = np.random.rand(*self.x.shape)
@@ -201,8 +200,7 @@ class TestGradients(unittest.TestCase):
         bowsher_loss = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
 
         # setup the combined loss function
-        loss = pynamr.TotalLoss(data_fidelity_loss, bowsher_loss, bowsher_loss,
-                                beta_x, beta_gam)
+        loss = pynamr.TotalLoss(data_fidelity_loss, bowsher_loss, beta_x,  bowsher_loss, beta_gam)
 
         # inital values
         x_0 = np.random.rand(*self.x_bi.shape)

@@ -1,5 +1,9 @@
+from typing import Protocol
+
 import numpy as np
 from numba import njit, jit, prange
+
+from .protocols import DifferentiableFunction
 
 
 @njit(parallel=True)
@@ -249,8 +253,7 @@ def bowsher_grad(img: np.ndarray, ninds: np.ndarray,
 
     return grad
 
-
-class BowsherLoss:
+class BowsherLoss(DifferentiableFunction):
 
     def __init__(self, ninds: np.ndarray, ninds_adj: np.ndarray) -> None:
         self.ninds = ninds

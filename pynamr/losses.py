@@ -1,35 +1,71 @@
-import enum
 import numpy as np
-from scipy.optimize import fmin_l_bfgs_b, fmin_cg
 
 from .models import DualTESodiumAcqModel
 from .models import TwoCompartmentBiExpDualTESodiumAcqModel
 from .models import MonoExpDualTESodiumAcqModel
 
-#-------------------------------------------------------------------
-
-
-class CallingMode(enum.Enum):
-    SINGLE = 'SINGLE'
-    XFIRST = 'XFIRST'
-    GAMFIRST = 'GAMFIRST'
+from .protocols import DifferentiableFunction, CallingMode
 
 
 class DataFidelityLoss:
-    """ Data fidelity loss for mono exponential dual echo sodium forward model
-        The model is linear in the first argument (the image x), but non linear
-        in the second argument (Gam)
+    """ Data fidelity loss for mono exponential and bi exponential dual echo 
+        sodium forward model.
     """
 
     def __init__(self, model: DualTESodiumAcqModel, y: np.ndarray) -> None:
+        """data fidelity loss
+
+        Parameters
+        ----------
+        model : DualTESodiumAcqModel
+            acquisition model for dual TE sodium acquisition
+        y : np.ndarray
+            acquired data
+        """        
         self.model = model
         self.y = y
 
     def __call__(self, in1: np.ndarray, mode: CallingMode, *args) -> float:
+        """calculate data fidelity loss
+
+        Parameters
+        ----------
+        in1 : np.ndarray
+            either the image(s) x for Mono of BiExp models or the decay image gamma
+            for the MonoExp model
+        mode : CallingMode
+            that signals whether the image x or the decay image gamma was passed as
+            first argument
+        *args : additional input arguments
+            For the MonoExp model the "second" image has to be passed as *args[0]
+
+        Returns
+        -------
+        float
+            the loss value
+        """        
         d = self.diff(in1, mode, *args)
         return 0.5 * (d**2).sum()
 
     def diff(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
+        """calculate the bin-wise difference between the data and the expectation
+
+        Parameters
+        ----------
+        in1 : np.ndarray
+            either the image(s) x for Mono of BiExp models or the decay image gamma
+            for the MonoExp model
+        mode : CallingMode
+            that signals whether the image x or the decay image gamma was passed as
+            first argument
+        *args : additional input arguments
+            For the MonoExp model the "second" image has to be passed as *args[0]
+
+        Returns
+        -------
+        np.ndarray
+            bin-wise difference between data and expected data
+        """
         if isinstance(self.model, TwoCompartmentBiExpDualTESodiumAcqModel):
             x = in1
             diff = (self.model.forward(x.reshape(self.model.x_shape_real)) -
@@ -60,6 +96,30 @@ class DataFidelityLoss:
         return diff
 
     def grad(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
+        """calculate the gradient of the data fidelity loss
+
+        Parameters
+        ----------
+        in1 : np.ndarray
+            either the image(s) x for Mono of BiExp models or the decay image gamma
+            for the MonoExp model
+        mode : CallingMode
+            that signals whether the image x or the decay image gamma was passed as
+            first argument
+        *args : additional input arguments
+            For the MonoExp model the "second" image has to be passed as *args[0]
+
+        Returns
+        -------
+        np.ndarray
+            the gradient
+
+        Note
+        ----
+        The gradient is calculate with respect to the first input argument.
+        In that way this function can be used to calculate the gradient with
+        respect to x and gamma for the MonoExp signal model.
+        """
         z = self.diff(in1, mode, *args)
 
         # reshaping of x/gam is needed since fmin_l_bfgs_b flattens all arrays
@@ -83,13 +143,30 @@ class DataFidelityLoss:
         return grad
 
 
-#-------------------------------------------------------------------
-
-
 class TotalLoss:
 
-    def __init__(self, datafidelityloss, penalty_x, penalty_gam, beta_x,
-                 beta_gam):
+    def __init__(self, 
+                 datafidelityloss: DataFidelityLoss, 
+                 penalty_x : DifferentiableFunction, 
+                 beta_x: float, 
+                 penalty_gam: DifferentiableFunction | None = None,
+                 beta_gam: float = 0) -> None:
+        """Total loss function to be optimized consisting of data fidelity and priors
+
+        Parameters
+        ----------
+        datafidelityloss : DataFidelityLoss
+            object to calculate data fidelity loss and gradient
+        penalty_x : DifferentiableFunction
+            object to calculate penalty on x and gradient
+        beta_x : float, optional
+            weight for penalty on x
+        penalty_gam : DifferentiableFunction | None, optional
+            object to calculate penalty on decay image gamma
+        beta_gam : float | None, optional
+            weight for penalty on gamma
+        """                 
+
         self.datafidelityloss = datafidelityloss
         self.penalty_x = penalty_x
         self.penalty_gam = penalty_gam
@@ -102,6 +179,24 @@ class TotalLoss:
         self.gam_shape = self.datafidelityloss.model.image_shape
 
     def __call__(self, in1: np.ndarray, mode: CallingMode, *args) -> float:
+        """calculate total loss
+
+        Parameters
+        ----------
+        in1 : np.ndarray
+            either the image(s) x for Mono of BiExp models or the decay image gamma
+            for the MonoExp model
+        mode : CallingMode
+            that signals whether the image x or the decay image gamma was passed as
+            first argument
+        *args : additional input arguments
+            For the MonoExp model the "second" image has to be passed as *args[0]
+
+        Returns
+        -------
+        float
+            the loss value
+        """
         cost = self.datafidelityloss(in1, mode, *args)
 
         if isinstance(self.datafidelityloss.model,
@@ -122,7 +217,7 @@ class TotalLoss:
                         cost += self.beta_x * self.penalty_x(
                             x.reshape(self.x_shape)[ch, ..., j])
 
-            if self.beta_gam > 0:
+            if (self.beta_gam > 0) and (self.penalty_gam is not None):
                 cost += self.beta_gam * self.penalty_gam(gam)
 
         elif isinstance(self.datafidelityloss.model,
@@ -139,6 +234,30 @@ class TotalLoss:
         return cost
 
     def grad(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
+        """calculate the gradient of the total loss
+
+        Parameters
+        ----------
+        in1 : np.ndarray
+            either the image(s) x for Mono of BiExp models or the decay image gamma
+            for the MonoExp model
+        mode : CallingMode
+            that signals whether the image x or the decay image gamma was passed as
+            first argument
+        *args : additional input arguments
+            For the MonoExp model the "second" image has to be passed as *args[0]
+
+        Returns
+        -------
+        np.ndarray
+            the gradient
+
+        Note
+        ----
+        The gradient is calculate with respect to the first input argument.
+        In that way this function can be used to calculate the gradient with
+        respect to x and gamma for the MonoExp signal model.
+        """
 
         grad = self.datafidelityloss.grad(in1, mode, *args)
 
@@ -156,7 +275,7 @@ class TotalLoss:
 
             elif mode == CallingMode.GAMFIRST:
                 gam = in1
-                if self.beta_gam > 0:
+                if (self.beta_gam > 0) and (self.penalty_gam is not None):
                     grad += self.beta_gam * self.penalty_gam.grad(gam)
             else:
                 raise ValueError
