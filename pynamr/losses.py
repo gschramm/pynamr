@@ -91,13 +91,7 @@ class TotalLoss:
         self.beta_x = beta_x
         self.beta_gam = beta_gam
 
-        if isinstance(self.datafidelityloss.model,
-                      MonoExpDualTESodiumAcqModel):
-            self.x_shape = self.datafidelityloss.model.image_shape + (2, )
-        elif isinstance(self.datafidelityloss.model,
-                        TwoCompartmentBiExpDualTESodiumAcqModel):
-            self.x_shape = (2, ) + self.datafidelityloss.model.image_shape + (
-                2, )
+        self.x_shape = self.datafidelityloss.model.x_shape_real
 
         self.gam_shape = self.datafidelityloss.model.image_shape
 
@@ -117,13 +111,13 @@ class TotalLoss:
 
             if self.beta_x > 0:
                 # reshaping of x is necessary since LBFGS will pass flattened arrays
-                cost += self.beta_x * self.penalty_x.eval(
-                    x.reshape(self.x_shape)[..., 0])
-                cost += self.beta_x * self.penalty_x.eval(
-                    x.reshape(self.x_shape)[..., 1])
+                for ch in range(self.x_shape[0]):
+                    for j in range(2):
+                        cost += self.beta_x * self.penalty_x(
+                            x.reshape(self.x_shape)[ch, ..., j])
 
             if self.beta_gam > 0:
-                cost += self.beta_gam * self.penalty_gam.eval(gam)
+                cost += self.beta_gam * self.penalty_gam(gam)
 
         elif isinstance(self.datafidelityloss.model,
                         TwoCompartmentBiExpDualTESodiumAcqModel):
@@ -131,14 +125,10 @@ class TotalLoss:
 
             if self.beta_x > 0:
                 # reshaping of x is necessary since LBFGS will pass flattened arrays
-                cost += self.beta_x * self.penalty_x.eval(
-                    x.reshape(self.x_shape)[0, ..., 0])
-                cost += self.beta_x * self.penalty_x.eval(
-                    x.reshape(self.x_shape)[0, ..., 1])
-                cost += self.beta_x * self.penalty_x.eval(
-                    x.reshape(self.x_shape)[1, ..., 0])
-                cost += self.beta_x * self.penalty_x.eval(
-                    x.reshape(self.x_shape)[1, ..., 1])
+                for ch in range(self.x_shape[0]):
+                    for j in range(2):
+                        cost += self.beta_x * self.penalty_x(
+                            x.reshape(self.x_shape)[ch, ..., j])
 
         return cost
 
@@ -146,16 +136,17 @@ class TotalLoss:
 
         grad = self.datafidelityloss.grad(in1, mode, *args)
 
-        # reshaping of x is necessary since LBFGS will pass flattened arrays
+        # calculate the gradient with respect to the "smoothing" penalties
         if isinstance(self.datafidelityloss.model,
                       MonoExpDualTESodiumAcqModel):
             if mode == CallingMode.XFIRST:
                 x = in1
                 if self.beta_x > 0:
-                    grad[..., 0] += self.beta_x * self.penalty_x.grad(
-                        x.reshape(self.x_shape)[..., 0])
-                    grad[..., 1] += self.beta_x * self.penalty_x.grad(
-                        x.reshape(self.x_shape)[..., 1])
+                    for ch in range(self.x_shape[0]):
+                        for j in range(2):
+                            grad[ch, ..., j] += self.beta_x * self.penalty_x.grad(
+                                x.reshape(self.x_shape)[ch, ..., j])
+
             elif mode == CallingMode.GAMFIRST:
                 gam = in1
                 if self.beta_gam > 0:
@@ -167,14 +158,10 @@ class TotalLoss:
                         TwoCompartmentBiExpDualTESodiumAcqModel):
             x = in1
             if self.beta_x > 0:
-                grad[0, ..., 0] += self.beta_x * self.penalty_x.grad(
-                    x.reshape(self.x_shape)[0, ..., 0])
-                grad[0, ..., 1] += self.beta_x * self.penalty_x.grad(
-                    x.reshape(self.x_shape)[0, ..., 1])
-                grad[1, ..., 0] += self.beta_x * self.penalty_x.grad(
-                    x.reshape(self.x_shape)[1, ..., 0])
-                grad[1, ..., 1] += self.beta_x * self.penalty_x.grad(
-                    x.reshape(self.x_shape)[1, ..., 1])
+                for ch in range(self.x_shape[0]):
+                    for j in range(2):
+                        grad[ch, ..., j] += self.beta_x * self.penalty_x.grad(
+                            x.reshape(self.x_shape)[ch, ..., j])
 
         else:
             raise NotImplementedError
