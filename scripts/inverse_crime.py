@@ -12,6 +12,7 @@ except ImportError:
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
+import matplotlib.pyplot as plt
 
 import pynamr
 
@@ -38,11 +39,11 @@ nnearest = 13
 # prior weight applied to real and imag part of complex sodium image
 beta_x = 1e-2
 # prior weight applied to the gamma (decay) image
-beta_gam = 1e-1
+beta_gam = 1e-2
 # number of outer LBFGS iterations
-n_outer = 5
+n_outer = 10
 # number of inner LBFGS iterations
-n_inner = 10
+n_inner = 20
 # number of readout bins
 n_readout_bins = 16
 
@@ -88,11 +89,19 @@ sens = np.ones((ncoils, n_ds, n_ds, n_ds)) + 0j * np.zeros(
 readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
-fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part)
+fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part, gam=gam)
 
 # generate data
 y = fwd_model.forward(x)
 data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
+
+# perform "standard" SOS reconstructions
+sos_0 = pynamr.sum_of_squares_reconstruction(data[:,0,...])
+sos_1 = pynamr.sum_of_squares_reconstruction(data[:,1,...])
+
+# filter the SOS images and upsample to recon grid
+sos_0_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(sos_0, 1.), ds, 0), ds, 1), ds, 2)
+sos_1_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(sos_1, 1.), ds, 0), ds, 1), ds, 2)
 
 #-------------------------------------------------------------------------------------
 # setup the data fidelity loss function
@@ -146,8 +155,8 @@ loss = pynamr.TotalLoss(data_fidelity_loss, bowsher_loss, beta_x,
 # run the recons
 
 # initialize recons
-x_0 = 0 * x + 1
-gam_0 = 0 * gam + 0.7
+x_0 = np.expand_dims(np.stack([sos_0_filtered, np.zeros_like(sos_0_filtered)], axis=-1), 0)
+gam_0 = np.clip(sos_1_filtered / (sos_0_filtered + 1e-7), 0, 1)
 
 # allocate arrays for recons and copy over initial values
 x_r = x_0.copy()
@@ -185,3 +194,16 @@ for i_out in range(n_outer):
 
 x_r = x_r.reshape(x.shape)
 gam_r = gam_r.reshape(gam.shape)
+
+# show the results
+ims_1 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.1*x.max())
+ims_2 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.1*np.percentile(sos_0_filtered,95))
+ims_3 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.)
+
+import pymirc.viewer as pv
+vi = pv.ThreeAxisViewer([np.linalg.norm(x, axis=-1)[0,...],
+                         sos_0_filtered,
+                         np.linalg.norm(x_r, axis=-1)[0,...],
+                         gam,
+                         gam_r],
+                         imshow_kwargs=[ims_1,ims_2,ims_1,ims_3,ims_3])

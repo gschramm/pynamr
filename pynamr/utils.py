@@ -12,7 +12,7 @@ except ModuleNotFoundError:
 
 XpArray = typing.Union[np.ndarray, cp.ndarray]
 
-
+  
 class RadialKSpacePartitioner:
     """partion cartesion volume of kspace points into a number of shells"""
 
@@ -252,3 +252,29 @@ def upsample(x_ds: XpArray, ds: int, axis: int = 0) -> XpArray:
         x[sl1] = x_ds[sl2]
 
     return x / ds
+
+
+def sum_of_squares_reconstruction(data: np.ndarray) -> np.ndarray:
+    """ sum of squares reconstruction of multi-channel data
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Real array of shape (ncoils, n0, n1, n2, 2) containing the multi-channel
+        coil data. The last dimension is used to store real and imaginary part.
+
+    Returns
+    -------
+    np.ndarray
+        Real array of shape (n0,n1,n2) with the sum of squares reconstruction
+    """    
+    tmp = []
+    for icoil in range(data.shape[0]):
+        tmp.append(np.fft.ifftn(complex_view_of_real_array(data[icoil,...]), norm='ortho'))
+    
+    tmp = np.array(tmp)
+    
+    sos = np.sqrt(np.abs(tmp).sum(axis=0)**2)
+
+    return sos
+ 
