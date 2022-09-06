@@ -86,7 +86,7 @@ class DataFidelityLoss:
             else:
                 raise ValueError
 
-            self.model.gam = gam
+            self.model.gam = gam.reshape(self.model.image_shape)
             diff = (self.model.forward(x.reshape(self.model.x_shape_real)) -
                     self.y) * self.model.kmask
 
@@ -271,6 +271,10 @@ class TotalLoss:
                       MonoExpDualTESodiumAcqModel):
             if mode == CallingMode.XFIRST:
                 x = in1
+                # reshaping of data fidelity gradient is necessary since fmin_l_bfgs
+                # passes flattened arrays
+                grad = grad.reshape(self.datafidelityloss.model.x_shape_real) 
+
                 if self.beta_x > 0:
                     for ch in range(self.x_shape[0]):
                         for j in range(2):
@@ -278,10 +282,15 @@ class TotalLoss:
                                  j] += self.beta_x * self.penalty_x.grad(
                                      x.reshape(self.x_shape)[ch, ..., j])
 
+                grad = grad.reshape(in1.shape)
             elif mode == CallingMode.GAMFIRST:
                 gam = in1
                 if (self.beta_gam > 0) and (self.penalty_gam is not None):
                     grad += self.beta_gam * self.penalty_gam.grad(gam)
+                
+                # unclear why the ravel is needed, but without fmin_l_bfgs is not happy
+                if grad.ndim == 1:
+                    grad = grad.ravel()
             else:
                 raise ValueError
 
@@ -289,12 +298,15 @@ class TotalLoss:
                         TwoCompartmentBiExpDualTESodiumAcqModel):
             x = in1
             if self.beta_x > 0:
+                grad = grad.reshape(self.datafidelityloss.model.x_shape_real) 
+
                 for ch in range(self.x_shape[0]):
                     for j in range(2):
                         grad[ch, ..., j] += self.beta_x * self.penalty_x.grad(
                             x.reshape(self.x_shape)[ch, ..., j])
-
+                
+                grad = grad.reshape(in1.shape)
         else:
             raise NotImplementedError
-
-        return grad.reshape(in1.shape)
+        
+        return grad
