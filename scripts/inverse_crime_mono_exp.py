@@ -78,7 +78,7 @@ gam = pynamr.downsample(pynamr.downsample(pynamr.downsample(gam,
 gam /= gam.max()
 
 # create pseudo-complex data and add dimension for "compartments"
-x = np.expand_dims(np.stack([x, 0 * x], axis=-1), 0)
+x = np.stack([x, 0 * x], axis=-1)
 
 # create sensitivity images - TO BE IMPROVED
 sens = np.ones((ncoils, n_ds, n_ds, n_ds)) + 0j * np.zeros(
@@ -89,10 +89,19 @@ sens = np.ones((ncoils, n_ds, n_ds, n_ds)) + 0j * np.zeros(
 readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
-fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part, gam=gam)
+fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part) #, gam=gam)
+
+# construct unknown variables
+a= tuple([ds * x for x in data_shape]) + (2,)
+unknowns = [pynamr.Unknown(pynamr.UnknownName.IMAGE, tuple([ds * x for x in data_shape]) + (2,)),
+            pynamr.Unknown(pynamr.UnknownName.GAMMA, tuple([ds * x for x in data_shape]), 1, False, False)]
+
+
+unknowns[0]._value = x
+unknowns[1]._value = gam
 
 # generate data
-y = fwd_model.forward(x)
+y = fwd_model.forward(unknowns)
 data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
 
 # perform "standard" SOS reconstructions
@@ -111,7 +120,7 @@ data_fidelity_loss = pynamr.DataFidelityLoss(fwd_model, data)
 # setup the priors
 
 # simulate a perfect anatomical prior image (with changed contrast but matching edges)
-aimg = x[0,..., 0]
+aimg = x[..., 0]
 aimg = (aimg.max() - aimg)**0.5
 
 # define neighborhood where to look for neasrest Bowsher neighbors
@@ -141,59 +150,70 @@ pynamr.nearest_neighbors(aimg, s, nnearest, nn_inds)
 
 # "adjoint" list of nearest/next neighbors
 nn_inds_adj = pynamr.is_nearest_neighbor_of(nn_inds)
-
 bowsher_loss = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
 
 #-------------------------------------------------------------------------------------
 # setup the total loss function consiting of data fidelity loss and the priors on the
 # sodium and gamma images
-
-loss = pynamr.TotalLoss(data_fidelity_loss, bowsher_loss, beta_x, 
-                        penalty_gam = bowsher_loss, beta_gam = beta_gam)
+penalty_info = {pynamr.UnknownName.IMAGE: bowsher_loss, pynamr.UnknownName.GAMMA: bowsher_loss}
+beta_info = {pynamr.UnknownName.IMAGE: beta_x, pynamr.UnknownName.GAMMA: beta_gam}
+loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 
 #-------------------------------------------------------------------------------------
 # run the recons
 
 # initialize recons
-x_0 = np.expand_dims(np.stack([sos_0_filtered, np.zeros_like(sos_0_filtered)], axis=-1), 0)
+x_0 = pynamr.utils.add_imaginary_dimension(sos_0_filtered)
 gam_0 = np.clip(sos_1_filtered / (sos_0_filtered + 1e-7), 0, 1)
 
-# allocate arrays for recons and copy over initial values
-x_r = x_0.copy()
-gam_r = gam_0.copy()
+# allocate initial values of unknown variables
+unknowns[0]._value = x_0.copy()
+unknowns[1]._value = gam_0.copy()
+
 
 #------------------
 # alternating LBFGS steps
 for i_out in range(n_outer):
 
     # update complex sodium image
-    res_1 = fmin_l_bfgs_b(loss.__call__,
-                          x_r.ravel(),
+    res_1 = fmin_l_bfgs_b(loss,
+                          (unknowns[0]._value).copy().ravel(),
                           fprime=loss.grad,
-                          args=(pynamr.CallingMode.XFIRST, gam_r.ravel()),
+                          args=unknowns,
                           maxiter=n_inner,
                           disp=1)
-    x_r = res_1[0].copy()
+
+    unknowns[0]._value = res_1[0].copy().reshape(unknowns[0]._shape)
+    
+    temp = unknowns[1]
+    unknowns[1] = unknowns[0]
+    unknowns[0] = temp
+
+    
 
     # update real gamma (decay) image
-    res_2 = fmin_l_bfgs_b(loss.__call__,
-                          gam_r.ravel(),
+    res_2 = fmin_l_bfgs_b(loss,
+                          (unknowns[0]._value).copy().ravel(),
                           fprime=loss.grad,
-                          args=(pynamr.CallingMode.GAMFIRST, x_r.ravel()),
+                          args=unknowns,
                           maxiter=n_inner,
                           disp=1,
-                          bounds=(gam_r.size) * [(0.001, 1)])
+                          bounds=((unknowns[0]._value).ravel().size) * [(0.001, 1)])
 
-    gam_r = res_2[0].copy()
+    
+    unknowns[0]._value = res_2[0].copy().reshape(unknowns[0]._shape)
 
-    # update gamma in the forward model
-    loss.datafidelityloss.model.gam = gam_r.reshape(loss.datafidelityloss.model.image_shape)
+
+    temp = unknowns[1]
+    unknowns[1] = unknowns[0]
+    unknowns[0] = temp
+
 
 
 #------------------
 
-x_r = x_r.reshape(x.shape)
-gam_r = gam_r.reshape(gam.shape)
+x_r = unknowns[0]._value
+gam_r = unknowns[1]._value
 
 # show the results
 ims_1 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.1*x.max())

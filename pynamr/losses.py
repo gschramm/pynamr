@@ -3,6 +3,7 @@ import numpy as np
 from .models import DualTESodiumAcqModel
 from .models import TwoCompartmentBiExpDualTESodiumAcqModel
 from .models import MonoExpDualTESodiumAcqModel
+from .models import Unknown
 
 from .protocols import DifferentiableFunction, CallingMode
 
@@ -25,7 +26,7 @@ class DataFidelityLoss:
         self.model = model
         self.y = y
 
-    def __call__(self, in1: np.ndarray, mode: CallingMode, *args) -> float:
+    def __call__(self, u: list[Unknown]) -> float:
         """calculate data fidelity loss
 
         Parameters
@@ -44,10 +45,10 @@ class DataFidelityLoss:
         float
             the loss value
         """        
-        d = self.diff(in1, mode, *args)
+        d = self.diff(u)
         return 0.5 * (d**2).sum()
 
-    def diff(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
+    def diff(self, u: list[Unknown]) -> np.ndarray:
         """calculate the bin-wise difference between the data and the expectation
 
         Parameters
@@ -66,36 +67,13 @@ class DataFidelityLoss:
         np.ndarray
             bin-wise difference between data and expected data
         """
-        if isinstance(self.model, TwoCompartmentBiExpDualTESodiumAcqModel):
-            x = in1
-            diff = (self.model.forward(x.reshape(self.model.x_shape_real)) -
+
+        diff = (self.model.forward(u) -
                     self.y) * self.model.kmask
-
-        elif isinstance(self.model, MonoExpDualTESodiumAcqModel):
-            if len(args) == 0:
-                raise TypeError(
-                    'Data fidelity loss with MonoExpDualTESodiumAcqModel requires 3 input arguments.'
-                )
-
-            if mode == CallingMode.XFIRST:
-                x = in1
-                gam = args[0]
-            elif mode == CallingMode.GAMFIRST:
-                x = args[0]
-                gam = in1
-            else:
-                raise ValueError
-
-            self.model.gam = gam.reshape(self.model.image_shape)
-            diff = (self.model.forward(x.reshape(self.model.x_shape_real)) -
-                    self.y) * self.model.kmask
-
-        else:
-            raise NotImplementedError
 
         return diff
 
-    def grad(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
+    def grad(self, u: list[Unknown]) -> np.ndarray:
         """calculate the gradient of the data fidelity loss
 
         Parameters
@@ -120,30 +98,16 @@ class DataFidelityLoss:
         In that way this function can be used to calculate the gradient with
         respect to x and gamma for the MonoExp signal model.
         """
-        z = self.diff(in1, mode, *args)
+
+        u[0]._value = in1.reshape(u[0]._shape)
+
+        z = self.diff(u)
 
         # reshaping of x/gam is needed since fmin_l_bfgs_b flattens all arrays
-        if isinstance(self.model, TwoCompartmentBiExpDualTESodiumAcqModel):
-            grad = self.model.adjoint(z).reshape(in1.shape)
-        elif isinstance(self.model, MonoExpDualTESodiumAcqModel):
-            if len(args) == 0:
-                raise TypeError(
-                    'Data fidelity loss gradient with MonoExpDualTESodiumAcqModel requires 3 input arguments.'
-                )
-
-            if mode == CallingMode.XFIRST:
-                # gradient with respect to x
-                grad = self.model.adjoint(z).reshape(in1.shape)
-            elif mode == CallingMode.GAMFIRST:
-                # gradient with respect to gam
-                self.model.gam = in1.reshape(self.model.image_shape)
-                grad = self.model.grad_gam(
-                    z, args[0].reshape(self.model.x_shape_real)).reshape(
-                        in1.shape)
-            else:
-                raise ValueError
+        if u[0]._linearity:
+            grad = self.model.adjoint(z,u)
         else:
-            raise NotImplementedError
+            grad = self.model.grad(z,u)
 
         return grad
 
@@ -152,10 +116,10 @@ class TotalLoss:
 
     def __init__(self, 
                  datafidelityloss: DataFidelityLoss, 
-                 penalty_x : DifferentiableFunction, 
-                 beta_x: float, 
-                 penalty_gam: DifferentiableFunction | None = None,
-                 beta_gam: float = 0) -> None:
+                 penalties: dict[str,DifferentiableFunction],
+                 betas: dict[str,float] ):
+
+
         """Total loss function to be optimized consisting of data fidelity and priors
 
         Parameters
@@ -173,17 +137,11 @@ class TotalLoss:
         """                 
 
         self.datafidelityloss = datafidelityloss
-        self.penalty_x = penalty_x
-        self.penalty_gam = penalty_gam
+        self.penalties = penalties
+        self.betas = betas
 
-        self.beta_x = beta_x
-        self.beta_gam = beta_gam
 
-        self.x_shape = self.datafidelityloss.model.x_shape_real
-
-        self.gam_shape = self.datafidelityloss.model.image_shape
-
-    def __call__(self, in1: np.ndarray, mode: CallingMode, *args) -> float:
+    def __call__(self, in1: np.ndarray, *args) -> float:
         """calculate total loss
 
         Parameters
@@ -202,43 +160,32 @@ class TotalLoss:
         float
             the loss value
         """
-        cost = self.datafidelityloss(in1, mode, *args)
 
-        if isinstance(self.datafidelityloss.model,
-                      MonoExpDualTESodiumAcqModel):
-            if mode == CallingMode.XFIRST:
-                x = in1
-                gam = args[0]
-            elif mode == CallingMode.GAMFIRST:
-                x = args[0]
-                gam = in1
-            else:
-                raise ValueError
+        u = args
 
-            if self.beta_x > 0:
-                # reshaping of x is necessary since LBFGS will pass flattened arrays
-                for ch in range(self.x_shape[0]):
+        u[0]._value = in1.reshape(u[0]._shape)
+
+        cost = self.datafidelityloss(u)
+
+        for el in u:
+            if (self.betas[el._name]>0) and (self.penalties[el._name] is not None):
+                if el._complex:
                     for j in range(2):
-                        cost += self.beta_x * self.penalty_x(
-                            x.reshape(self.x_shape)[ch, ..., j])
-
-            if (self.beta_gam > 0) and (self.penalty_gam is not None):
-                cost += self.beta_gam * self.penalty_gam(gam)
-
-        elif isinstance(self.datafidelityloss.model,
-                        TwoCompartmentBiExpDualTESodiumAcqModel):
-            x = in1
-
-            if self.beta_x > 0:
-                # reshaping of x is necessary since LBFGS will pass flattened arrays
-                for ch in range(self.x_shape[0]):
-                    for j in range(2):
-                        cost += self.beta_x * self.penalty_x(
-                            x.reshape(self.x_shape)[ch, ..., j])
+                        if el._penaltyEntities>1:
+                            for k in range(el._penaltyEntities):
+                                cost += self.betas[el._name] * self.penalties[el._name](el._value[k,...,j])
+                            else:
+                                cost += self.betas[el._name] * self.penalties[el._name](el._value[...,j])
+                else:
+                    if el._penaltyEntities>1:
+                            for k in range(el._penaltyEntities):
+                                 cost += self.betas[el._name] * self.penalties[el._name](el._value[k])
+                    else:
+                        cost += self.betas[el._name] * self.penalties[el._name](el._value)
 
         return cost
 
-    def grad(self, in1: np.ndarray, mode: CallingMode, *args) -> np.ndarray:
+    def grad(self, in1: np.ndarray, *args) -> np.ndarray:
         """calculate the gradient of the total loss
 
         Parameters
@@ -264,49 +211,19 @@ class TotalLoss:
         respect to x and gamma for the MonoExp signal model.
         """
 
-        grad = self.datafidelityloss.grad(in1, mode, *args)
+        u = args
+        u[0]._value = reshape(u[0]._shape)
 
-        # calculate the gradient with respect to the "smoothing" penalties
-        if isinstance(self.datafidelityloss.model,
-                      MonoExpDualTESodiumAcqModel):
-            if mode == CallingMode.XFIRST:
-                x = in1
-                # reshaping of data fidelity gradient is necessary since fmin_l_bfgs
-                # passes flattened arrays
-                grad = grad.reshape(self.datafidelityloss.model.x_shape_real) 
+        grad = self.datafidelityloss.grad(u)
 
-                if self.beta_x > 0:
-                    for ch in range(self.x_shape[0]):
-                        for j in range(2):
-                            grad[ch, ...,
-                                 j] += self.beta_x * self.penalty_x.grad(
-                                     x.reshape(self.x_shape)[ch, ..., j])
-
-                grad = grad.reshape(in1.shape)
-            elif mode == CallingMode.GAMFIRST:
-                gam = in1
-                if (self.beta_gam > 0) and (self.penalty_gam is not None):
-                    grad += self.beta_gam * self.penalty_gam.grad(gam)
-                
-                # unclear why the ravel is needed, but without fmin_l_bfgs is not happy
-                if grad.ndim == 1:
-                    grad = grad.ravel()
-            else:
-                raise ValueError
-
-        elif isinstance(self.datafidelityloss.model,
-                        TwoCompartmentBiExpDualTESodiumAcqModel):
-            x = in1
-            if self.beta_x > 0:
-                grad = grad.reshape(self.datafidelityloss.model.x_shape_real) 
-
-                for ch in range(self.x_shape[0]):
+        for el in u:
+            if (self.betas[el._name]>0) and (self.penalties[el._name] is not None):
+                if el._complex:
                     for j in range(2):
-                        grad[ch, ..., j] += self.beta_x * self.penalty_x.grad(
-                            x.reshape(self.x_shape)[ch, ..., j])
-                
-                grad = grad.reshape(in1.shape)
-        else:
-            raise NotImplementedError
-        
-        return grad
+                        if el._penaltyEntities>1:
+                            for k in range(el._penaltyEntities):
+                                grad += self.betas[el._name] * self.penalties[el._name].grad(el._value[k,...,j])
+                            else:
+                                grad += self.betas[el._name] * self.penalties[el._name].grad(el._value[...,j])
+
+        return grad.ravel()
