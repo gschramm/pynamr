@@ -99,8 +99,6 @@ class DataFidelityLoss:
         respect to x and gamma for the MonoExp signal model.
         """
 
-        u[0]._value = in1.reshape(u[0]._shape)
-
         z = self.diff(u)
 
         # reshaping of x/gam is needed since fmin_l_bfgs_b flattens all arrays
@@ -108,6 +106,7 @@ class DataFidelityLoss:
             grad = self.model.adjoint(z,u)
         else:
             grad = self.model.grad(z,u)
+
 
         return grad
 
@@ -212,7 +211,7 @@ class TotalLoss:
         """
 
         u = args
-        u[0]._value = reshape(u[0]._shape)
+        u[0]._value = in1.reshape(u[0]._shape)
 
         grad = self.datafidelityloss.grad(u)
 

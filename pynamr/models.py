@@ -550,13 +550,12 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             -------
             a float64 numpy array of shape (self.num_coils,self.image_shape,2)
         """
-
         # create a complex view of the input real input array with two channels
         for el in u:
-           if el._name==UnknownName.IMAGE:
-               x = complex_view_of_real_array(el._value)
-           if el._name==UnknownName.GAMMA:
-               gam = el._value
+            if el._name==UnknownName.IMAGE:
+                x = complex_view_of_real_array(el._value)
+            if el._name==UnknownName.GAMMA:
+                gam = el._value
 
         #----------------------
         # send x and gam to GPU
@@ -578,15 +577,16 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         y = self._xp.zeros(self.y_shape_complex, dtype=self._xp.complex128)
 
+
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
                 y[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**(self._tr[it] / self._dt) * x_ds[0, ...],
+                    gam_ds**(self._tr[it] / self._dt) * x_ds, #[0, ...],
                     norm='ortho')[self.readout_inds[it]]
                 y[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**((self._tr[it] / self._dt) + 1) * x_ds[0, ...],
+                    gam_ds**((self._tr[it] / self._dt) + 1) * x_ds, #[0, ...],
                     norm='ortho')[self.readout_inds[it]]
 
         # get x from GPU
@@ -698,7 +698,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         # currently only one possibility, for Gamma
         if not u[0]._name == UnknownName.GAMMA:
-            raise Error('only for gamma')
+            print('only for gamma')
 
         # create a complex view of the input real input array with two channels
         y = complex_view_of_real_array(y)

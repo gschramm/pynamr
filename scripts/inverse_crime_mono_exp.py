@@ -89,8 +89,6 @@ sens = np.ones((ncoils, n_ds, n_ds, n_ds)) + 0j * np.zeros(
 readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
-fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part) #, gam=gam)
-
 # construct unknown variables
 a= tuple([ds * x for x in data_shape]) + (2,)
 unknowns = [pynamr.Unknown(pynamr.UnknownName.IMAGE, tuple([ds * x for x in data_shape]) + (2,)),
@@ -99,6 +97,8 @@ unknowns = [pynamr.Unknown(pynamr.UnknownName.IMAGE, tuple([ds * x for x in data
 
 unknowns[0]._value = x
 unknowns[1]._value = gam
+
+fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part) 
 
 # generate data
 y = fwd_model.forward(unknowns)
@@ -163,7 +163,7 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 # run the recons
 
 # initialize recons
-x_0 = pynamr.utils.add_imaginary_dimension(sos_0_filtered)
+x_0 = np.stack((sos_0_filtered, np.zeros(sos_0_filtered.shape)), axis = -1)
 gam_0 = np.clip(sos_1_filtered / (sos_0_filtered + 1e-7), 0, 1)
 
 # allocate initial values of unknown variables
