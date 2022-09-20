@@ -41,9 +41,9 @@ beta_x = 1e-2
 # prior weight applied to the gamma (decay) image
 beta_gam = 1e-2
 # number of outer LBFGS iterations
-n_outer = 1
+n_outer = 5
 # number of inner LBFGS iterations
-n_inner = 1
+n_inner = 10
 
 # number of readout bins
 n_readout_bins = 16
@@ -91,7 +91,6 @@ readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
 # construct the (unknown) image space variables for the model
-a= tuple([ds * x for x in data_shape]) + (2,)
 unknowns = [pynamr.Unknown(pynamr.UnknownName.IMAGE, tuple([ds * x for x in data_shape]) + (2,)),
             pynamr.Unknown(pynamr.UnknownName.GAMMA, tuple([ds * x for x in data_shape]), 1, False, False)]
 
@@ -187,7 +186,7 @@ for i_out in range(n_outer):
 
     # update current value
     unknowns[0]._value = res_1[0].copy().reshape(unknowns[0]._shape)
-    pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
+    unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
 
     # update real gamma (decay) image
     res_2 = fmin_l_bfgs_b(loss,
@@ -201,7 +200,7 @@ for i_out in range(n_outer):
     
     # update current value
     unknowns[0]._value = res_2[0].copy().reshape(unknowns[0]._shape)
-    pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
+    unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
 
 
 #------------------

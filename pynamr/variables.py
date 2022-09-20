@@ -43,7 +43,7 @@ class Unknown():
         self.nb_comp = nb_comp
 
 
-def putVarInFirstPlace(name: UnknownName, u: list[Unknown])->None:
+def putVarInFirstPlace(name: UnknownName, u: list[Unknown]) -> list[Unknown]:
 
     for ind, el in enumerate(u):
         if el._name==UnknownName:
@@ -52,8 +52,11 @@ def putVarInFirstPlace(name: UnknownName, u: list[Unknown])->None:
     if ind==len(u):
         raise IndexError
 
-    temp = u[ind]
-    u[ind] = u[0]
-    u[0] = temp
+    if ind>0:
+        temp = u[ind]
+        u[ind] = u[0]
+        u[0] = temp
+
+    return u
 
 
