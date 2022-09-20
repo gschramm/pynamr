@@ -12,7 +12,6 @@ except ModuleNotFoundError:
 from .utils import RadialKSpacePartitioner, XpArray
 from .utils import complex_view_of_real_array, real_view_of_complex_array
 from .utils import downsample, upsample
-
 from .variables import Unknown, UnknownName
 
 #----------------------------------------------------------------------------------
@@ -45,8 +44,6 @@ class DualTESodiumAcqModel(abc.ABC):
         kspace_part : RadialKSpacePartitioner
             RadialKSpacePartioner that partitions cartesian k-space volume
             into radial shells of "same" readout time
-        num_compartments: int
-            number of compartments
         """
 
         # downsampling factor
@@ -123,13 +120,13 @@ class DualTESodiumAcqModel(abc.ABC):
 
     @abc.abstractmethod
     def forward(self, u: list[Unknown]) -> np.ndarray:
-        """ forward model that maps from image x to data y
+        """ forward model that maps from unknown images/parameters to data y
 
         Parameters
         ----------
-        x : np.ndarray
-            the (multichannel) complex image represented in a real array 
-            with shape (num_compartments, image_shape, 2)
+        u : list[Unknown]
+            the list of image space variables that represent known or unknown parameters of the forward model
+            (e.g. images, image model parameters, T2* maps, Gamma)
 
         Returns
         -------
@@ -148,6 +145,10 @@ class DualTESodiumAcqModel(abc.ABC):
         y : np.ndarray
             complex multicoil data array represented as real array with shape
             (num_coils, 2, data_shape, 2)
+
+        u : list[Unknown]
+            the list of image space variables that represent known or unknown parameters of the forward model
+            (e.g. images, image model parameters, T2* maps, Gamma)
 
         Returns
         -------
@@ -259,11 +260,9 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         Parameters
         ----------
-        x : np.ndarray (real)
-            two compartment image of shape (2,n0,n1,n2,2)
-            first (left most) dimension are the "channels"
-            [0,...] ... bound pool   
-            [1,...] ... free pool
+        u : list[Unknown]
+            the list of image space variables that represent known or unknown parameters of the forward model,
+            here single image variable with 2 compartments (bound and free pool)
 
         Returns
         -------
@@ -275,18 +274,17 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         # create a complex view of the input real input array with two channels
         x = complex_view_of_real_array(u[0]._value)
 
-
         #----------------------
         # send f and gam to GPU
         if self._xp.__name__ == 'cupy':
             x = self._xp.asarray(x)
 
         # downsample the image along the spatial dimensions
-        x_ds = downsample(downsample(downsample(x, self._ds, axis=0),
+        x_ds = downsample(downsample(downsample(x, self._ds, axis=1),
                                      self._ds,
-                                     axis=1),
+                                     axis=2),
                           self._ds,
-                          axis=2)
+                          axis=3)
 
         y = self._xp.zeros(self.y_shape_complex, dtype=self._xp.complex128)
 
@@ -540,17 +538,17 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             Parameters
             ----------
 
-            x : a float64 numpy array of shape (1,self.image_shape,2)
-              [...,0] is considered as the real part
-              [...,1] is considered as the imag part
-
-            gam : a float64 numpy/cupy array of shape (self.image_shape)
+            u : list[Unknown]
+                the list of image space variables that represent known or unknown parameters of the forward model,
+                here two variables
+                1) the image proportional to Na concentration, with real and imaginary parts (last dimension)
+                2) the gamma, monoexponential T2* decay from TE1 to TE2, real
 
             Returns
             -------
-            a float64 numpy array of shape (self.num_coils,self.image_shape,2)
+            a float64 numpy array of shape (self.num_coils,image_shape,2)
         """
-        # create a complex view of the input real input array with two channels
+        # read the input variables and create a complex view if required
         for el in u:
             if el._name==UnknownName.IMAGE:
                 x = complex_view_of_real_array(el._value)
@@ -582,11 +580,11 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             for it in range(self.n_readout_bins):
                 y[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**(self._tr[it] / self._dt) * x_ds, #[0, ...],
+                    gam_ds**(self._tr[it] / self._dt) * x_ds,
                     norm='ortho')[self.readout_inds[it]]
                 y[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**((self._tr[it] / self._dt) + 1) * x_ds, #[0, ...],
+                    gam_ds**((self._tr[it] / self._dt) + 1) * x_ds,
                     norm='ortho')[self.readout_inds[it]]
 
         # get x from GPU
@@ -609,6 +607,12 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             y : a float64 numpy array of shape (self.num_coils,2,self.image_shape,2)
               [...,0] is considered as the real part
               [...,1] is considered as the imag part
+
+            u : list[Unknown]
+                the list of image space variables that represent known or unknown parameters of the forward model,
+                here two variables
+                1) the image proportional to Na concentration, with real and imaginary parts (last dimension)
+                2) the gamma, monoexponential T2* decay from TE1 to TE2, real
 
             Returns
             -------
@@ -686,19 +690,20 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
               [...,0] is considered as the real part
               [...,1] is considered as the imag part
 
-            img : a float64 numpy array of shape (1,self.image_shape,2)
-                containing the current Na concentration image
-              [...,0] is considered as the real part
-              [...,1] is considered as the imag part
+            u : list[Unknown]
+                the list of image space variables that represent known or unknown parameters of the forward model,
+                here two variables
+                1) the image proportional to Na concentration, with real and imaginary parts (last dimension)
+                2) the gamma, monoexponential T2* decay from TE1 to TE2, real
 
             Returns
             -------
-            a float64 numpy array of shape (1,self.image_shape)
+            a float64 numpy array of shape (1,image_shape)
         """
 
-        # currently only one possibility, for Gamma
-        if not u[0]._name == UnknownName.GAMMA:
-            print('only for gamma')
+        # currently only for Gamma
+        if u[0]._name != UnknownName.GAMMA:
+            raise NotImplementedError('Currently only for nonlinear variables (Gamma)')
 
         # create a complex view of the input real input array with two channels
         y = complex_view_of_real_array(y)

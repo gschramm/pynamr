@@ -1,7 +1,6 @@
 
 import enum
 import numpy as np
-from .utils import XpArray
 
 #----------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------
@@ -9,31 +8,52 @@ from .utils import XpArray
 
 
 class UnknownName(enum.Enum):
-    IMAGE = 'sodium image'
-    GAMMA = 'gamma'
-    PARAM = 'parameters of the bicompartment biexp model'
+    IMAGE = 'Sodium image'
+    GAMMA = 'Gamma'
+    PARAM = 'Parameters of an image model'
 
 
 
 class Unknown():
+    """ Image space variable representing a parameter of the forward model """
 
     def __init__(self,
                  name: UnknownName,
                  shape: tuple,
-                 penaltyEntities: int = 1,
-                 complexNb: bool = True,
+                 nb_comp: int = 1,
+                 complex_var: bool = True,
                  linearity: bool = True,
-                 value: XpArray = None,
+                 value: np.ndarray = None,
                  dtype: np.dtype = np.float64) -> None:
 
 
-        # shape in complex form
+        # enum name
         self._name = name
+        # shape = number of components + spatial dimensions + 2 for real and imaginary parts if complex
         self._shape = shape
+        # real number type
         self._dtype = dtype
+        # whether the forward model is linear with respect to this variable
         self._linearity = linearity
+        # np.ndarray
         self._value = value
-        self._complex = complexNb
-        self._penaltyEntities = penaltyEntities
+        # complex number variable
+        self._complex_var = complex_var
+        # Number of spatial components (e.g. multicompartmental voxel model)
+        self.nb_comp = nb_comp
+
+
+def putVarInFirstPlace(name: UnknownName, u: list[Unknown])->None:
+
+    for ind, el in enumerate(u):
+        if el._name==UnknownName:
+            break
+
+    if ind==len(u):
+        raise IndexError
+
+    temp = u[ind]
+    u[ind] = u[0]
+    u[0] = temp
 
 

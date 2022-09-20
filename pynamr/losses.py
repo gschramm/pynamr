@@ -31,14 +31,10 @@ class DataFidelityLoss:
 
         Parameters
         ----------
-        in1 : np.ndarray
-            either the image(s) x for Mono of BiExp models or the decay image gamma
-            for the MonoExp model
-        mode : CallingMode
-            that signals whether the image x or the decay image gamma was passed as
-            first argument
-        *args : additional input arguments
-            For the MonoExp model the "second" image has to be passed as *args[0]
+
+        u : list[Unknown]
+            the list of image space variables that represent known or unknown parameters of the forward model
+            (i.e. images, image model parameters, T2* maps)
 
         Returns
         -------
@@ -53,14 +49,9 @@ class DataFidelityLoss:
 
         Parameters
         ----------
-        in1 : np.ndarray
-            either the image(s) x for Mono of BiExp models or the decay image gamma
-            for the MonoExp model
-        mode : CallingMode
-            that signals whether the image x or the decay image gamma was passed as
-            first argument
-        *args : additional input arguments
-            For the MonoExp model the "second" image has to be passed as *args[0]
+        u : list[Unknown]
+            the list of image space variables that represent known or unknown parameters of the forward model
+            (i.e. images, image model parameters, T2* maps)
 
         Returns
         -------
@@ -74,18 +65,13 @@ class DataFidelityLoss:
         return diff
 
     def grad(self, u: list[Unknown]) -> np.ndarray:
-        """calculate the gradient of the data fidelity loss
+        """calculate the gradient of the data fidelity loss with respect to the first variable in the list
 
         Parameters
         ----------
-        in1 : np.ndarray
-            either the image(s) x for Mono of BiExp models or the decay image gamma
-            for the MonoExp model
-        mode : CallingMode
-            that signals whether the image x or the decay image gamma was passed as
-            first argument
-        *args : additional input arguments
-            For the MonoExp model the "second" image has to be passed as *args[0]
+        u : list[Unknown]
+            the list of image space variables that represent known or unknown parameters of the forward model
+            (i.e. images, image model parameters, T2* maps)
 
         Returns
         -------
@@ -94,45 +80,36 @@ class DataFidelityLoss:
 
         Note
         ----
-        The gradient is calculate with respect to the first input argument.
-        In that way this function can be used to calculate the gradient with
-        respect to x and gamma for the MonoExp signal model.
         """
 
         z = self.diff(u)
 
-        # reshaping of x/gam is needed since fmin_l_bfgs_b flattens all arrays
+        # if model linear with respect to the variable call simply the adjoint, otherwise call more general gradient computation
         if u[0]._linearity:
             grad = self.model.adjoint(z,u)
         else:
             grad = self.model.grad(z,u)
 
-
         return grad
 
 
 class TotalLoss:
-
-    def __init__(self, 
-                 datafidelityloss: DataFidelityLoss, 
+    """Total loss function to be optimized consisting of data fidelity and priors
+      Complies with the interface required for using scipy.optimize
+    """
+    def __init__(self,
+                 datafidelityloss: DataFidelityLoss,
                  penalties: dict[str,DifferentiableFunction],
                  betas: dict[str,float] ):
-
-
-        """Total loss function to be optimized consisting of data fidelity and priors
-
+        """
         Parameters
         ----------
         datafidelityloss : DataFidelityLoss
             object to calculate data fidelity loss and gradient
-        penalty_x : DifferentiableFunction
-            object to calculate penalty on x and gradient
-        beta_x : float, optional
-            weight for penalty on x
-        penalty_gam : DifferentiableFunction | None, optional
-            object to calculate penalty on decay image gamma
-        beta_gam : float | None, optional
-            weight for penalty on gamma
+        penalties : list[DifferentiableFunction}
+            functions for calculating penalties
+        betas : float, optional
+            penalty weights
         """                 
 
         self.datafidelityloss = datafidelityloss
@@ -140,63 +117,58 @@ class TotalLoss:
         self.betas = betas
 
 
-    def __call__(self, in1: np.ndarray, *args) -> float:
+    def __call__(self, in1: np.ndarray, *args: list[Unknown]) -> float:
         """calculate total loss
 
         Parameters
         ----------
         in1 : np.ndarray
-            either the image(s) x for Mono of BiExp models or the decay image gamma
-            for the MonoExp model
-        mode : CallingMode
-            that signals whether the image x or the decay image gamma was passed as
-            first argument
-        *args : additional input arguments
-            For the MonoExp model the "second" image has to be passed as *args[0]
+            current value of the variable being optimized
+        *args : additional input arguments, here list[Unknown]
 
         Returns
         -------
         float
             the loss value
+
+        Note
+        -------
+        Interface for scipy.optimize
         """
 
         u = args
-
+        # update the variable list with the current value for consistency and ease of use
         u[0]._value = in1.reshape(u[0]._shape)
 
         cost = self.datafidelityloss(u)
 
         for el in u:
             if (self.betas[el._name]>0) and (self.penalties[el._name] is not None):
-                if el._complex:
+                if el._complex_var:
                     for j in range(2):
-                        if el._penaltyEntities>1:
-                            for k in range(el._penaltyEntities):
+                        if el.nb_comp>1:
+                            for k in range(el.nb_comp):
                                 cost += self.betas[el._name] * self.penalties[el._name](el._value[k,...,j])
                             else:
                                 cost += self.betas[el._name] * self.penalties[el._name](el._value[...,j])
                 else:
-                    if el._penaltyEntities>1:
-                            for k in range(el._penaltyEntities):
-                                 cost += self.betas[el._name] * self.penalties[el._name](el._value[k])
+                    if el.nb_comp>1:
+                        for k in range(el.nb_comp):
+                             cost += self.betas[el._name] * self.penalties[el._name](el._value[k])
                     else:
                         cost += self.betas[el._name] * self.penalties[el._name](el._value)
 
         return cost
 
-    def grad(self, in1: np.ndarray, *args) -> np.ndarray:
-        """calculate the gradient of the total loss
+    def grad(self, in1: np.ndarray, *args: list[Unknown]) -> np.ndarray:
+        """calculate the gradient of the total loss with respect to the first variable in the list
 
         Parameters
         ----------
         in1 : np.ndarray
-            either the image(s) x for Mono of BiExp models or the decay image gamma
-            for the MonoExp model
-        mode : CallingMode
-            that signals whether the image x or the decay image gamma was passed as
-            first argument
-        *args : additional input arguments
-            For the MonoExp model the "second" image has to be passed as *args[0]
+            current value of the variable being optimized
+        *args : additional input arguments, here list[Unknown]
+
 
         Returns
         -------
@@ -205,24 +177,32 @@ class TotalLoss:
 
         Note
         ----
-        The gradient is calculate with respect to the first input argument.
-        In that way this function can be used to calculate the gradient with
-        respect to x and gamma for the MonoExp signal model.
+        Interface for scipy.optimize
         """
 
         u = args
+        # update the variable list with the current value for consistency and ease of use
         u[0]._value = in1.reshape(u[0]._shape)
 
+        # data fidelity loss gradient
         grad = self.datafidelityloss.grad(u)
 
-        for el in u:
-            if (self.betas[el._name]>0) and (self.penalties[el._name] is not None):
-                if el._complex:
-                    for j in range(2):
-                        if el._penaltyEntities>1:
-                            for k in range(el._penaltyEntities):
-                                grad += self.betas[el._name] * self.penalties[el._name].grad(el._value[k,...,j])
-                            else:
-                                grad += self.betas[el._name] * self.penalties[el._name].grad(el._value[...,j])
+        # add penalty gradient for the first variable
+        el = u[0]
+        if (self.betas[el._name]>0) and (self.penalties[el._name] is not None):
+            if el._complex_var:
+                for j in range(2):
+                    if el.nb_comp>1:
+                        for k in range(el.nb_comp):
+                            grad[k,...,j] += self.betas[el._name] * self.penalties[el._name].grad(el._value[k,...,j])
+                        else:
+                            grad[...,j] += self.betas[el._name] * self.penalties[el._name].grad(el._value[...,j])
+            else:
+                if el.nb_comp>1:
+                    for k in range(el.nb_comp):
+                        grad[k] += self.betas[el._name] * self.penalties[el._name].grad(el._value[k])
+                else:
+                    grad += self.betas[el._name] * self.penalties[el._name].grad(el._value)
 
+        # flatten the array for scipy.optimize
         return grad.ravel()

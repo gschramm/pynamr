@@ -12,7 +12,6 @@ except ImportError:
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
-import matplotlib.pyplot as plt
 
 import pynamr
 
@@ -39,12 +38,11 @@ nnearest = 13
 # prior weight applied to real and imag part of complex sodium image
 beta_x = 1e-2
 # prior weight applied to the gamma (decay) image
-beta_gam = 1e-2
+#beta_gam = 1e-1
 # number of outer LBFGS iterations
-n_outer = 1
+n_outer = 1 
 # number of inner LBFGS iterations
 n_inner = 1
-
 # number of readout bins
 n_readout_bins = 16
 
@@ -69,17 +67,18 @@ x = pynamr.downsample(pynamr.downsample(pynamr.downsample(x, osf, axis=0),
                       osf,
                       axis=2)
 
-gam = pynamr.downsample(pynamr.downsample(pynamr.downsample(gam,
-                                                            osf,
-                                                            axis=0),
-                                          osf,
-                                          axis=1),
-                        osf,
-                        axis=2)
-gam /= gam.max()
+#gam = pynamr.downsample(pynamr.downsample(pynamr.downsample(gam,
+#                                                            osf,
+#                                                            axis=0),
+#                                          osf,
+#                                          axis=1),
+#                        osf,
+#                        axis=2)
+#gam /= gam.max()
 
 # create pseudo-complex data and add dimension for "compartments"
 x = np.stack([x, 0 * x], axis=-1)
+x = np.stack([x, 0.5*x], axis=0)
 
 # create sensitivity images - TO BE IMPROVED
 sens = np.ones((ncoils, n_ds, n_ds, n_ds)) + 0j * np.zeros(
@@ -90,29 +89,15 @@ sens = np.ones((ncoils, n_ds, n_ds, n_ds)) + 0j * np.zeros(
 readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
-# construct the (unknown) image space variables for the model
-a= tuple([ds * x for x in data_shape]) + (2,)
-unknowns = [pynamr.Unknown(pynamr.UnknownName.IMAGE, tuple([ds * x for x in data_shape]) + (2,)),
-            pynamr.Unknown(pynamr.UnknownName.GAMMA, tuple([ds * x for x in data_shape]), 1, False, False)]
-
-# initialize the values
+# unknowns
+unknowns = [pynamr.Unknown(pynamr.UnknownName.PARAM, tuple([2,] + [ds * x for x in data_shape] + [2,]),2),]
 unknowns[0]._value = x
-unknowns[1]._value = gam
 
-# construct the forward model
-fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part) 
+fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part, 2, 20, 4, 16, 0.4, 0.2)
 
 # generate data
 y = fwd_model.forward(unknowns)
 data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
-
-# perform "standard" SOS reconstructions
-sos_0 = pynamr.sum_of_squares_reconstruction(data[:,0,...])
-sos_1 = pynamr.sum_of_squares_reconstruction(data[:,1,...])
-
-# filter the SOS images and upsample to recon grid
-sos_0_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(sos_0, 1.), ds, 0), ds, 1), ds, 2)
-sos_1_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(sos_1, 1.), ds, 0), ds, 1), ds, 2)
 
 #-------------------------------------------------------------------------------------
 # setup the data fidelity loss function
@@ -122,7 +107,7 @@ data_fidelity_loss = pynamr.DataFidelityLoss(fwd_model, data)
 # setup the priors
 
 # simulate a perfect anatomical prior image (with changed contrast but matching edges)
-aimg = x[..., 0]
+aimg = x[0,..., 0]
 aimg = (aimg.max() - aimg)**0.5
 
 # define neighborhood where to look for neasrest Bowsher neighbors
@@ -152,26 +137,24 @@ pynamr.nearest_neighbors(aimg, s, nnearest, nn_inds)
 
 # "adjoint" list of nearest/next neighbors
 nn_inds_adj = pynamr.is_nearest_neighbor_of(nn_inds)
+
 bowsher_loss = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
 
 #-------------------------------------------------------------------------------------
-# setup the total loss function consiting of data fidelity loss and the priors on the
-# sodium and gamma images
-penalty_info = {pynamr.UnknownName.IMAGE: bowsher_loss, pynamr.UnknownName.GAMMA: bowsher_loss}
-beta_info = {pynamr.UnknownName.IMAGE: beta_x, pynamr.UnknownName.GAMMA: beta_gam}
+# setup the total loss function consisting of data fidelity loss and the priors on the
+# sodium images
+penalty_info = {pynamr.UnknownName.PARAM: bowsher_loss}
+beta_info = {pynamr.UnknownName.PARAM: beta_x}
 loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 
 #-------------------------------------------------------------------------------------
 # run the recons
 
 # initialize recons
-x_0 = np.stack((sos_0_filtered, np.zeros(sos_0_filtered.shape)), axis = -1)
-gam_0 = np.clip(sos_1_filtered / (sos_0_filtered + 1e-7), 0, 1)
+x_0 = 0 * x + 1
 
-# allocate initial values of unknown variables
+# allocate arrays for recons and copy over initial values
 unknowns[0]._value = x_0.copy()
-unknowns[1]._value = gam_0.copy()
-
 
 #------------------
 # alternating LBFGS steps
@@ -179,45 +162,14 @@ for i_out in range(n_outer):
 
     # update complex sodium image
     res_1 = fmin_l_bfgs_b(loss,
-                          (unknowns[0]._value).copy().ravel(),
+                          unknowns[0]._value.copy().ravel(),
                           fprime=loss.grad,
                           args=unknowns,
                           maxiter=n_inner,
                           disp=1)
 
-    # update current value
     unknowns[0]._value = res_1[0].copy().reshape(unknowns[0]._shape)
-    pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
-
-    # update real gamma (decay) image
-    res_2 = fmin_l_bfgs_b(loss,
-                          (unknowns[0]._value).copy().ravel(),
-                          fprime=loss.grad,
-                          args=unknowns,
-                          maxiter=n_inner,
-                          disp=1,
-                          bounds=((unknowns[0]._value).ravel().size) * [(0.001, 1)])
-
-    
-    # update current value
-    unknowns[0]._value = res_2[0].copy().reshape(unknowns[0]._shape)
-    pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
-
 
 #------------------
 
 x_r = unknowns[0]._value
-gam_r = unknowns[1]._value
-
-# show the results
-ims_1 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.1*x.max())
-ims_2 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.1*np.percentile(sos_0_filtered,95))
-ims_3 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.)
-
-import pymirc.viewer as pv
-vi = pv.ThreeAxisViewer([np.linalg.norm(x, axis=-1)[0,...],
-                         sos_0_filtered,
-                         np.linalg.norm(x_r, axis=-1)[0,...],
-                         gam,
-                         gam_r],
-                         imshow_kwargs=[ims_1,ims_2,ims_1,ims_3,ims_3])
