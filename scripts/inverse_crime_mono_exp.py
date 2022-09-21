@@ -13,7 +13,6 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
 import matplotlib.pyplot as plt
-from copy import deepcopy
 
 import pynamr
 
@@ -184,7 +183,7 @@ for i_out in range(n_outer):
     res_1 = fmin_l_bfgs_b(loss,
                           (unknowns[0]._value).copy().ravel(),
                           fprime=loss.grad,
-                          args=deepcopy(unknowns),
+                          args=unknowns,
                           maxiter=n_inner,
                           disp=1)
 
@@ -196,7 +195,7 @@ for i_out in range(n_outer):
     res_2 = fmin_l_bfgs_b(loss,
                           (unknowns[0]._value).copy().ravel(),
                           fprime=loss.grad,
-                          args=deepcopy(unknowns),
+                          args=unknowns,
                           maxiter=n_inner,
                           disp=1,
                           bounds=((unknowns[0]._value).ravel().size) * [(0.001, 1)])

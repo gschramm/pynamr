@@ -1,4 +1,5 @@
 import numpy as np
+from copy import deepcopy
 
 from .models import DualTESodiumAcqModel
 from .models import TwoCompartmentBiExpDualTESodiumAcqModel
@@ -6,7 +7,6 @@ from .models import MonoExpDualTESodiumAcqModel
 from .models import Unknown
 
 from .protocols import DifferentiableFunction, CallingMode
-
 
 class DataFidelityLoss:
     """ Data fidelity loss for mono exponential and bi exponential dual echo 
@@ -136,8 +136,8 @@ class TotalLoss:
         Interface for scipy.optimize
         """
 
-        u = args
-        # update the variable list with the current value for consistency and ease of use
+        u = deepcopy(args)
+        # update the variable list with the current value
         u[0]._value = in1.reshape(u[0]._shape)
 
         cost = self.datafidelityloss(u)
@@ -180,8 +180,8 @@ class TotalLoss:
         Interface for scipy.optimize
         """
 
-        u = args
-        # update the variable list with the current value for consistency and ease of use
+        u = deepcopy(args)
+        # update the variable list with the current value
         u[0]._value = in1.reshape(u[0]._shape)
 
         # data fidelity loss gradient
