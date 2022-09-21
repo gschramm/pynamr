@@ -12,6 +12,7 @@ except ImportError:
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
+from copy import deepcopy
 
 import pynamr
 
@@ -164,7 +165,7 @@ for i_out in range(n_outer):
     res_1 = fmin_l_bfgs_b(loss,
                           unknowns[0]._value.copy().ravel(),
                           fprime=loss.grad,
-                          args=unknowns,
+                          args=deepcopy(unknowns),
                           maxiter=n_inner,
                           disp=1)
 

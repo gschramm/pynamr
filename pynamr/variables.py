@@ -43,10 +43,11 @@ class Unknown():
         self.nb_comp = nb_comp
 
 
+
 def putVarInFirstPlace(name: UnknownName, u: list[Unknown]) -> list[Unknown]:
 
     for ind, el in enumerate(u):
-        if el._name==UnknownName:
+        if el._name==name:
             break
 
     if ind==len(u):
@@ -58,5 +59,7 @@ def putVarInFirstPlace(name: UnknownName, u: list[Unknown]) -> list[Unknown]:
         u[0] = temp
 
     return u
+
+
 
 

@@ -5,8 +5,10 @@ try:
 except:
     cp = np
 
-import pynamr
+from copy import deepcopy
 
+import pynamr
+from IPython.core.debugger import set_trace
 
 class TestGradients(unittest.TestCase):
 
@@ -76,7 +78,7 @@ class TestGradients(unittest.TestCase):
         x_0 = np.random.rand(*self.x.shape)
         gam_0 = np.random.rand(*self.gam.shape)
         
-        unknowns = self.unknowns_mono
+        unknowns = deepcopy(self.unknowns_mono)
         unknowns[0]._value = x_0
         unknowns[1]._value = gam_0
 
@@ -100,10 +102,8 @@ class TestGradients(unittest.TestCase):
         # test gradient with respect to Gamma image
         delta_g = np.zeros(gam_0.shape)
         delta_g[i, i, i] = eps
-        unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
-        unknowns[0]._value = gam_0 + delta_g
-        #unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
-        #unknowns[1]._value = gam_0 + delta_g
+        unknowns[0]._value = x_0
+        unknowns[1]._value = gam_0 + delta_g
         self.assertTrue(
             np.isclose(
                 gg[i, i, i],
@@ -119,7 +119,7 @@ class TestGradients(unittest.TestCase):
         x_0 = np.random.rand(*self.x_bi.shape)
 
         # check gradients
-        unknowns = self.unknowns_bi
+        unknowns = deepcopy(self.unknowns_bi)
         unknowns[0]._value = x_0
 
         ll = loss(unknowns)
@@ -170,8 +170,9 @@ class TestGradients(unittest.TestCase):
         # inital values
         x_0 = np.random.rand(*self.x.shape)
         gam_0 = np.random.rand(*self.gam.shape)
-        unknowns = self.unknowns_mono
+        unknowns = deepcopy(self.unknowns_mono)
         unknowns[0]._value = x_0
+        unknowns[1]._value = gam_0
 
         # check gradients
         ll = loss(x_0, unknowns[0], unknowns[1])
@@ -184,22 +185,26 @@ class TestGradients(unittest.TestCase):
         for j in range(2):
             delta_x = np.zeros(x_0.shape)
             delta_x[i, i, i, j] = eps
+            ind = np.ravel_multi_index( (i, i, i, j), x_0.shape)
             self.assertTrue(
-                np.isclose(gx[i, i, i, j],
+                np.isclose(gx[ind],
                             (loss(x_0 + delta_x, unknowns[0], unknowns[1]) - ll) / eps,
                             rtol=rtol))
 
         # test gradient with respect to Gamma image
         delta_g = np.zeros(gam_0.shape)
         delta_g[i, i, i] = eps
-        unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
-        unknowns[0]._value = gam_0 + delta_g
-        #unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
-        #unknowns[1]._value = gam_0 + delta_g
+        ind = np.ravel_multi_index((i, i, i), gam_0.shape)
+
+        #unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
+        #unknowns[0]._value = gam_0 + delta_g
+        unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
+        unknowns[1]._value = gam_0 + delta_g
+
         self.assertTrue(
             np.isclose(
-                gg[i, i, i],
-                (loss(gam_0, unknowns[0], unknowns[1]) - ll) /
+                gg[ind],
+                (loss(x_0, unknowns[0], unknowns[1]) - ll) /
                 eps,
                 rtol=rtol))
 
@@ -235,22 +240,22 @@ class TestGradients(unittest.TestCase):
 
         # inital values
         x_0 = np.random.rand(*self.x_bi.shape)
-        unknowns = self.unknowns_bi
+        unknowns = deepcopy(self.unknowns_bi)
         unknowns[0]._value = x_0
 
         # check gradients
         ll = loss(x_0, unknowns[0])
         gx = loss.grad(x_0, unknowns[0])
-        print(gx.shape)
 
         # test gradient with respect to Na image (real part)
         for comp in range(unknowns[0].nb_comp):
             for j in range(2):
                 delta_x = np.zeros(x_0.shape)
                 delta_x[comp, i, i, i, j] = eps
+                ind = np.ravel_multi_index( (comp, i, i, i, j), x_0.shape)
                 self.assertTrue(
                     np.isclose(
-                        gx[comp, i, i, i, j],
+                        gx[ind],
                         (loss(x_0 + delta_x, unknowns[0]) - ll) /
                         eps,
                         rtol=rtol))
