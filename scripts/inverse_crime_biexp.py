@@ -91,7 +91,7 @@ readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
 # unknowns
-unknowns = [pynamr.Unknown(pynamr.UnknownName.PARAM, tuple([2,] + [ds * x for x in data_shape] + [2,]),2),]
+unknowns = [pynamr.Var(pynamr.VarName.PARAM, tuple([2,] + [ds * x for x in data_shape] + [2,]),2),]
 unknowns[0]._value = x
 
 fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part, 2, 20, 4, 16, 0.4, 0.2)
@@ -144,8 +144,8 @@ bowsher_loss = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
 #-------------------------------------------------------------------------------------
 # setup the total loss function consisting of data fidelity loss and the priors on the
 # sodium images
-penalty_info = {pynamr.UnknownName.PARAM: bowsher_loss}
-beta_info = {pynamr.UnknownName.PARAM: beta_x}
+penalty_info = {pynamr.VarName.PARAM: bowsher_loss}
+beta_info = {pynamr.VarName.PARAM: beta_x}
 loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 
 #-------------------------------------------------------------------------------------

@@ -12,7 +12,7 @@ except ModuleNotFoundError:
 from .utils import RadialKSpacePartitioner, XpArray
 from .utils import complex_view_of_real_array, real_view_of_complex_array
 from .utils import downsample, upsample
-from .variables import Unknown, UnknownName
+from .variables import Var, VarName
 
 #----------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------
@@ -119,12 +119,12 @@ class DualTESodiumAcqModel(abc.ABC):
         return self.y_shape_complex + (2, )
 
     @abc.abstractmethod
-    def forward(self, u: list[Unknown]) -> np.ndarray:
-        """ forward model that maps from unknown images/parameters to data y
+    def forward(self, u: list[Var]) -> np.ndarray:
+        """ forward model that maps from images/parameters to data y
 
         Parameters
         ----------
-        u : list[Unknown]
+        u : list[Var]
             the list of image space variables that represent known or unknown parameters of the forward model
             (e.g. images, image model parameters, T2* maps, Gamma)
 
@@ -137,7 +137,7 @@ class DualTESodiumAcqModel(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def adjoint(self, y:np.ndarray, u: list[Unknown]) -> np.ndarray:
+    def adjoint(self, y:np.ndarray, u: list[Var]) -> np.ndarray:
         """ adjoint of forward model that maps from data y to image x
 
         Parameters
@@ -146,15 +146,13 @@ class DualTESodiumAcqModel(abc.ABC):
             complex multicoil data array represented as real array with shape
             (num_coils, 2, data_shape, 2)
 
-        u : list[Unknown]
+        u : list[Var]
             the list of image space variables that represent known or unknown parameters of the forward model
             (e.g. images, image model parameters, T2* maps, Gamma)
 
         Returns
         -------
-        np.ndarray
-            the (multichannel) complex image represented in a real array 
-            with shape (num_compartments, image_shape, 2)
+        np.ndarray of image shape
         """
         raise NotImplementedError
 
@@ -220,8 +218,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         self._bound_long_frac = bound_long_frac
 
         self._free_short_frac = 1 - self._free_long_frac
-        self._bound_short_frac = 1 - self._bound_long_frac
-        
+        self._bound_short_frac = 1 - self._bound_long_frac 
 
     @property
     def T2star_free_short(self) -> float:
@@ -255,14 +252,14 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
     def bound_short_frac(self) -> float:
         return self._bound_short_frac
 
-    def forward(self, u: list[Unknown]) -> np.ndarray:
+    def forward(self, u: list[Var]) -> np.ndarray:
         """ forward step that calculates expected signal
 
         Parameters
         ----------
-        u : list[Unknown]
+        u : list[Var]
             the list of image space variables that represent known or unknown parameters of the forward model,
-            here single image variable with 2 compartments (bound and free pool)
+            -> here single complex image variable with shape (2 - compartments, 3D spatial dimensions, 2 - real and imaginary dimensions)
 
         Returns
         -------
@@ -364,7 +361,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         return y
 
-    def adjoint(self, y: np.ndarray, u:list[Unknown]) -> np.ndarray:
+    def adjoint(self, y: np.ndarray, u:list[Var]) -> np.ndarray:
         """ adjoint of forward step 
 
         Parameters
@@ -390,7 +387,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         if self._xp.__name__ == 'cupy':
             y = self._xp.asarray(y)
 
-        x_ds = self._xp.zeros((2,)+self._data_shape, dtype=y.dtype)
+        x_ds = self._xp.zeros((u[0]._nb_comp,) + self._data_shape, dtype=y.dtype)
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
@@ -532,27 +529,27 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                          kspace_part)
 
     #------------------------------------------------------------------------------
-    def forward(self, u: list[Unknown]) -> np.ndarray:
+    def forward(self, u: list[Var]) -> np.ndarray:
         """ Calculate apodized FFT of an image f
 
             Parameters
             ----------
 
-            u : list[Unknown]
+            u : list[Var]
                 the list of image space variables that represent known or unknown parameters of the forward model,
-                here two variables
-                1) the image proportional to Na concentration, with real and imaginary parts (last dimension)
-                2) the gamma, monoexponential T2* decay from TE1 to TE2, real
+                -> here two variables:
+                   1) the image "proportional" to Na concentration, with shape (spatial dimensions, 2 - real and imaginary dimensions)
+                   2) the Gamma, monoexponential T2* decay from TE1 to TE2, with shape (spatial dimensions)
 
             Returns
             -------
-            a float64 numpy array of shape (self.num_coils,image_shape,2)
+            a float64 numpy array of shape (self.num_coils, spatial dimensions, 2 - real and imaginary dimensions)
         """
         # read the input variables and create a complex view if required
         for el in u:
-            if el._name==UnknownName.IMAGE:
+            if el._name==VarName.IMAGE:
                 x = complex_view_of_real_array(el._value)
-            if el._name==UnknownName.GAMMA:
+            if el._name==VarName.GAMMA:
                 gam = el._value
 
         #----------------------
@@ -598,31 +595,29 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         return y
 
     #------------------------------------------------------------------------------
-    def adjoint(self, y: np.ndarray, u: list[Unknown]) -> np.ndarray:
+    def adjoint(self, y: np.ndarray, u: list[Var]) -> np.ndarray:
         """ Calculate the adjoint of the apodized FFT of a k-space image F
 
             Parameters
             ----------
 
-            y : a float64 numpy array of shape (self.num_coils,2,self.image_shape,2)
-              [...,0] is considered as the real part
-              [...,1] is considered as the imag part
+            y : array of data shape
 
-            u : list[Unknown]
+            u : list[Var]
                 the list of image space variables that represent known or unknown parameters of the forward model,
-                here two variables
-                1) the image proportional to Na concentration, with real and imaginary parts (last dimension)
-                2) the gamma, monoexponential T2* decay from TE1 to TE2, real
+                -> here two variables:
+                   1) the image "proportional" to Na concentration, with shape (spatial dimensions, 2 - real and imaginary dimensions)
+                   2) the Gamma, monoexponential T2* decay from TE1 to TE2, with shape (spatial dimensions)
 
             Returns
             -------
-            a float64 numpy array of shape (1,self.image_shape,2)
+            a float64 numpy array of shape (spatial dimensions, 2 - real and imaginary dimensions)
         """
         # create a complex view of the input real input array with two channels
         y = complex_view_of_real_array(y)
 
         for el in u:
-            if el._name==UnknownName.GAMMA:
+            if el._name==VarName.GAMMA:
                 gam = el._value
 
         #----------------------
@@ -679,39 +674,37 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
     #------------------------------------------------------------------------------
 
-    def grad(self, y: np.ndarray, u: list[Unknown]) -> np.ndarray:
-        """ Calculate the the "inner" derivative with respect to gamma
+    def grad(self, y: np.ndarray, u: list[Var]) -> np.ndarray:
+        """ Calculate the "inner" derivative with respect to the first variable in the list u (here gamma)
 
             Parameters
             ----------
 
-            y : a float64 numpy array of shape (self.num_coils,2,self.image_shape,2)
+            y : a float64 numpy array of shape (self.num_coils, data_shape, 2 - real and imaginary dimensions)
                 containing the "outer derivative" of the cost function
-              [...,0] is considered as the real part
-              [...,1] is considered as the imag part
 
-            u : list[Unknown]
+            u : list[Var]
                 the list of image space variables that represent known or unknown parameters of the forward model,
-                here two variables
-                1) the image proportional to Na concentration, with real and imaginary parts (last dimension)
-                2) the gamma, monoexponential T2* decay from TE1 to TE2, real
+                -> here two variables:
+                1) the gamma, monoexponential T2* decay from TE1 to TE2, real
+                2) the image proportional to Na concentration, with shape (spatial dimensions, 2 - real and imaginary parts)
 
             Returns
             -------
-            a float64 numpy array of shape (1,image_shape)
+            a float64 numpy array of shape (image spatial dimensions)
         """
 
-        # currently only for Gamma
-        if u[0]._name != UnknownName.GAMMA:
-            raise NotImplementedError('Currently only for nonlinear variables (Gamma)')
+        # here only for Gamma
+        if u[0]._name != VarName.GAMMA:
+            raise NotImplementedError('Here the inner derivative is only for the nonlinear variable Gamma!')
 
         # create a complex view of the input real input array with two channels
         y = complex_view_of_real_array(y)
 
         for el in u:
-            if el._name==UnknownName.IMAGE:
+            if el._name==VarName.IMAGE:
                 img = complex_view_of_real_array(el._value)
-            elif el._name==UnknownName.GAMMA:
+            elif el._name==VarName.GAMMA:
                 gam = el._value
 
         #----------------------

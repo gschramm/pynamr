@@ -46,8 +46,8 @@ class TestGradients(unittest.TestCase):
                                                                  readout_time,
                                                                  kspace_part)
 
-        self.unknowns_mono = [pynamr.Unknown(pynamr.UnknownName.IMAGE, tuple([self.ds * x for x in self.data_shape]) + (2,)),
-            pynamr.Unknown(pynamr.UnknownName.GAMMA, tuple([self.ds * x for x in self.data_shape]), 1, False, False)]
+        self.unknowns_mono = [pynamr.Var(pynamr.VarName.IMAGE, tuple([self.ds * x for x in self.data_shape]) + (2,)),
+            pynamr.Var(pynamr.VarName.GAMMA, tuple([self.ds * x for x in self.data_shape]), 1, False, False)]
 
         self.x = np.random.rand(*( (self.image_shape) + (2, )))
         self.unknowns_mono[0]._value = self.x
@@ -63,7 +63,7 @@ class TestGradients(unittest.TestCase):
             16, 0.4, 0.2)
 
         self.x_bi = np.random.rand(*((2, ) + (self.image_shape) + (2, )))
-        self.unknowns_bi = [pynamr.Unknown(pynamr.UnknownName.PARAM, tuple([2,] + [self.ds * x for x in self.data_shape] + [2,]),2),]
+        self.unknowns_bi = [pynamr.Var(pynamr.VarName.PARAM, tuple([2,] + [self.ds * x for x in self.data_shape] + [2,]),2),]
         self.unknowns_bi[0]._value = self.x_bi
 
         self.y_bi = self.bi_exp_model.forward(self.unknowns_bi)
@@ -85,9 +85,9 @@ class TestGradients(unittest.TestCase):
         # check gradients
         ll = loss(unknowns)
         gx = loss.grad(unknowns)
-        unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
+        unknowns = pynamr.putVarInFirstPlace(pynamr.VarName.GAMMA, unknowns)
         gg = loss.grad(unknowns)
-        unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
+        unknowns = pynamr.putVarInFirstPlace(pynamr.VarName.IMAGE, unknowns)
 
         # test gradient with respect to Na image
         for j in range(2):
@@ -125,7 +125,7 @@ class TestGradients(unittest.TestCase):
         ll = loss(unknowns)
         gx = loss.grad(unknowns)
 
-        for comp in range(unknowns[0].nb_comp):
+        for comp in range(unknowns[0]._nb_comp):
             for j in range(2):
                 delta_x = np.zeros(x_0.shape)
                 delta_x[comp, i, i, i, j] = eps
@@ -163,8 +163,8 @@ class TestGradients(unittest.TestCase):
         bowsher_loss = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
 
         # setup the combined loss function
-        penalty_info = {pynamr.UnknownName.IMAGE: bowsher_loss, pynamr.UnknownName.GAMMA: bowsher_loss}
-        beta_info = {pynamr.UnknownName.IMAGE: beta_x, pynamr.UnknownName.GAMMA: beta_gam}
+        penalty_info = {pynamr.VarName.IMAGE: bowsher_loss, pynamr.VarName.GAMMA: bowsher_loss}
+        beta_info = {pynamr.VarName.IMAGE: beta_x, pynamr.VarName.GAMMA: beta_gam}
         loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 
         # inital values
@@ -177,9 +177,9 @@ class TestGradients(unittest.TestCase):
         # check gradients
         ll = loss(x_0, unknowns[0], unknowns[1])
         gx = loss.grad(x_0, unknowns[0], unknowns[1])
-        unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
+        unknowns = pynamr.putVarInFirstPlace(pynamr.VarName.GAMMA, unknowns)
         gg = loss.grad(gam_0, unknowns[0], unknowns[1])
-        unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
+        unknowns = pynamr.putVarInFirstPlace(pynamr.VarName.IMAGE, unknowns)
 
         # test gradient with respect to Na image (real part)
         for j in range(2):
@@ -196,9 +196,6 @@ class TestGradients(unittest.TestCase):
         delta_g[i, i, i] = eps
         ind = np.ravel_multi_index((i, i, i), gam_0.shape)
 
-        #unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
-        #unknowns[0]._value = gam_0 + delta_g
-        unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
         unknowns[1]._value = gam_0 + delta_g
 
         self.assertTrue(
@@ -234,8 +231,8 @@ class TestGradients(unittest.TestCase):
         bowsher_loss = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
 
         # setup the combined loss function
-        penalty_info = {pynamr.UnknownName.PARAM: bowsher_loss}
-        beta_info = {pynamr.UnknownName.PARAM: beta_x}
+        penalty_info = {pynamr.VarName.PARAM: bowsher_loss}
+        beta_info = {pynamr.VarName.PARAM: beta_x}
         loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 
         # inital values
@@ -248,7 +245,7 @@ class TestGradients(unittest.TestCase):
         gx = loss.grad(x_0, unknowns[0])
 
         # test gradient with respect to Na image (real part)
-        for comp in range(unknowns[0].nb_comp):
+        for comp in range(unknowns[0]._nb_comp):
             for j in range(2):
                 delta_x = np.zeros(x_0.shape)
                 delta_x[comp, i, i, i, j] = eps

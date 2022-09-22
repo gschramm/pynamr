@@ -7,18 +7,18 @@ import numpy as np
 #----------------------------------------------------------------------------------
 
 
-class UnknownName(enum.Enum):
+class VarName(enum.Enum):
     IMAGE = 'Sodium image'
     GAMMA = 'Gamma'
     PARAM = 'Parameters of an image model'
 
 
 
-class Unknown():
+class Var():
     """ Image space variable representing a parameter of the forward model """
 
     def __init__(self,
-                 name: UnknownName,
+                 name: VarName,
                  shape: tuple,
                  nb_comp: int = 1,
                  complex_var: bool = True,
@@ -40,11 +40,11 @@ class Unknown():
         # complex number variable
         self._complex_var = complex_var
         # Number of spatial components (e.g. multicompartmental voxel model)
-        self.nb_comp = nb_comp
+        self._nb_comp = nb_comp
 
 
 
-def putVarInFirstPlace(name: UnknownName, u: list[Unknown]) -> list[Unknown]:
+def putVarInFirstPlace(name: VarName, u: list[Var]) -> list[Var]:
 
     for ind, el in enumerate(u):
         if el._name==name:

@@ -17,8 +17,6 @@ import matplotlib.pyplot as plt
 import pynamr
 
 
-print("Neeeeeeeeeeeeeeew")
-
 #-------------------------------------------------------------------------------------
 # input parameters
 
@@ -94,8 +92,8 @@ readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
 # construct the (unknown) image space variables for the model
-unknowns = [pynamr.Unknown(pynamr.UnknownName.IMAGE, tuple([ds * x for x in data_shape]) + (2,)),
-            pynamr.Unknown(pynamr.UnknownName.GAMMA, tuple([ds * x for x in data_shape]), 1, False, False)]
+unknowns = [pynamr.Var(pynamr.VarName.IMAGE, tuple([ds * x for x in data_shape]) + (2,)),
+            pynamr.Var(pynamr.VarName.GAMMA, tuple([ds * x for x in data_shape]), 1, False, False)]
 
 # initialize the values
 unknowns[0]._value = x
@@ -159,8 +157,8 @@ bowsher_loss = pynamr.BowsherLoss(nn_inds, nn_inds_adj)
 #-------------------------------------------------------------------------------------
 # setup the total loss function consiting of data fidelity loss and the priors on the
 # sodium and gamma images
-penalty_info = {pynamr.UnknownName.IMAGE: bowsher_loss, pynamr.UnknownName.GAMMA: bowsher_loss}
-beta_info = {pynamr.UnknownName.IMAGE: beta_x, pynamr.UnknownName.GAMMA: beta_gam}
+penalty_info = {pynamr.VarName.IMAGE: bowsher_loss, pynamr.VarName.GAMMA: bowsher_loss}
+beta_info = {pynamr.VarName.IMAGE: beta_x, pynamr.VarName.GAMMA: beta_gam}
 loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 
 #-------------------------------------------------------------------------------------
@@ -189,7 +187,7 @@ for i_out in range(n_outer):
 
     # update current value
     unknowns[0]._value = res_1[0].copy().reshape(unknowns[0]._shape)
-    unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.GAMMA, unknowns)
+    unknowns = pynamr.putVarInFirstPlace(pynamr.VarName.GAMMA, unknowns)
 
     # update real gamma (decay) image
     res_2 = fmin_l_bfgs_b(loss,
@@ -198,12 +196,12 @@ for i_out in range(n_outer):
                           args=unknowns,
                           maxiter=n_inner,
                           disp=1,
-                          bounds=((unknowns[0]._value).ravel().size) * [(0.001, 1)])
+                          bounds=(unknowns[0]._value.size) * [(0.001, 1)])
 
     
     # update current value
     unknowns[0]._value = res_2[0].copy().reshape(unknowns[0]._shape)
-    unknowns = pynamr.putVarInFirstPlace(pynamr.UnknownName.IMAGE, unknowns)
+    unknowns = pynamr.putVarInFirstPlace(pynamr.VarName.IMAGE, unknowns)
 
 
 #------------------
