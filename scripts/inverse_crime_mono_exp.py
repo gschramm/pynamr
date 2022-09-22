@@ -93,7 +93,7 @@ kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
 # construct the (unknown) image space variables for the model
 unknowns = [pynamr.Var(pynamr.VarName.IMAGE, tuple([ds * x for x in data_shape]) + (2,)),
-            pynamr.Var(pynamr.VarName.GAMMA, tuple([ds * x for x in data_shape]), 1, False, False)]
+            pynamr.Var(pynamr.VarName.GAMMA, tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False, linearity=False)]
 
 # initialize the values
 unknowns[0]._value = x

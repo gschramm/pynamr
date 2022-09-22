@@ -47,7 +47,7 @@ class TestGradients(unittest.TestCase):
                                                                  kspace_part)
 
         self.unknowns_mono = [pynamr.Var(pynamr.VarName.IMAGE, tuple([self.ds * x for x in self.data_shape]) + (2,)),
-            pynamr.Var(pynamr.VarName.GAMMA, tuple([self.ds * x for x in self.data_shape]), 1, False, False)]
+            pynamr.Var(pynamr.VarName.GAMMA, tuple([self.ds * x for x in self.data_shape]), nb_comp=1, complex_var=False, linearity=False)]
 
         self.x = np.random.rand(*( (self.image_shape) + (2, )))
         self.unknowns_mono[0]._value = self.x
@@ -63,7 +63,7 @@ class TestGradients(unittest.TestCase):
             16, 0.4, 0.2)
 
         self.x_bi = np.random.rand(*((2, ) + (self.image_shape) + (2, )))
-        self.unknowns_bi = [pynamr.Var(pynamr.VarName.PARAM, tuple([2,] + [self.ds * x for x in self.data_shape] + [2,]),2),]
+        self.unknowns_bi = [pynamr.Var(pynamr.VarName.PARAM, tuple([2,] + [self.ds * x for x in self.data_shape] + [2,]), nb_comp=2),]
         self.unknowns_bi[0]._value = self.x_bi
 
         self.y_bi = self.bi_exp_model.forward(self.unknowns_bi)

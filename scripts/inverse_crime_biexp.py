@@ -91,7 +91,7 @@ readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
 # unknowns
-unknowns = [pynamr.Var(pynamr.VarName.PARAM, tuple([2,] + [ds * x for x in data_shape] + [2,]),2),]
+unknowns = [pynamr.Var(pynamr.VarName.PARAM, tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2),]
 unknowns[0]._value = x
 
 fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part, 2, 20, 4, 16, 0.4, 0.2)
