@@ -278,3 +278,21 @@ def sum_of_squares_reconstruction(data: np.ndarray) -> np.ndarray:
 
     return sos
  
+def simple_reconstruction(data: np.ndarray) -> np.ndarray:
+    """ the simplest recon possible from single-channel data (IFFT)
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Real array of shape (n0, n1, n2, 2) containing the single-channel
+        coil data. The last dimension is used to store real and imaginary part.
+
+    Returns
+    -------
+    np.ndarray
+        Real array of shape (n0, n1, n2, 2) with the simple reconstruction.
+        The last dimension is used to store real and imaginary part.
+    """    
+    recon = np.fft.ifftn(complex_view_of_real_array(data), norm='ortho')
+
+    return recon

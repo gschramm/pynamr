@@ -6,12 +6,14 @@ def rod_phantom(n=512,
                 r_rod=0.08,
                 nrods=5,
                 rod_contrast=None,
-                rod_gam=None):
+                rod_gam=None
+                dt=5.#ms):
 
     if rod_contrast is None:
         rod_contrast = np.linspace(0.1, 1.2, nrods)
-    if rod_gam is None:
-        rod_gam = np.linspace(0.1, 0.9, nrods)
+    if rod_gam is None and dt>0.:
+        # T2* decay between TE1 and TE2 with realistic brain T2* values
+        rod_gam = np.exp(-dt/np.array([2, 5, 10, 20, 40])) #ms
 
     x = np.linspace(-1, 1, n)
     X, Y = np.meshgrid(x, x, indexing='ij')
