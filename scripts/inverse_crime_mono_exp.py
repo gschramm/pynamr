@@ -92,12 +92,12 @@ readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
 # construct the (unknown) image space variables for the model
-unknowns = [pynamr.Var(pynamr.VarName.IMAGE, tuple([ds * x for x in data_shape]) + (2,)),
-            pynamr.Var(pynamr.VarName.GAMMA, tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False, linearity=False)]
+unknowns = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([ds * x for x in data_shape]) + (2,)),
+        pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False, linearity=False)}
 
 # initialize the values
-unknowns[0]._value = x
-unknowns[1]._value = gam
+unknowns[pynamr.VarName.IMAGE].value = x
+unknowns[pynamr.VarName.GAMMA].value = gam
 
 # construct the forward model
 fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part) 
@@ -169,45 +169,45 @@ x_0 = np.stack((sos_0_filtered, np.zeros(sos_0_filtered.shape)), axis = -1)
 gam_0 = np.clip(sos_1_filtered / (sos_0_filtered + 1e-7), 0, 1)
 
 # allocate initial values of unknown variables
-unknowns[0]._value = x_0.copy()
-unknowns[1]._value = gam_0.copy()
+unknowns[pynamr.VarName.IMAGE].value = x_0.copy()
+unknowns[pynamr.VarName.GAMMA].value = gam_0.copy()
 
 
 #------------------
 # alternating LBFGS steps
 for i_out in range(n_outer):
 
+    var_name = pynamr.VarName.IMAGE
     # update complex sodium image
     res_1 = fmin_l_bfgs_b(loss,
-                          (unknowns[0]._value).copy().ravel(),
-                          fprime=loss.grad,
-                          args=unknowns,
+                          (unknowns[var_name].value).copy().ravel(),
+                          fprime=loss.gradient,
+                          args=(unknowns, var_name),
                           maxiter=n_inner,
                           disp=1)
 
     # update current value
-    unknowns[0]._value = res_1[0].copy().reshape(unknowns[0]._shape)
-    unknowns = pynamr.putVarInFirstPlace(pynamr.VarName.GAMMA, unknowns)
+    unknowns[pynamr.VarName.IMAGE].value = res_1[0].copy().reshape(unknowns[pynamr.VarName.IMAGE].shape)
 
+    var_name = pynamr.VarName.GAMMA
     # update real gamma (decay) image
     res_2 = fmin_l_bfgs_b(loss,
-                          (unknowns[0]._value).copy().ravel(),
-                          fprime=loss.grad,
-                          args=unknowns,
+                          (unknowns[var_name].value).copy().ravel(),
+                          fprime=loss.gradient,
+                          args=(unknowns, var_name),
                           maxiter=n_inner,
                           disp=1,
-                          bounds=(unknowns[0]._value.size) * [(0.001, 1)])
+                          bounds=(unknowns[var_name].value.size) * [(0.001, 1)])
 
     
     # update current value
-    unknowns[0]._value = res_2[0].copy().reshape(unknowns[0]._shape)
-    unknowns = pynamr.putVarInFirstPlace(pynamr.VarName.IMAGE, unknowns)
+    unknowns[pynamr.VarName.GAMMA].value = res_2[0].copy().reshape(unknowns[pynamr.VarName.GAMMA].shape)
 
 
 #------------------
 
-x_r = unknowns[0]._value
-gam_r = unknowns[1]._value
+x_r = unknowns[pynamr.VarName.IMAGE].value
+gam_r = unknowns[pynamr.VarName.GAMMA].value
 
 # show the results
 ims_1 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.1*x.max())

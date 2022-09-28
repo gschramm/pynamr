@@ -119,12 +119,12 @@ class DualTESodiumAcqModel(abc.ABC):
         return self.y_shape_complex + (2, )
 
     @abc.abstractmethod
-    def forward(self, u: list[Var]) -> np.ndarray:
+    def forward(self, var_dict: dict[VarName,Var]) -> np.ndarray:
         """ forward model that maps from images/parameters to data y
 
         Parameters
         ----------
-        u : list[Var]
+        u : dict[VarName,Var]
             the list of image space variables that represent known or unknown parameters of the forward model
             (e.g. images, image model parameters, T2* maps, Gamma)
 
@@ -137,7 +137,7 @@ class DualTESodiumAcqModel(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def adjoint(self, y:np.ndarray, u: list[Var]) -> np.ndarray:
+    def adjoint(self, y:np.ndarray, var_dict: dict[VarName,Var]) -> np.ndarray:
         """ adjoint of forward model that maps from data y to image x
 
         Parameters
@@ -146,7 +146,7 @@ class DualTESodiumAcqModel(abc.ABC):
             complex multicoil data array represented as real array with shape
             (num_coils, 2, data_shape, 2)
 
-        u : list[Var]
+        u : dict[VarName,Var]
             the list of image space variables that represent known or unknown parameters of the forward model
             (e.g. images, image model parameters, T2* maps, Gamma)
 
@@ -252,12 +252,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
     def bound_short_frac(self) -> float:
         return self._bound_short_frac
 
-    def forward(self, u: list[Var]) -> np.ndarray:
+    def forward(self, var_dict: dict[VarName,Var]) -> np.ndarray:
         """ forward step that calculates expected signal
 
         Parameters
         ----------
-        u : list[Var]
+        u : dict[VarName,Var]
             the list of image space variables that represent known or unknown parameters of the forward model,
             -> here single complex image variable with shape (2 - compartments, 3D spatial dimensions, 2 - real and imaginary dimensions)
 
@@ -269,7 +269,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         """ """"""
 
         # create a complex view of the input real input array with two channels
-        x = complex_view_of_real_array(u[0]._value)
+        x = complex_view_of_real_array(var_dict[VarName.PARAM].value)
 
         #----------------------
         # send f and gam to GPU
@@ -361,7 +361,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         return y
 
-    def adjoint(self, y: np.ndarray, u:list[Var]) -> np.ndarray:
+    def adjoint(self, y: np.ndarray, var_dict: dict[VarName,Var]) -> np.ndarray:
         """ adjoint of forward step 
 
         Parameters
@@ -387,7 +387,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         if self._xp.__name__ == 'cupy':
             y = self._xp.asarray(y)
 
-        x_ds = self._xp.zeros((u[0]._nb_comp,) + self._data_shape, dtype=y.dtype)
+        x_ds = self._xp.zeros((var_dict[VarName.PARAM].nb_comp,) + self._data_shape, dtype=y.dtype)
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
@@ -497,6 +497,13 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         return x
 
 
+    #------------------------------------------------------------------------------
+
+    def gradient(self, y: np.ndarray, var_dict: dict[VarName,Var], var_name: VarName) -> np.ndarray:
+        return self.adjoint(y, var_dict)
+
+
+
 class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
     """ mono exponential dual TE sodium acquisition model assuming one compartment """
 
@@ -529,13 +536,13 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                          kspace_part)
 
     #------------------------------------------------------------------------------
-    def forward(self, u: list[Var]) -> np.ndarray:
+    def forward(self, var_dict: dict[VarName,Var]) -> np.ndarray:
         """ Calculate apodized FFT of an image f
 
             Parameters
             ----------
 
-            u : list[Var]
+            u : dict[VarName,Var]
                 the list of image space variables that represent known or unknown parameters of the forward model,
                 -> here two variables:
                    1) the image "proportional" to Na concentration, with shape (spatial dimensions, 2 - real and imaginary dimensions)
@@ -546,11 +553,11 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             a float64 numpy array of shape (self.num_coils, spatial dimensions, 2 - real and imaginary dimensions)
         """
         # read the input variables and create a complex view if required
-        for el in u:
-            if el._name==VarName.IMAGE:
-                x = complex_view_of_real_array(el._value)
-            if el._name==VarName.GAMMA:
-                gam = el._value
+        for name, var in var_dict.items():
+            if name==VarName.IMAGE:
+                x = complex_view_of_real_array(var.value)
+            if name==VarName.GAMMA:
+                gam = var.value
 
         #----------------------
         # send x and gam to GPU
@@ -595,7 +602,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         return y
 
     #------------------------------------------------------------------------------
-    def adjoint(self, y: np.ndarray, u: list[Var]) -> np.ndarray:
+    def adjoint(self, y: np.ndarray, var_dict: dict[VarName,Var]) -> np.ndarray:
         """ Calculate the adjoint of the apodized FFT of a k-space image F
 
             Parameters
@@ -603,7 +610,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
             y : array of data shape
 
-            u : list[Var]
+            u : dict[VarName,Var]
                 the list of image space variables that represent known or unknown parameters of the forward model,
                 -> here two variables:
                    1) the image "proportional" to Na concentration, with shape (spatial dimensions, 2 - real and imaginary dimensions)
@@ -616,9 +623,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         # create a complex view of the input real input array with two channels
         y = complex_view_of_real_array(y)
 
-        for el in u:
-            if el._name==VarName.GAMMA:
-                gam = el._value
+        gam = var_dict[VarName.GAMMA].value
 
         #----------------------
         # send y, gam to GPU
@@ -674,7 +679,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
     #------------------------------------------------------------------------------
 
-    def grad(self, y: np.ndarray, u: list[Var]) -> np.ndarray:
+    def gradient(self, y: np.ndarray, var_dict: dict[VarName,Var], var_name: VarName) -> np.ndarray:
         """ Calculate the "inner" derivative with respect to the first variable in the list u (here gamma)
 
             Parameters
@@ -683,7 +688,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             y : a float64 numpy array of shape (self.num_coils, data_shape, 2 - real and imaginary dimensions)
                 containing the "outer derivative" of the cost function
 
-            u : list[Var]
+            u : dict[VarName,Var]
                 the list of image space variables that represent known or unknown parameters of the forward model,
                 -> here two variables:
                 1) the gamma, monoexponential T2* decay from TE1 to TE2, real
@@ -694,18 +699,17 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             a float64 numpy array of shape (image spatial dimensions)
         """
 
-        # here only for Gamma
-        if u[0]._name != VarName.GAMMA:
-            raise NotImplementedError('Here the inner derivative is only for the nonlinear variable Gamma!')
+        if var_name == VarName.IMAGE:
+            return self.adjoint(y, var_dict)
 
         # create a complex view of the input real input array with two channels
         y = complex_view_of_real_array(y)
 
-        for el in u:
-            if el._name==VarName.IMAGE:
-                img = complex_view_of_real_array(el._value)
-            elif el._name==VarName.GAMMA:
-                gam = el._value
+        for name, var in var_dict.items():
+            if name==VarName.IMAGE:
+                img = complex_view_of_real_array(var.value)
+            elif name==VarName.GAMMA:
+                gam = var.value
 
         #----------------------
         # send y, gam to GPU

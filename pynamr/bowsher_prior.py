@@ -259,8 +259,8 @@ class BowsherLoss(DifferentiableFunction):
         self.ninds = ninds
         self.ninds_adj = ninds_adj
 
-    def __call__(self, img: np.ndarray) -> float:
+    def __call__(self, img: np.ndarray, *args) -> float:
         return bowsher_cost(img, self.ninds)
 
-    def grad(self, img: np.ndarray) -> np.ndarray:
+    def gradient(self, img: np.ndarray, *args) -> np.ndarray:
         return bowsher_grad(img, self.ninds, self.ninds_adj)

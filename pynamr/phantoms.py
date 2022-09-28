@@ -6,8 +6,8 @@ def rod_phantom(n=512,
                 r_rod=0.08,
                 nrods=5,
                 rod_contrast=None,
-                rod_gam=None
-                dt=5.#ms):
+                rod_gam=None,
+                dt=5.):
 
     if rod_contrast is None:
         rod_contrast = np.linspace(0.1, 1.2, nrods)

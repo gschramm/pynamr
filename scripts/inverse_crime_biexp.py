@@ -91,8 +91,8 @@ readout_time = pynamr.TPIReadOutTime()
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
 # unknowns
-unknowns = [pynamr.Var(pynamr.VarName.PARAM, tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2),]
-unknowns[0]._value = x
+unknowns = {pynamr.VarName.PARAM: pynamr.Var( shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
+unknowns[pynamr.VarName.PARAM].value = x
 
 fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part, 2, 20, 4, 16, 0.4, 0.2)
 
@@ -155,7 +155,7 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 x_0 = 0 * x + 1
 
 # allocate arrays for recons and copy over initial values
-unknowns[0]._value = x_0.copy()
+unknowns[pynamr.VarName.PARAM].value = x_0.copy()
 
 #------------------
 # alternating LBFGS steps
@@ -163,14 +163,14 @@ for i_out in range(n_outer):
 
     # update complex sodium image
     res_1 = fmin_l_bfgs_b(loss,
-                          unknowns[0]._value.copy().ravel(),
-                          fprime=loss.grad,
-                          args=deepcopy(unknowns),
+                          unknowns[pynamr.VarName.PARAM].value.copy().ravel(),
+                          fprime=loss.gradient,
+                          args=(unknowns, pynamr.VarName.PARAM),
                           maxiter=n_inner,
                           disp=1)
 
-    unknowns[0]._value = res_1[0].copy().reshape(unknowns[0]._shape)
+    unknowns[pynamr.VarName.PARAM].value = res_1[0].copy().reshape(unknowns[pynamr.VarName.PARAM].shape)
 
 #------------------
 
-x_r = unknowns[0]._value
+x_r = unknowns[pynamr.VarName.PARAM].value
