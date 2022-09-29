@@ -7,12 +7,12 @@ from .models import TwoCompartmentBiExpDualTESodiumAcqModel
 from .models import MonoExpDualTESodiumAcqModel
 from .models import Var, VarName
 
-from .protocols import DifferentiableFunction
+from .protocols import DifferentiableLossFunction, DifferentiableLossScipy
 
+from IPython.core.debugger import set_trace
 
-class DataFidelityLoss(DifferentiableFunction):
-    """ Data fidelity loss for mono exponential and bi exponential dual echo 
-        sodium forward model.
+class DataFidelityLoss(DifferentiableLossFunction):
+    """ Data fidelity loss for sodium MRI forward models.
     """
 
     def __init__(self, model: DualTESodiumAcqModel, data: npt.NDArray) -> None:
@@ -28,63 +28,95 @@ class DataFidelityLoss(DifferentiableFunction):
         self._data = data
         self._model = model
 
-    def __call__(self, arg1: npt.NDArray, var_dict: dict[VarName, Var], var_name: VarName) -> float:
+    def __call__(self, var_dict: dict[VarName, Var]) -> float:
         """calculate data fidelity loss
 
         Parameters
         ----------
 
-        u : dict[VarName,Var]
-            the list of image space variables that represent known or unknown parameters of the forward model
+        var_dict : dict[VarName,Var]
+            dictionary of image space variables that represent known or unknown parameters of the forward model
             (i.e. images, image model parameters, T2* maps, Gamma)
 
         Returns
         -------
         float
-            the loss value
+            the scalar loss value
         """        
-        var_dict[var_name].value = np.reshape(arg1, var_dict[var_name].shape)
         return 0.5 * ((self._model.forward(var_dict) - self._data)**2).sum()
 
-    def gradient(self, arg1: npt.NDArray, var_dict: dict[VarName, Var],
-                 var_name: VarName) -> npt.NDArray:
-        """calculate the gradient of the data fidelity loss with respect to the first variable in the list
+    def gradient(self, var_dict: dict[VarName, Var], var_name: VarName) -> npt.NDArray:
+        """calculate the gradient of the data fidelity loss with respect to the variable var_name
 
         Parameters
         ----------
-        u : dict[VarName,Var]
-            the list of image space variables that represent known or unknown parameters of the forward model
+        var_dict : dict[VarName,Var]
+            all the variables that represent known or unknown parameters of the forward model
             (i.e. images, image model parameters, T2* maps, Gamma)
 
         Returns
         -------
         np.ndarray
-            the gradient
-
-        Note
-        ----
+            the gradient, shaped as the variable
         """
-
-        var_dict[var_name].value = np.reshape(arg1, var_dict[var_name].shape)
         outer = (self._model.forward(var_dict) - self._data)
         return self._model.gradient(outer, var_dict, var_name)
 
     def gradient_test(self,
-                      var_name: VarName,
-                      eps: float = 1e-6,
+                      var_dict: dict[VarName,Var],
+                      var_name,
+                      eps: float = 1e-5,
                       inds: tuple = (0, ),
                       rtol: float = 1e-4,
                       atol: float = 1e-7) -> None:
-        pass
+        """check whether gradient matches its numerical approximation
+        Parameters
+        ----------
+        var_dict : dict[str, npt.NDArray]
+            all the variables
+        var_name : str
+            name of variable for which gradient should be checked
+        eps : float, optional
+            magnitude of pertubation, by default 1e-6
+        inds : tuple, optional
+            indicies along which to add / test pertubation, by default (0, )
+        rtol : float, optional
+            relative tolerance, by default 1e-4
+        atol : float, optional
+            absolute tolerance, by default 1e-7
+        """
+
+        for key, var in var_dict.items():
+            var.value = np.random.rand(*var.shape)
+
+        # calculate the loss with the original variables
+        l1 = self.__call__(var_dict)
+        # calculate the gradient with the original variables
+        g = self.gradient(var_dict, var_name)
+
+        for i in inds:
+            # setup variables with small pertubation
+            var_dict2 = deepcopy(var_dict)
+            delta = np.zeros(var_dict[var_name].shape)
+            delta.ravel()[i] = eps
+            var_dict2[var_name].value += delta
+
+            # calculate loss with pertubed variables
+            l2 = self.__call__(var_dict2)
+
+            # approximate gradient
+            g_approx = (l2 - l1) / eps
+
+            assert (np.isclose(g.ravel()[i], g_approx, rtol=rtol, atol=atol))
 
 
-class TotalLoss(DifferentiableFunction):
-    """Total loss function to be optimized consisting of data fidelity and priors
-      Complies with the interface required for using scipy.optimize
+class TotalLoss(DifferentiableLossScipy):
+    """Total loss function to be optimized, consisting of data fidelity and penalties
+       Complies with the interface required for using scipy.optimize.minimize
     """
     def __init__(self,
                  datafidelityloss: DataFidelityLoss,
-                 penalties: dict[VarName, DifferentiableFunction],
+                 penalties: dict[VarName, DifferentiableLossFunction],
                  betas: dict[VarName, float] ):
         """
         Parameters
@@ -100,31 +132,27 @@ class TotalLoss(DifferentiableFunction):
         self.betas = betas
 
 
-    def __call__(self, in1: np.ndarray, var_dict: dict[VarName,Var], var_name: VarName) -> float:
-        """calculate total loss
-
+    def __call__(self, current_estimate: np.ndarray, var_dict_in: dict[VarName,Var], var_name: VarName) -> float:
+        """ Evaluate differentiable loss function
         Parameters
         ----------
-        in1 : np.ndarray
-            current value of the variable being optimized
-        *args : additional input arguments, here dict[VarName,Var]
-
+        current_estimate : npt.NDArray
+            current estimate for the variable var_name that is being optimized
+        var_dict : dict[str, npt.NDArray]
+            all the variables
+        var_name : str
+            name of the variable being optimized
         Returns
         -------
         float
-            the loss value
-
-        Note
-        -------
-        Interface for scipy.optimize
+            the scalar loss function value
         """
 
-        # deep copy because scipy.optimize requires fixed additional arguments
         # update the variable list with the current value
-        var_dict[var_name].value = in1.reshape(var_dict[var_name].shape)
+        var_dict[var_name].value = current_estimate.reshape(var_dict[var_name].shape)
 
         # data fidelity loss
-        cost = self.datafidelityloss(in1, var_dict, var_name)
+        cost = self.datafidelityloss(var_dict)
 
         # add all the penalties
         for name, var in var_dict.items():
@@ -145,32 +173,28 @@ class TotalLoss(DifferentiableFunction):
 
         return cost
 
-    def gradient(self, in1: np.ndarray, var_dict: dict[VarName,Var], var_name: VarName) -> np.ndarray:
-        """calculate the gradient of the total loss with respect to the first variable in the list
-
+    def gradient(self, current_estimate: np.ndarray, var_dict_in: dict[VarName,Var], var_name: VarName) -> np.ndarray:
+        """ Evaluate the gradient of the function with respect to the specified variable
         Parameters
-        ----------
-        in1 : np.ndarray
-            current value of the variable being optimized
-        *args : additional input arguments, here dict[VarName,Var]
-
+        ----------I
+        current_estimate : npt.NDArray
+            current estimate for the variable var_name that is being optimized
+        var_dict : dict[str, npt.NDArray]
+            all the variables
+        var_name : str
+            name of the variable being optimized
 
         Returns
         -------
-        np.ndarray
-            the gradient
-
-        Note
-        ----
-        Interface for scipy.optimize
+        npt.NDArray 1D
+            gradient with respect to variable "var_name", ravelled
         """
 
-        # deep copy because scipy.optimize requires fixed additional arguments
         # update the variable list with the current value
-        var_dict[var_name].value = in1.reshape(var_dict[var_name].shape)
+        var_dict[var_name].value = current_estimate.reshape(var_dict[var_name].shape)
 
         # data fidelity loss gradient
-        grad = self.datafidelityloss.gradient(in1, var_dict, var_name)
+        grad = self.datafidelityloss.gradient(var_dict, var_name)
 
         # add penalty gradient for the first variable
         var = var_dict[var_name]
@@ -191,3 +215,49 @@ class TotalLoss(DifferentiableFunction):
 
         # flatten the array for scipy.optimize
         return grad.ravel()
+
+
+    def gradient_test(self,
+                      var_dict: dict[VarName,Var],
+                      var_name,
+                      eps: float = 1e-5,
+                      inds: tuple = (0, ),
+                      rtol: float = 1e-4,
+                      atol: float = 1e-7) -> None:
+        """check whether gradient matches its numerical approximation
+        Parameters
+        ----------
+        var_name : str
+            name of variable for which gradient should be checked
+        eps : float, optional
+            magnitude of pertubation, by default 1e-6
+        inds : tuple, optional
+            indicies along which to add / test pertubation, by default (0, )
+        rtol : float, optional
+            relative tolerance, by default 1e-4
+        atol : float, optional
+            absolute tolerance, by default 1e-7
+        """
+
+        for key, var in var_dict.items():
+            var.value = np.random.rand(*var.shape)
+
+        # calculate the loss with the original variables
+        l1 = self.__call__(var_dict[var_name].value.ravel(), var_dict, var_name)
+        # calculate the gradient with the original variables
+        g = self.gradient(var_dict[var_name].value.ravel(), var_dict, var_name)
+
+        for i in inds:
+            # setup variables with small pertubation
+            var_dict2 = deepcopy(var_dict)
+            delta = np.zeros(var_dict[var_name].shape)
+            delta.ravel()[i] = eps
+            var_dict2[var_name].value += delta
+
+            # calculate loss with pertubed variables
+            l2 = self.__call__(var_dict2[var_name].value.ravel(), var_dict2, var_name)
+            # approximate gradient
+            g_approx = (l2 - l1) / eps
+
+            assert (np.isclose(g[i], g_approx, rtol=rtol, atol=atol))
+

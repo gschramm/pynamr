@@ -3,7 +3,7 @@ from typing import Protocol
 import numpy as np
 from numba import njit, jit, prange
 
-from .protocols import DifferentiableFunction
+from .protocols import DifferentiableLossFunction
 
 
 @njit(parallel=True)
@@ -253,7 +253,7 @@ def bowsher_grad(img: np.ndarray, ninds: np.ndarray,
 
     return grad
 
-class BowsherLoss(DifferentiableFunction):
+class BowsherLoss(DifferentiableLossFunction):
 
     def __init__(self, ninds: np.ndarray, ninds_adj: np.ndarray) -> None:
         self.ninds = ninds
@@ -264,3 +264,32 @@ class BowsherLoss(DifferentiableFunction):
 
     def gradient(self, img: np.ndarray, *args) -> np.ndarray:
         return bowsher_grad(img, self.ninds, self.ninds_adj)
+
+    def gradient_test(self,
+                      img_in: np.ndarray,
+                      eps: float = 1e-5,
+                      inds: tuple = (0, ),
+                      rtol: float = 1e-4,
+                      atol: float = 1e-7) -> np.ndarray:
+
+        img = np.random.rand(*img_in.shape)
+
+        # calculate the loss with the original variables
+        l1 = self.__call__(img, self.ninds)
+        # calculate the gradient with the original variables
+        g = self.gradient(img, self.ninds, self.ninds_adj)
+
+        for i in inds:
+            # setup variables with small pertubation
+            img2 = img.copy()
+            delta = np.zeros(img.shape)
+            delta.ravel()[i] = eps
+            img2 += delta
+
+            # calculate loss with pertubed variables
+            l2 = self.__call__(img2, self.ninds)
+
+            # approximate gradient
+            g_approx = (l2 - l1) / eps
+
+            assert (np.isclose(g.ravel()[i], g_approx, rtol=rtol, atol=atol))

@@ -13,9 +13,9 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
 import matplotlib.pyplot as plt
+from copy import deepcopy
 
 import pynamr
-
 
 #-------------------------------------------------------------------------------------
 # input parameters
@@ -172,7 +172,6 @@ gam_0 = np.clip(sos_1_filtered / (sos_0_filtered + 1e-7), 0, 1)
 unknowns[pynamr.VarName.IMAGE].value = x_0.copy()
 unknowns[pynamr.VarName.GAMMA].value = gam_0.copy()
 
-
 #------------------
 # alternating LBFGS steps
 for i_out in range(n_outer):
@@ -182,7 +181,7 @@ for i_out in range(n_outer):
     res_1 = fmin_l_bfgs_b(loss,
                           (unknowns[var_name].value).copy().ravel(),
                           fprime=loss.gradient,
-                          args=(unknowns, var_name),
+                          args=(deepcopy(unknowns), var_name),
                           maxiter=n_inner,
                           disp=1)
 
@@ -194,7 +193,7 @@ for i_out in range(n_outer):
     res_2 = fmin_l_bfgs_b(loss,
                           (unknowns[var_name].value).copy().ravel(),
                           fprime=loss.gradient,
-                          args=(unknowns, var_name),
+                          args=(deepcopy(unknowns), var_name),
                           maxiter=n_inner,
                           disp=1,
                           bounds=(unknowns[var_name].value.size) * [(0.001, 1)])
