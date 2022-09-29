@@ -132,7 +132,7 @@ class TotalLoss(DifferentiableLossScipy):
         self.betas = betas
 
 
-    def __call__(self, current_estimate: np.ndarray, var_dict_in: dict[VarName,Var], var_name: VarName) -> float:
+    def __call__(self, current_estimate: np.ndarray, var_dict: dict[VarName,Var], var_name: VarName) -> float:
         """ Evaluate differentiable loss function
         Parameters
         ----------
@@ -173,7 +173,7 @@ class TotalLoss(DifferentiableLossScipy):
 
         return cost
 
-    def gradient(self, current_estimate: np.ndarray, var_dict_in: dict[VarName,Var], var_name: VarName) -> np.ndarray:
+    def gradient(self, current_estimate: np.ndarray, var_dict: dict[VarName,Var], var_name: VarName) -> np.ndarray:
         """ Evaluate the gradient of the function with respect to the specified variable
         Parameters
         ----------I

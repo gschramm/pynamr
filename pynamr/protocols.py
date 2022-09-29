@@ -59,12 +59,11 @@ class DifferentiableLossFunction(abc.ABC):
         atol : float, optional
             absolute tolerance, by default 1e-7
         """
-        pass 
+        pass
 
 
 class DifferentiableLossScipy(abc.ABC):
-        """ Differentiable loss function interface compliant with scipy.optimize.mimimize
-        """
+
     @abc.abstractmethod
     def __call__(self, current_estimate: npt.NDArray, *args) -> float:
         """ Evaluate differentiable loss function
