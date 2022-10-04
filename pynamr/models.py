@@ -553,11 +553,8 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             a float64 numpy array of shape (self.num_coils, spatial dimensions, 2 - real and imaginary dimensions)
         """
         # read the input variables and create a complex view if required
-        for name, var in var_dict.items():
-            if name==VarName.IMAGE:
-                x = complex_view_of_real_array(var.value)
-            if name==VarName.GAMMA:
-                gam = var.value
+        x = complex_view_of_real_array(var_dict[VarName.IMAGE].value)
+        gam = var_dict[VarName.GAMMA].value
 
         #----------------------
         # send x and gam to GPU
@@ -705,11 +702,8 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         # create a complex view of the input real input array with two channels
         y = complex_view_of_real_array(y)
 
-        for name, var in var_dict.items():
-            if name==VarName.IMAGE:
-                img = complex_view_of_real_array(var.value)
-            elif name==VarName.GAMMA:
-                gam = var.value
+        img = complex_view_of_real_array(var_dict[VarName.IMAGE].value)
+        gam = var_dict[VarName.GAMMA].value
 
         #----------------------
         # send y, gam to GPU
