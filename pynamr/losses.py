@@ -162,8 +162,8 @@ class TotalLoss(DifferentiableLossScipy):
                         if var.nb_comp>1:
                             for k in range(var.nb_comp):
                                 cost += self.betas[name] * self.penalties[name](var.value[k,...,j])
-                            else:
-                                cost += self.betas[name] * self.penalties[name](var.value[...,j])
+                        else:
+                            cost += self.betas[name] * self.penalties[name](var.value[...,j])
                 else:
                     if var.nb_comp>1:
                         for k in range(var.nb_comp):
@@ -204,8 +204,8 @@ class TotalLoss(DifferentiableLossScipy):
                     if var.nb_comp>1:
                         for k in range(var.nb_comp):
                             grad[k,...,j] += self.betas[var_name] * self.penalties[var_name].gradient(var.value[k,...,j])
-                        else:
-                            grad[...,j] += self.betas[var_name] * self.penalties[var_name].gradient(var.value[...,j])
+                    else:
+                        grad[...,j] += self.betas[var_name] * self.penalties[var_name].gradient(var.value[...,j])
             else:
                 if var.nb_comp>1:
                     for k in range(var.nb_comp):
