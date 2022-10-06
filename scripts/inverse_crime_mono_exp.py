@@ -42,9 +42,9 @@ beta_x = 1e-2
 # prior weight applied to the gamma (decay) image
 beta_gam = 1e-2
 # number of outer LBFGS iterations
-n_outer = 5
+n_outer = 10
 # number of inner LBFGS iterations
-n_inner = 10
+n_inner = 20
 
 # number of readout bins
 n_readout_bins = 16
