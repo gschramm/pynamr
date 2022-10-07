@@ -23,8 +23,6 @@ class Var():
     nb_comp: int = 1
     # complex number variable: the last dimension is the real and imaginary component
     complex_var: bool = True
-    # whether the forward model is linear with respect to this variable
-    linearity: bool = True
     # np.ndarray
     value: np.ndarray = None
     # real number type

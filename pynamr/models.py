@@ -26,6 +26,7 @@ class DualTESodiumAcqModel(abc.ABC):
                  ds: int,
                  sens: XpArray,
                  dt: float,
+                 te1: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
                  kspace_part: RadialKSpacePartitioner) -> None:
 
@@ -39,6 +40,8 @@ class DualTESodiumAcqModel(abc.ABC):
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
+        te1 : float
+            TE1, start time for the first acquisition
         readout_time : typing.Callable[[np.ndarray], np.ndarray]
             Callable that maps 1d kspace array to readout time for used read out
         kspace_part : RadialKSpacePartitioner
@@ -55,6 +58,9 @@ class DualTESodiumAcqModel(abc.ABC):
 
         # time between two echos
         self._dt = dt
+
+        # TE1
+        self._te1 = te1
 
         # numpy / cupy module to use for ffts
         if isinstance(self._sens, np.ndarray):
@@ -89,6 +95,10 @@ class DualTESodiumAcqModel(abc.ABC):
     @property
     def dt(self) -> float:
         return self._dt
+
+    @property
+    def te1(self) -> float:
+        return self._te1
 
     @property
     def n_readout_bins(self) -> int:
@@ -165,6 +175,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         ds: int,
         sens: XpArray,
         dt: float,
+        te1: float,
         readout_time: typing.Callable[[np.ndarray], np.ndarray],
         kspace_part: RadialKSpacePartitioner,
         T2star_free_short: float,
@@ -184,6 +195,8 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
+        te1 : float
+            TE1, start time for the first acquisition
         readout_time : typing.Callable[[np.ndarray], np.ndarray]
             Callable that maps 1d kspace array to readout time for used read out
         kspace_part : RadialKSpacePartitioner
@@ -206,6 +219,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         super().__init__(ds,
                          sens,
                          dt,
+                         te1,
                          readout_time,
                          kspace_part)
 
@@ -292,14 +306,14 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     y[i_sens, 0, ...][self.readout_inds[
                         it]] += self._bound_long_frac * self._xp.fft.fftn(
                             self.sens[i_sens, ...] * self._xp.exp(
-                                -self._tr[it] / self._T2star_bound_long) *
+                                - (self._tr[it] + self._te1) / self._T2star_bound_long) *
                             x_ds[0, ...],
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - bound compartment - long
                     y[i_sens, 1, ...][self.readout_inds[
                         it]] += self._bound_long_frac * self._xp.fft.fftn(
                             self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._dt) /
+                                -(self._tr[it] + self._te1 + self._dt) /
                                 self._T2star_bound_long) * x_ds[0, ...],
                             norm='ortho')[self.readout_inds[it]]
 
@@ -308,14 +322,14 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     y[i_sens, 0, ...][self.readout_inds[
                         it]] += self._bound_short_frac * self._xp.fft.fftn(
                             self.sens[i_sens, ...] * self._xp.exp(
-                                -self._tr[it] / self._T2star_bound_short) *
+                                -(self._tr[it] + self._te1) / self._T2star_bound_short) *
                             x_ds[0, ...],
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - bound compartment - short
                     y[i_sens, 1, ...][self.readout_inds[
                         it]] += self._bound_short_frac * self._xp.fft.fftn(
                             self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._dt) /
+                                -(self._tr[it] + self._te1 + self._dt) /
                                 self._T2star_bound_short) * x_ds[0, ...],
                             norm='ortho')[self.readout_inds[it]]
 
@@ -324,14 +338,14 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     y[i_sens, 0, ...][self.readout_inds[
                         it]] += self._free_long_frac * self._xp.fft.fftn(
                             self.sens[i_sens, ...] * self._xp.exp(
-                                -self._tr[it] / self._T2star_free_long) *
+                                -(self._tr[it] + self._te1) / self._T2star_free_long) *
                             x_ds[1, ...],
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - free compartment - long
                     y[i_sens, 1, ...][self.readout_inds[
                         it]] += self._free_long_frac * self._xp.fft.fftn(
                             self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._dt) /
+                                -(self._tr[it] + self._te1 + self._dt) /
                                 self._T2star_free_long) * x_ds[1, ...],
                             norm='ortho')[self.readout_inds[it]]
 
@@ -340,14 +354,14 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     y[i_sens, 0, ...][self.readout_inds[
                         it]] += self._free_short_frac * self._xp.fft.fftn(
                             self.sens[i_sens, ...] * self._xp.exp(
-                                -self._tr[it] / self._T2star_free_short) *
+                                -(self._tr[it] + self._te1) / self._T2star_free_short) *
                             x_ds[1, ...],
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - free compartment - short
                     y[i_sens, 1, ...][self.readout_inds[
                         it]] += self._free_short_frac * self._xp.fft.fftn(
                             self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._dt) /
+                                -(self._tr[it] + self._te1 + self._dt) /
                                 self._T2star_free_short) * x_ds[1, ...],
                             norm='ortho')[self.readout_inds[it]]
 
@@ -398,7 +412,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
                     x_ds[0, ...] += self._bound_long_frac * (self._xp.exp(
-                        -self._tr[it] /
+                        -(self._tr[it] + self._te1) /
                         self._T2star_bound_long)) * self._xp.conj(
                             self.sens[i_sens]) * self._xp.fft.ifftn(
                                 tmp, norm='ortho')
@@ -408,7 +422,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
                     x_ds[0, ...] += self._bound_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._dt) /
+                        -(self._tr[it] + self._te1 + self._dt) /
                         self._T2star_bound_long)) * self._xp.conj(
                             self.sens[i_sens]) * self._xp.fft.ifftn(
                                 tmp, norm='ortho')
@@ -420,7 +434,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
                     x_ds[0, ...] += self._bound_short_frac * (self._xp.exp(
-                        -self._tr[it] /
+                        -(self._tr[it] + self._te1)/
                         self._T2star_bound_short)) * self._xp.conj(
                             self.sens[i_sens]) * self._xp.fft.ifftn(
                                 tmp, norm='ortho')
@@ -430,7 +444,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
                     x_ds[0, ...] += self._bound_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._dt) /
+                        -(self._tr[it] + self._te1 + self._dt) /
                         self._T2star_bound_short)) * self._xp.conj(
                             self.sens[i_sens]) * self._xp.fft.ifftn(
                                 tmp, norm='ortho')
@@ -442,7 +456,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
                     x_ds[1, ...] += self._free_long_frac * (self._xp.exp(
-                        -self._tr[it] /
+                        -(self._tr[it] + self._te1)/
                         self._T2star_free_long)) * self._xp.conj(
                             self.sens[i_sens]) * self._xp.fft.ifftn(
                                 tmp, norm='ortho')
@@ -452,7 +466,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
                     x_ds[1, ...] += self._free_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._dt) /
+                        -(self._tr[it] + self._te1 + self._dt) /
                         self._T2star_free_long)) * self._xp.conj(
                             self.sens[i_sens]) * self._xp.fft.ifftn(
                                 tmp, norm='ortho')
@@ -464,7 +478,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
                     x_ds[1, ...] += self._free_short_frac * (self._xp.exp(
-                        -self._tr[it] /
+                        -(self._tr[it] + self._te1)/
                         self._T2star_free_short)) * self._xp.conj(
                             self.sens[i_sens]) * self._xp.fft.ifftn(
                                 tmp, norm='ortho')
@@ -474,7 +488,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
                     x_ds[1, ...] += self._free_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._dt) /
+                        -(self._tr[it] + self._te1 + self._dt) /
                         self._T2star_free_short)) * self._xp.conj(
                             self.sens[i_sens]) * self._xp.fft.ifftn(
                                 tmp, norm='ortho')
@@ -511,6 +525,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                  ds: int,
                  sens: XpArray,
                  dt: float,
+                 te1: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
                  kspace_part: RadialKSpacePartitioner ) -> None:
         """ mono exponential dual TE sodium acquisition model assuming one compartment
@@ -523,6 +538,8 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
+        te1 : float
+            TE1, start of the first acquisition
         readout_time : typing.Callable[[np.ndarray], np.ndarray]
             Callable that maps 1d kspace array to readout time for used read out
         kspace_part : RadialKSpacePartitioner
@@ -532,6 +549,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         super().__init__(ds,
                          sens,
                          dt,
+                         te1,
                          readout_time,
                          kspace_part)
 
@@ -581,11 +599,11 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             for it in range(self.n_readout_bins):
                 y[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**(self._tr[it] / self._dt) * x_ds,
+                    gam_ds**((self._tr[it] + self._te1) / self._dt) * x_ds,
                     norm='ortho')[self.readout_inds[it]]
                 y[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(
                     self.sens[i_sens, ...] *
-                    gam_ds**((self._tr[it] / self._dt) + 1) * x_ds,
+                    gam_ds**(((self._tr[it] + self._te1)/ self._dt) + 1) * x_ds,
                     norm='ortho')[self.readout_inds[it]]
 
         # get x from GPU
@@ -644,7 +662,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 tmp0[self.readout_inds[it]] = y[i_sens, 0,
                                                 ...][self.readout_inds[it]]
                 x_ds += (gam_ds
-                                 **(self._tr[it] / self._dt)) * self._xp.conj(
+                                 **((self._tr[it] + self._te1) / self._dt)) * self._xp.conj(
                                      self.sens[i_sens]) * self._xp.fft.ifftn(
                                          tmp0, norm='ortho')
 
@@ -653,7 +671,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 tmp1[self.readout_inds[it]] = y[i_sens, 1,
                                                 ...][self.readout_inds[it]]
                 x_ds += (gam_ds**(
-                    (self._tr[it] / self._dt) + 1)) * self._xp.conj(
+                    ((self._tr[it] + self._te1)/ self._dt) + 1)) * self._xp.conj(
                         self.sens[i_sens]) * self._xp.fft.ifftn(tmp1,
                                                                 norm='ortho')
 
@@ -729,7 +747,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
-                n = self._tr[it] / self._dt
+                n = (self._tr[it] + self._te1) / self._dt
 
                 # 1st echo
                 tmp0 = self._xp.zeros(y[i_sens, 0, ...].shape, dtype=y.dtype)

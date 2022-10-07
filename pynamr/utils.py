@@ -143,6 +143,14 @@ class TPIReadOutTime(RadialKSpaceReadOutTime):
 
         return t
 
+class TPIInstantaneousReadOutTime(RadialKSpaceReadOutTime):
+    """mapping of absolute k-space values to zero (instanteneous) readout time (ms) for TPI trajectory"""
+
+    def __init__(self) -> None:
+        pass
+    def __call__(self, k: XpArray) -> XpArray:
+        t = np.zeros(k.shape)
+        return t
 
 def complex_view_of_real_array(x: np.ndarray) -> np.ndarray:
     """return a complex view of of a real array, by interpreting the last dimension as as real and imaginary part

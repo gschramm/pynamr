@@ -17,6 +17,7 @@ class TestGradients(unittest.TestCase):
         self.ds = 2
         self.ncoils = 3
         self.dt = 5.
+        self.te1 = 0.5
         self.noise_level = 0.1
         self.xp = np
         self.n_readout_bins = 8
@@ -43,11 +44,12 @@ class TestGradients(unittest.TestCase):
         self.mono_exp_model = pynamr.MonoExpDualTESodiumAcqModel(self.ds,
                                                                  self.sens,
                                                                  self.dt,
+                                                                 self.te1,
                                                                  readout_time,
                                                                  kspace_part)
 
         self.unknowns_mono = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([self.ds * x for x in self.data_shape]) + (2,)),
-        pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([self.ds * x for x in self.data_shape]), nb_comp=1, complex_var=False, linearity=False)}
+        pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([self.ds * x for x in self.data_shape]), nb_comp=1, complex_var=False)}
 
         self.x = np.random.rand(*( (self.image_shape) + (2, )))
         self.unknowns_mono[pynamr.VarName.IMAGE].value = self.x
@@ -59,7 +61,7 @@ class TestGradients(unittest.TestCase):
 
         # generate bi-exp dual comp data
         self.bi_exp_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(
-            self.ds, self.sens, self.dt, readout_time, kspace_part, 2, 20, 4,
+            self.ds, self.sens, self.dt, self.te1, readout_time, kspace_part, 2, 20, 4,
             16, 0.4, 0.2)
 
         self.x_bi = np.random.rand(*((2, ) + (self.image_shape) + (2, )))
@@ -129,7 +131,7 @@ class TestGradients(unittest.TestCase):
         self.unknowns_mono[pynamr.VarName.GAMMA].value = np.random.rand(*(self.image_shape))
 
         loss.gradient_test(self.unknowns_mono, pynamr.VarName.IMAGE)
-        loss.gradient_test(self.unknowns_mono, pynamr.VarName.GAMMA)
+        loss.gradient_test(self.unknowns_mono, pynamr.VarName.GAMMA, rtol=1e-3)
 
     def test_total_gradient_bi_exp(self):
 

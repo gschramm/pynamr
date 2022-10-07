@@ -29,6 +29,8 @@ ds = 2
 ncoils = 4
 # time (ms) between first and second echo, first echo is assumed to be a t=0
 dt = 5.
+# TE1, start of the first acquisition
+te1 = 0.
 # noise level
 # realistic noise level to get SNR ca 5 in cylinder phantom with Na conc. 1
 noise_level = 5.
@@ -38,12 +40,8 @@ xp = np
 nnearest = 13
 # prior weight applied to real and imag part of complex sodium image
 beta_x = 1e-2
-# prior weight applied to the gamma (decay) image
-#beta_gam = 1e-1
-# number of outer LBFGS iterations
-n_outer = 5 
-# number of inner LBFGS iterations
-n_inner = 10
+# number of LBFGS iterations
+n_it = 200 
 # number of readout bins
 n_readout_bins = 16
 
@@ -94,7 +92,7 @@ kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 unknowns = {pynamr.VarName.PARAM: pynamr.Var( shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
 unknowns[pynamr.VarName.PARAM].value = x
 
-fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part, 2, 20, 4, 16, 0.4, 0.2)
+fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, dt, te1, readout_time, kspace_part, 2, 20, 4, 16, 0.4, 0.2)
 
 # generate data
 y = fwd_model.forward(unknowns)
@@ -159,14 +157,14 @@ unknowns[pynamr.VarName.PARAM].value = x_0.copy()
 
 #------------------
 # alternating LBFGS steps
-for i_out in range(n_outer):
+for i_it in range(n_it):
 
     # update complex sodium image
     res_1 = fmin_l_bfgs_b(loss,
                           unknowns[pynamr.VarName.PARAM].value.copy().ravel(),
                           fprime=loss.gradient,
                           args=(unknowns, pynamr.VarName.PARAM),
-                          maxiter=n_inner,
+                          maxiter=1,
                           disp=1)
 
     unknowns[pynamr.VarName.PARAM].value = res_1[0].copy().reshape(unknowns[pynamr.VarName.PARAM].shape)

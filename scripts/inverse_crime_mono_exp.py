@@ -30,6 +30,8 @@ ds = 2
 ncoils = 4
 # time (ms) between first and second echo, first echo is assumed to be a t=0
 dt = 5.
+# TE1, start of the first acquisition
+te1 = 0.5
 # noise level
 # realistic noise level to get SNR ca 5 in cylinder phantom with Na conc. 1
 noise_level = 5.
@@ -93,14 +95,14 @@ kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
 # construct the (unknown) image space variables for the model
 unknowns = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([ds * x for x in data_shape]) + (2,)),
-        pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False, linearity=False)}
+        pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False)}
 
 # initialize the values
 unknowns[pynamr.VarName.IMAGE].value = x
 unknowns[pynamr.VarName.GAMMA].value = gam
 
 # construct the forward model
-fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, readout_time, kspace_part) 
+fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, dt, te1, readout_time, kspace_part) 
 
 # generate data
 y = fwd_model.forward(unknowns)
