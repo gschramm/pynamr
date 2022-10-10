@@ -293,3 +293,35 @@ class BowsherLoss(DifferentiableLossFunction):
             g_approx = (l2 - l1) / eps
 
             assert (np.isclose(g.ravel()[i], g_approx, rtol=rtol, atol=atol))
+
+
+def generate_bowsher_loss(aimg: np.ndarray, nnearest: int) -> BowsherLoss:
+
+    # simulate a perfect anatomical prior image (with changed contrast but matching edges
+    aimg = (aimg.max() - aimg)**0.5
+
+    # define neighborhood where to look for neasrest Bowsher neighbors
+    s = np.array([[[0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0],
+               [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]],
+              [[0, 1, 1, 1, 0], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1],
+               [1, 1, 1, 1, 1], [0, 1, 1, 1, 0]],
+              [[0, 1, 1, 1, 0], [1, 1, 1, 1, 1], [1, 1, 0, 1, 1],
+               [1, 1, 1, 1, 1], [0, 1, 1, 1, 0]],
+              [[0, 1, 1, 1, 0], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1],
+               [1, 1, 1, 1, 1], [0, 1, 1, 1, 0]],
+              [[0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0],
+               [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]]])
+
+    # generate the neasrest "Bowsher" neighbors
+    nn_inds = np.zeros((np.prod(aimg.shape), nnearest), dtype=np.uint32)
+
+    # anatomical prior
+    nearest_neighbors(aimg, s, nnearest, nn_inds)
+
+    # "adjoint" list of nearest/next neighbors
+    nn_inds_adj = is_nearest_neighbor_of(nn_inds)
+    bowsher_loss = BowsherLoss(nn_inds, nn_inds_adj)
+
+    return bowsher_loss
+
+

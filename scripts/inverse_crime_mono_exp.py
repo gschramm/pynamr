@@ -31,7 +31,7 @@ ncoils = 4
 # time (ms) between first and second echo, first echo is assumed to be a t=0
 dt = 5.
 # TE1, start of the first acquisition
-te1 = 0.5
+te1 = 0.
 # noise level
 # realistic noise level to get SNR ca 5 in cylinder phantom with Na conc. 1
 noise_level = 5.
