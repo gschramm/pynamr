@@ -41,7 +41,8 @@ parser.add_argument('--delta_t', default = 4.5, type = float, help='Time between
 parser.add_argument('--te1', default = 0.5, type = float, help='TE1, start of the first acquisition')
 parser.add_argument('--ncoils',   default = 1, type = int, help='number of coils')
 parser.add_argument('--data_n',   default = 64, type = int, help='data size')
-parser.add_argument('--instant_tpi',   default = False, action='store_true', help='TPI readout instantaneous')
+parser.add_argument('--instant_tpi_recon',   default = False, action='store_true', help='TPI readout instantaneous for reconstruction')
+parser.add_argument('--instant_tpi_sim',   default = False, action='store_true', help='TPI readout instantaneous for simulating raw data')
 parser.add_argument('--model_sim',   default = 'monoexp', type = str, choices = ['monoexp','fixed_comp','custom'],
                        help='forward model for simulating raw data')
 parser.add_argument('--model_recon',   default = 'monoexp', type = str, choices = ['monoexp','fixed_comp','custom'],
@@ -76,7 +77,8 @@ ncoils      = args.ncoils
 delta_t     = args.delta_t
 te1         = args.te1
 data_n      = args.data_n
-instant_tpi = args.instant_tpi
+instant_tpi_recon = args.instant_tpi_recon
+instant_tpi_sim = args.instant_tpi_sim
 model_im    = args.model_im
 model_sim   = args.model_sim
 model_recon = args.model_recon
@@ -141,18 +143,21 @@ if phantom=='rod':
 else:
     raise NotImplementedError
 
+
 #-------------------------------------------------------------------------------------
-# construct the forward model for simulating the raw data and generate data 
+# Simulation of raw data
+#-------------------------------------------------------------------------------------
 
 # readout config
-if instant_tpi:
-    readout_time = pynamr.TPIInstantaneousReadOutTime()
+if instant_tpi_sim:
+    readout_time_sim = pynamr.TPIInstantaneousReadOutTime()
 else:
-    readout_time = pynamr.TPIReadOutTime()
+    readout_time_sim = pynamr.TPIReadOutTime()
 
 # k-space config
 kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 
+#-------------------------------------------------------------------------------------
 # forward model for simulating raw data
 if model_sim == "monoexp":
     # construct true images
@@ -161,16 +166,18 @@ if model_sim == "monoexp":
         # add imaginary dimension
         x = np.stack([x, 0 * x], axis=-1)
         gam = true_gam
+        aimg = true_te1
     elif model_im == "monoexp":
         x = x_ph
         # add imaginary dimension
         x = np.stack([x, 0 * x], axis=-1)
         gam = gam_ph
+        aimg = x_ph
     else:
         raise NotImplementedError
 
     # forward model and unknown variables for simulating raw data
-    fwd_model_sim = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part)
+    fwd_model_sim = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part)
     unknowns_sim = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([ds * x for x in data_shape]) + (2,)),
                     pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False)}
     unknowns_sim[pynamr.VarName.IMAGE].value = x
@@ -181,30 +188,37 @@ elif model_sim == "fixed_comp":
         x = np.stack([x1, x2], axis=0)
         # add imaginary dimension
         x = np.stack([x, 0 * x], axis=-1)
+        aimg = x1
     else:
         raise NotImplementedError
 
     # forward model and unknown variables for simulating raw data
-    fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part,  0, t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
+    fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part,  0, t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
     unknowns_sim = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
     unknowns_sim[pynamr.VarName.PARAM].value = x
 
 
+#-------------------------------------------------------------------------------------
 # generate data
 y = fwd_model_sim.forward(unknowns_sim)
+
 # add noise
 if noise_level>0.:
     data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
 else:
     data = y
 
-# only simulate raw data
+#-------------------------------------------------------------------------------------
+# only simulate raw data end exit
 if only_sim:
     sys.exit()
 
+
 #-------------------------------------------------------------------------------------
-# perform "standard" reconstructions, sum of squares currently,
-# TODO implement a better std recon
+# "Standard/simple" recon
+#-------------------------------------------------------------------------------------
+
+# currently sum of squares, TODO implement a better std recon
 std_te1 = pynamr.sum_of_squares_reconstruction(data[:,0,...])
 std_te2 = pynamr.sum_of_squares_reconstruction(data[:,1,...])
 
@@ -222,7 +236,17 @@ std_te2_filtered = np.stack([std_te2_filtered, 0 * std_te2_filtered], axis=-1)
 if only_sim_simplerecon:
     sys.exit()
 
+
 #-------------------------------------------------------------------------------------
+# Reconstruction
+#-------------------------------------------------------------------------------------
+
+# readout config
+if instant_tpi_recon:
+    readout_time = pynamr.TPIInstantaneousReadOutTime()
+else:
+    readout_time = pynamr.TPIReadOutTime()
+
 # forward model and unknowns for reconstruction
 if model_recon == "monoexp":
     fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part)
@@ -241,7 +265,6 @@ data_fidelity_loss = pynamr.DataFidelityLoss(fwd_model, data)
 #-------------------------------------------------------------------------------------
 # setup the priors
 # simulate a perfect anatomical prior image (with changed contrast but matching edges)
-aimg = x[...,0]
 aimg = (aimg.max() - aimg)**0.5
 bowsher_loss = pynamr.generate_bowsher_loss(aimg, nnearest)
 
