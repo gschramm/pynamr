@@ -211,14 +211,14 @@ x_r = unknowns[pynamr.VarName.IMAGE].value
 gam_r = unknowns[pynamr.VarName.GAMMA].value
 
 # show the results
-ims_1 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.1*x.max())
-ims_2 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.1*np.percentile(sos_0_filtered,95))
-ims_3 = dict(cmap=plt.cm.Greys_r, vmin = 0, vmax = 1.)
+ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.1*x.max())
+ims_2 = dict(cmap=plt.cm.viridis, vmax = 1.1*np.percentile(sos_0_filtered,95))
+ims_3 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.)
 
 import pymirc.viewer as pv
-vi = pv.ThreeAxisViewer([np.linalg.norm(x, axis=-1)[0,...],
+vi = pv.ThreeAxisViewer([np.linalg.norm(x, axis=-1),
                          sos_0_filtered,
-                         np.linalg.norm(x_r, axis=-1)[0,...],
+                         np.linalg.norm(x_r, axis=-1),
                          gam,
                          gam_r],
                          imshow_kwargs=[ims_1,ims_2,ims_1,ims_3,ims_3])

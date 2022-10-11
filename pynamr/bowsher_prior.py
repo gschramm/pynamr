@@ -297,9 +297,6 @@ class BowsherLoss(DifferentiableLossFunction):
 
 def generate_bowsher_loss(aimg: np.ndarray, nnearest: int) -> BowsherLoss:
 
-    # simulate a perfect anatomical prior image (with changed contrast but matching edges
-    aimg = (aimg.max() - aimg)**0.5
-
     # define neighborhood where to look for neasrest Bowsher neighbors
     s = np.array([[[0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0],
                [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]],

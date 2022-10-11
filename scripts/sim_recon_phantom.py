@@ -91,7 +91,7 @@ only_sim    = args.only_sim
 only_sim_simplerecon = args.only_sim_simplerecon
 
 #-------------------------------------------------------------------------------------
-# fixed parameters
+# initialize some parameters
 
 # 2 TE values currently
 nechos = 2
@@ -102,6 +102,8 @@ ds = round(n/data_n)
 # create sensitivity images - TO BE IMPROVED
 sens = np.ones((ncoils, data_n, data_n, data_n)) + 0j * np.zeros(
     (ncoils, data_n, data_n, data_n))
+# seed the random generator
+np.random.seed(seed)
 
 #-------------------------------------------------------------------------------------
 # setup the base phantom
@@ -160,8 +162,9 @@ if model_sim == "monoexp":
         x = np.stack([x, 0 * x], axis=-1)
         gam = true_gam
     elif model_im == "monoexp":
+        x = x_ph
         # add imaginary dimension
-        x = np.stack([x_ph, 0 * x_ph], axis=-1)
+        x = np.stack([x, 0 * x], axis=-1)
         gam = gam_ph
     else:
         raise NotImplementedError
@@ -183,7 +186,7 @@ elif model_sim == "fixed_comp":
 
     # forward model and unknown variables for simulating raw data
     fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part,  0, t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
-    unknowns_sim = {pynamr.VarName.PARAM: pynamr.Var( shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
+    unknowns_sim = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
     unknowns_sim[pynamr.VarName.PARAM].value = x
 
 
@@ -227,7 +230,7 @@ if model_recon == "monoexp":
                     pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False)}
 elif model_recon == "fixed_comp":
     fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, 0, t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
-    unknowns = {pynamr.VarName.PARAM: pynamr.Var( shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
+    unknowns = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
 else:
     raise NotImplementedError
 
@@ -238,7 +241,8 @@ data_fidelity_loss = pynamr.DataFidelityLoss(fwd_model, data)
 #-------------------------------------------------------------------------------------
 # setup the priors
 # simulate a perfect anatomical prior image (with changed contrast but matching edges)
-aimg = x_ph
+aimg = x[...,0]
+aimg = (aimg.max() - aimg)**0.5
 bowsher_loss = pynamr.generate_bowsher_loss(aimg, nnearest)
 
 #-------------------------------------------------------------------------------------
@@ -257,14 +261,9 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 #-------------------------------------------------------------------------------------
 # run the recons
 if model_recon=="monoexp":
-    # initialize recons
-    x_0 = std_te1_filtered
-    real_std = np.linalg.norm(std_te2_filtered, axis=-1)
-    gam_0 = np.clip(real_std / (real_std + 1e-7), 0, 1)
-    
     # allocate initial values of unknown variables
-    unknowns[pynamr.VarName.IMAGE].value = x_0
-    unknowns[pynamr.VarName.GAMMA].value = gam_0
+    unknowns[pynamr.VarName.IMAGE].value = std_te1_filtered
+    unknowns[pynamr.VarName.GAMMA].value = np.clip(std_te2_filtered[...,0] / (std_te1_filtered[...,0] + 1e-7), 0, 1)
 
     #-------------------------------------------------------------------------------------
     # alternating LBFGS steps
@@ -299,9 +298,9 @@ if model_recon=="monoexp":
     gam_r = unknowns[pynamr.VarName.GAMMA].value
 
     # show the results
-    ims_1 = dict(vmin = 0, vmax = 1.2)
-    ims_2 = dict(vmin = 0, vmax = 1.1*np.percentile(np.linalg.norm(std_te1_filtered, axis=-1),95))
-    ims_3 = dict(vmin = 0, vmax = 1.)
+    ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.2)
+    ims_2 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.1*np.percentile(np.linalg.norm(std_te1_filtered, axis=-1),95))
+    ims_3 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.)
 
     import pymirc.viewer as pv
     vi = pv.ThreeAxisViewer([np.linalg.norm(x, axis=-1),
@@ -330,7 +329,7 @@ elif model_recon=="fixed_comp":
 
 
     # show the results
-    ims_1 = dict(vmin = 0, vmax = 1.1*x.max())
+    ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.1*x.max())
     import pymirc.viewer as pv
     vi = pv.ThreeAxisViewer([x1,
                          np.linalg.norm(x_r[0], axis=-1),
