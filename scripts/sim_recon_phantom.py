@@ -133,8 +133,9 @@ if phantom=='rod':
         x2 = 0.5*np.swapaxes(x_ph,0,1)
 
         # corresponding "true" TE1, TE2 and Gamma images 
-        true_te1 = x1 + x2
-        true_te2 = x1 * ( (1-t2bi_frac_l) * np.exp(-delta_t/t2bi_s) + t2bi_frac_l * np.exp(-delta_t/t2bi_l) ) + x2 * np.exp(-delta_t/t2mono_l)
+        true_conc = x1 + x2
+        true_te2 = x1 * ( (1-t2bi_frac_l) * np.exp(-(delta_t+te1)/t2bi_s) + t2bi_frac_l * np.exp(-(delta_t+te1)/t2bi_l) ) + x2 * np.exp(-(delta_t+te1)/t2mono_l)
+        true_te1 = x1 * ( (1-t2bi_frac_l) * np.exp(-te1/t2bi_s) + t2bi_frac_l * np.exp(-te1/t2bi_l) ) + x2 * np.exp(-te1/t2mono_l)
 
         # true_te1 * true_gam = true_te2, true_te1<=0.05 is the 0 background
         true_gam = np.divide(true_te2,true_te1, where=(true_te1>1e-05))
@@ -162,16 +163,20 @@ kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 if model_sim == "monoexp":
     # construct true images
     if model_im == "fixed_comp":
-        x = true_te1
+        x = true_conc
         # add imaginary dimension
         x = np.stack([x, 0 * x], axis=-1)
         gam = true_gam
-        aimg = true_te1
+        aimg = true_conc
     elif model_im == "monoexp":
         x = x_ph
         # add imaginary dimension
         x = np.stack([x, 0 * x], axis=-1)
         gam = gam_ph
+        true_gam = gam_ph
+        true_conc = x_ph
+        true_te1 = true_conc * gam**(te1/delta_t)
+        true_te2 = true_te1 * gam
         aimg = x_ph
     else:
         raise NotImplementedError
@@ -217,20 +222,17 @@ if only_sim:
 #-------------------------------------------------------------------------------------
 # "Standard/simple" recon
 #-------------------------------------------------------------------------------------
-
-# currently sum of squares, TODO implement a better std recon
-std_te1 = pynamr.sum_of_squares_reconstruction(data[:,0,...])
-std_te2 = pynamr.sum_of_squares_reconstruction(data[:,1,...])
+if ncoils>1:
+    # currently sum of squares, TODO implement a better std recon
+    std_te1 = pynamr.sum_of_squares_reconstruction(data[:,0,...])
+    std_te2 = pynamr.sum_of_squares_reconstruction(data[:,1,...])
+else:
+    std_te1 = np.abs(pynamr.simple_reconstruction(data[0,0]))
+    std_te2 = np.abs(pynamr.simple_reconstruction(data[0,1]))
 
 # filter the SOS images and upsample to recon grid
-std_te1_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(std_te1, 1.), ds, 0), ds, 1), ds, 2)
-std_te2_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(std_te2, 1.), ds, 0), ds, 1), ds, 2)
-
-# add imaginary dimension for consistency
-std_te1 = np.stack([std_te1, 0 * std_te1], axis=-1)
-std_te2 = np.stack([std_te2, 0 * std_te2], axis=-1)
-std_te1_filtered = np.stack([std_te1_filtered, 0 * std_te1_filtered], axis=-1)
-std_te2_filtered = np.stack([std_te2_filtered, 0 * std_te2_filtered], axis=-1)
+std_te1_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(std_te1, 1.), ds, axis=0), ds, axis=1), ds, axis=2)
+std_te2_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(std_te2, 1.), ds, axis=0), ds, axis=1), ds, axis=2)
 
 # only simulate raw data and simple recon
 if only_sim_simplerecon:
@@ -285,8 +287,8 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 # run the recons
 if model_recon=="monoexp":
     # allocate initial values of unknown variables
-    unknowns[pynamr.VarName.IMAGE].value = std_te1_filtered
-    unknowns[pynamr.VarName.GAMMA].value = np.clip(std_te2_filtered[...,0] / (std_te1_filtered[...,0] + 1e-7), 0, 1)
+    unknowns[pynamr.VarName.IMAGE].value = np.stack([std_te1_filtered, 0*std_te1_filtered], axis=-1)
+    unknowns[pynamr.VarName.GAMMA].value = np.clip(std_te2_filtered / (std_te1_filtered + 1e-7), 0, 1)
 
     #-------------------------------------------------------------------------------------
     # alternating LBFGS steps
@@ -321,17 +323,16 @@ if model_recon=="monoexp":
     gam_r = unknowns[pynamr.VarName.GAMMA].value
 
     # show the results
-    ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.2)
-    ims_2 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.1*np.percentile(np.linalg.norm(std_te1_filtered, axis=-1),95))
-    ims_3 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.)
+    ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_conc.max())
+    ims_2 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_gam.max())
 
     import pymirc.viewer as pv
-    vi = pv.ThreeAxisViewer([np.linalg.norm(x, axis=-1),
-                         np.linalg.norm(std_te1_filtered, axis=-1),
+    vi = pv.ThreeAxisViewer([true_conc,
                          np.linalg.norm(x_r, axis=-1),
-                         gam,
+                         std_te1_filtered,
+                         true_gam,
                          gam_r],
-                         imshow_kwargs=[ims_1,ims_2,ims_1,ims_3,ims_3])
+                         imshow_kwargs=[ims_1,ims_1,ims_1,ims_2,ims_2])
 
 elif model_recon=="fixed_comp":
     # allocate arrays for recons and copy over initial values
@@ -348,11 +349,11 @@ elif model_recon=="fixed_comp":
                           disp=1)
 
         unknowns[pynamr.VarName.PARAM].value = res_1[0].copy().reshape(unknowns[pynamr.VarName.PARAM].shape)
-        x_r = unknowns[pynamr.VarName.PARAM]
+        x_r = unknowns[pynamr.VarName.PARAM].value
 
 
     # show the results
-    ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.1*x.max())
+    ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = x.max())
     import pymirc.viewer as pv
     vi = pv.ThreeAxisViewer([x1,
                          np.linalg.norm(x_r[0], axis=-1),

@@ -262,7 +262,7 @@ def upsample(x_ds: XpArray, ds: int, axis: int = 0) -> XpArray:
     return x / ds
 
 
-def sum_of_squares_reconstruction(data: np.ndarray) -> np.ndarray:
+def sum_of_squares_reconstruction(data: np.ndarray, complex_format = False) -> np.ndarray:
     """ sum of squares reconstruction of multi-channel data
 
     Parameters
@@ -278,7 +278,8 @@ def sum_of_squares_reconstruction(data: np.ndarray) -> np.ndarray:
     """    
     tmp = []
     for icoil in range(data.shape[0]):
-        tmp.append(np.fft.ifftn(complex_view_of_real_array(data[icoil,...]), norm='ortho'))
+        data_tmp = (data[icoil,...] if complex_format else complex_view_of_real_array(data[icoil,...]))
+        tmp.append(np.fft.ifftn(data_tmp, norm='ortho'))
     
     tmp = np.array(tmp)
     
@@ -286,7 +287,7 @@ def sum_of_squares_reconstruction(data: np.ndarray) -> np.ndarray:
 
     return sos
  
-def simple_reconstruction(data: np.ndarray) -> np.ndarray:
+def simple_reconstruction(data: np.ndarray, complex_format = False) -> np.ndarray:
     """ the simplest recon possible from single-channel data (IFFT)
 
     Parameters
@@ -301,6 +302,7 @@ def simple_reconstruction(data: np.ndarray) -> np.ndarray:
         Real array of shape (n0, n1, n2, 2) with the simple reconstruction.
         The last dimension is used to store real and imaginary part.
     """    
-    recon = np.fft.ifftn(complex_view_of_real_array(data), norm='ortho')
+    data_tmp = (data if complex_format else complex_view_of_real_array(data))
+    recon = np.fft.ifftn(data_tmp, norm='ortho')
 
     return recon
