@@ -1,7 +1,12 @@
-"""signal models for Na MR reconstruction"""
+""" Forward models for Na MRI reconstruction
+
+    Implementatation details: not everything is done with complex arrays and cupy because of scipy.optimize.minimize 
+
+"""
 import typing
 import abc
 import numpy as np
+import sys
 
 # check whether cupy is available
 try:
@@ -63,10 +68,11 @@ class DualTESodiumAcqModel(abc.ABC):
         self._te1 = te1
 
         # numpy / cupy module to use for ffts
-        if isinstance(self._sens, np.ndarray):
-            self._xp = np
-        else:
+        if 'cupy' in sys.modules:
             self._xp = cp
+            self._sens = self._xp.asarray(self._sens)
+        else:
+            self._xp = np
 
         # callable that calculates readout time from k array
         self._readout_time = readout_time

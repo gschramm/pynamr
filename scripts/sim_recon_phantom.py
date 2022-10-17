@@ -6,6 +6,10 @@
 
     Monoexponential T2* model:
     - unknowns: monoexponential T2* map (Gamma = T2* decay between TE1 and TE2), "concentration"
+
+    Implementation details: scipy.optimize.minimize requires flattened numpy arrays, has no cupy implementation, and complex arrays need to be converted to explicit real and imaginary dimensions
+
+
 """
 
 import warnings
@@ -101,7 +105,7 @@ nechos = 2
 data_shape = (data_n, data_n, data_n)
 # down sample factor (recon cube size / data cube size), must be integer
 ds = round(n/data_n)
-# create sensitivity images - TO BE IMPROVED
+# create complex sensitivity images - TO BE IMPROVED
 sens = np.ones((ncoils, data_n, data_n, data_n)) + 0j * np.zeros(
     (ncoils, data_n, data_n, data_n))
 # seed the random generator

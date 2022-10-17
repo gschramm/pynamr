@@ -15,7 +15,9 @@ class VarName(enum.Enum):
 
 @dataclass
 class Var():
-    """ Image space variable representing a parameter of the forward model """
+    """ Image space variable representing a parameter of the forward model (mostly unknown but can be known as well)
+        Note: complex images are layed out with distinct real and imaginary dimensions because of scipy.optimize.minimize
+    """
 
     # shape = number of components + spatial dimensions + 2 for real and imaginary parts if complex
     shape: tuple
