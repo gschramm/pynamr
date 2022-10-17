@@ -218,8 +218,52 @@ def downsample(x: XpArray, ds: int, axis: int = 0) -> XpArray:
     return x_ds / ds
 
 
-def upsample(x_ds: XpArray, ds: int, axis: int = 0) -> XpArray:
+def downsample_transpose(x_ds: XpArray, ds: int, axis: int = 0) -> XpArray:
+    """transpose of downsample of a numpy/cupy array along a given axis by an integer factor
+    
+       Parameters
+       ----------
+       x : the input array
+
+       ds : the upsampling factor
+
+       axis : axis along which to apply the operator
+
+       Returns
+       -------
+       Upsampled XpArray
+    """
+
+    # test whether the input is a numpy or cupy array
+    if isinstance(x_ds, np.ndarray):
+        xp = np
+    else:
+        xp = cp
+
+    up_shape = list(x_ds.shape)
+    up_shape[axis] = up_shape[axis] * ds
+    up_shape = tuple(up_shape)
+
+    x = xp.zeros(up_shape, dtype=x_ds.dtype)
+
+    sl = slice(None, None, None)
+
+    for i in range(x_ds.shape[axis]):
+        sl1 = x_ds.ndim * [sl]
+        sl1[axis] = slice(ds * i, ds * (i + 1), None)
+        sl1 = tuple(sl1)
+
+        sl2 = x_ds.ndim * [sl]
+        sl2[axis] = slice(i, i + 1, None)
+        sl2 = tuple(sl2)
+
+        x[sl1] = x_ds[sl2]
+
+    return x / ds
+
+def upsample_nearest(x_ds: XpArray, ds: int, axis: int = 0) -> XpArray:
     """upsample a numpy/cupy array along a given axis by an integer factor
+       using a nearest neighbour interpolation
     
        Parameters
        ----------
@@ -259,7 +303,7 @@ def upsample(x_ds: XpArray, ds: int, axis: int = 0) -> XpArray:
 
         x[sl1] = x_ds[sl2]
 
-    return x / ds
+    return x 
 
 
 def sum_of_squares_reconstruction(data: np.ndarray, complex_format = False) -> np.ndarray:

@@ -11,7 +11,7 @@ except ModuleNotFoundError:
 
 from .utils import RadialKSpacePartitioner, XpArray
 from .utils import complex_view_of_real_array, real_view_of_complex_array
-from .utils import downsample, upsample
+from .utils import downsample, downsample_transpose
 from .variables import Var, VarName
 
 #----------------------------------------------------------------------------------
@@ -493,8 +493,8 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                             self.sens[i_sens]) * self._xp.fft.ifftn(
                                 tmp, norm='ortho')
 
-        # upsample x
-        x = upsample(upsample(upsample(x_ds, self._ds, axis=1),
+        # apply transpose of downsample x
+        x = downsample_transpose(downsample_transpose(downsample_transpose(x_ds, self._ds, axis=1),
                               self._ds,
                               axis=2),
                      self._ds,
@@ -675,8 +675,8 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                         self.sens[i_sens]) * self._xp.fft.ifftn(tmp1,
                                                                 norm='ortho')
 
-        # upsample f
-        x = upsample(upsample(upsample(x_ds, self._ds, axis=0),
+        # apply transpose of downsample to f
+        x = downsample_transpose(downsample_transpose(downsample_transpose(x_ds, self._ds, axis=0),
                               self._ds,
                               axis=1),
                      self._ds,
@@ -765,8 +765,8 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     img_ds.squeeze() * self.sens[i_sens]) * self._xp.fft.ifftn(
                         tmp1, norm='ortho')
 
-        # upsample x
-        x = upsample(upsample(upsample(x_ds, self._ds, axis=0),
+        # apply transpose of downsample to x
+        x = downsample_transpose(downsample_transpose(downsample_transpose(x_ds, self._ds, axis=0),
                               self._ds,
                               axis=1),
                      self._ds,

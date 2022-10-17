@@ -113,8 +113,8 @@ sos_0 = pynamr.sum_of_squares_reconstruction(data[:,0,...])
 sos_1 = pynamr.sum_of_squares_reconstruction(data[:,1,...])
 
 # filter the SOS images and upsample to recon grid
-sos_0_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(sos_0, 1.), ds, 0), ds, 1), ds, 2)
-sos_1_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(sos_1, 1.), ds, 0), ds, 1), ds, 2)
+sos_0_filtered = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(gaussian_filter(sos_0, 1.), ds, 0), ds, 1), ds, 2)
+sos_1_filtered = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(gaussian_filter(sos_1, 1.), ds, 0), ds, 1), ds, 2)
 
 #-------------------------------------------------------------------------------------
 # setup the data fidelity loss function

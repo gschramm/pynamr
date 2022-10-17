@@ -37,8 +37,8 @@ parser.add_argument('--noise_level', default = 5.,  type = float, help='Gaussian
 parser.add_argument('--nnearest', default = 13,  type = int, help='Bowsher number of most similar voxels')
 parser.add_argument('--phantom',  default = 'rod', choices = ['rod'], help='phantom type')
 parser.add_argument('--seed',     default = 1, type = int, help='seed for random generator')
-parser.add_argument('--delta_t', default = 4.5, type = float, help='Time between TE1 and TE2 acquisition')
-parser.add_argument('--te1', default = 0.5, type = float, help='TE1, start of the first acquisition')
+parser.add_argument('--delta_t', default = 4.7, type = float, help='Time between TE1 and TE2 acquisition')
+parser.add_argument('--te1', default = 0.3, type = float, help='TE1, start of the first acquisition')
 parser.add_argument('--ncoils',   default = 1, type = int, help='number of coils')
 parser.add_argument('--data_n',   default = 64, type = int, help='data size')
 parser.add_argument('--instant_tpi_recon',   default = False, action='store_true', help='TPI readout instantaneous for reconstruction')
@@ -231,8 +231,8 @@ else:
     std_te2 = np.abs(pynamr.simple_reconstruction(data[0,1]))
 
 # filter the SOS images and upsample to recon grid
-std_te1_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(std_te1, 1.), ds, axis=0), ds, axis=1), ds, axis=2)
-std_te2_filtered = pynamr.upsample(pynamr.upsample(pynamr.upsample(gaussian_filter(std_te2, 1.), ds, axis=0), ds, axis=1), ds, axis=2)
+std_te1_filtered = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(gaussian_filter(std_te1, 1.), ds, axis=0), ds, axis=1), ds, axis=2)
+std_te2_filtered = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(gaussian_filter(std_te2, 1.), ds, axis=0), ds, axis=1), ds, axis=2)
 
 # only simulate raw data and simple recon
 if only_sim_simplerecon:
