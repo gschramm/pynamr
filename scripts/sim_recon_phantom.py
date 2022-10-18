@@ -342,19 +342,16 @@ elif model_recon=="fixed_comp":
     # allocate arrays for recons and copy over initial values
     unknowns[pynamr.VarName.PARAM].value = np.ones(unknowns[pynamr.VarName.PARAM].shape, np.float64)
 
-    # alternating LBFGS steps
-    for i_it in range(niter):
-
-        # update complex sodium image
-        res_1 = fmin_l_bfgs_b(loss,
+    # update complex sodium image
+    res_1 = fmin_l_bfgs_b(loss,
                           unknowns[pynamr.VarName.PARAM].value.copy().ravel(),
                           fprime=loss.gradient,
                           args=(unknowns, pynamr.VarName.PARAM),
+                          maxiter=niter,
                           disp=1)
 
-        unknowns[pynamr.VarName.PARAM].value = res_1[0].copy().reshape(unknowns[pynamr.VarName.PARAM].shape)
-        x_r = unknowns[pynamr.VarName.PARAM].value
-
+    unknowns[pynamr.VarName.PARAM].value = res_1[0].copy().reshape(unknowns[pynamr.VarName.PARAM].shape)
+    x_r = unknowns[pynamr.VarName.PARAM].value
 
     # show the results
     ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = x.max())
