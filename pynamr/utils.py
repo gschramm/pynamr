@@ -327,7 +327,7 @@ def sum_of_squares_reconstruction(data: np.ndarray, complex_format = False) -> n
     
     tmp = np.array(tmp)
     
-    sos = np.sqrt(np.abs(tmp).sum(axis=0)**2)
+    sos = np.sqrt((np.abs(tmp)**2).sum(axis=0))
 
     return sos
  

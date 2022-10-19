@@ -47,11 +47,11 @@ parser.add_argument('--ncoils',   default = 1, type = int, help='number of coils
 parser.add_argument('--data_n',   default = 64, type = int, help='data size')
 parser.add_argument('--instant_tpi_recon',   default = False, action='store_true', help='TPI readout instantaneous for reconstruction')
 parser.add_argument('--instant_tpi_sim',   default = False, action='store_true', help='TPI readout instantaneous for simulating raw data')
-parser.add_argument('--model_sim',   default = 'monoexp', type = str, choices = ['monoexp','fixed_comp','custom'],
+parser.add_argument('--model_sim',   default = 'monoexp', type = str, choices = ['monoexp','fixedcomp','custom'],
                        help='forward model for simulating raw data')
-parser.add_argument('--model_recon',   default = 'monoexp', type = str, choices = ['monoexp','fixed_comp','custom'],
+parser.add_argument('--model_recon',   default = 'monoexp', type = str, choices = ['monoexp','fixedcomp','custom'],
                        help='forward model for reconstructing the raw data')
-parser.add_argument('--model_im',   default = 'monoexp', type = str, choices = ['monoexp','fixed_comp','custom'],
+parser.add_argument('--model_im',   default = 'monoexp', type = str, choices = ['monoexp','fixedcomp','custom'],
                        help='model for building the true image')
 parser.add_argument('--t2bi_s', default = 3., type = float, help='fixed T2* biexponential short component')
 parser.add_argument('--t2bi_l', default = 20., type = float, help='fixed T2* biexponential long component')
@@ -62,6 +62,8 @@ parser.add_argument('--t2bi_lmap_filename', default = None, type = str, help='T2
 parser.add_argument('--t2mono_map_filename', default = None, type = str, help='T2* monoexponential (long) component spatial map (i.e. fluid)')
 parser.add_argument('--only_sim', default = False, action='store_true', help='only simulate raw data')
 parser.add_argument('--only_sim_simplerecon', default = False, action='store_true', help='only simulate raw data and std recon')
+parser.add_argument('--save_results', default = False, action='store_true', help='save results to binary files .img')
+parser.add_argument('--results_dir', default = 'results/', help='folder for saving results')
 
 
 
@@ -95,10 +97,12 @@ t2bi_lmap_filename = args.t2bi_lmap_filename
 t2mono_map_filename = args.t2mono_map_filename
 only_sim    = args.only_sim
 only_sim_simplerecon = args.only_sim_simplerecon
+save_results = args.save_results
+results_dir = args.results_dir
 
 #-------------------------------------------------------------------------------------
 # initialize some parameters
-
+noiseless = (not (noise_level>0.))
 # 2 TE values currently
 nechos = 2
 # shape of the kspace data of a single coil
@@ -131,7 +135,7 @@ if phantom=='rod':
                                 axis=2)
     gam_ph /= gam_ph.max()
 
-    if model_im=="fixed_comp":
+    if model_im=="fixedcomp":
         # biexpo and monoexpo "concentrations" for the fixed compartmental T2* model
         x1 = 0.5*x_ph
         x2 = 0.5*np.swapaxes(x_ph,0,1)
@@ -166,7 +170,7 @@ kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 # forward model for simulating raw data
 if model_sim == "monoexp":
     # construct true images
-    if model_im == "fixed_comp":
+    if model_im == "fixedcomp":
         x = true_conc
         # add imaginary dimension
         x = np.stack([x, 0 * x], axis=-1)
@@ -192,12 +196,16 @@ if model_sim == "monoexp":
     unknowns_sim[pynamr.VarName.IMAGE].value = x
     unknowns_sim[pynamr.VarName.GAMMA].value = gam
 
-elif model_sim == "fixed_comp":
-    if model_im == "fixed_comp":
+elif model_sim == "fixedcomp":
+    if model_im == "fixedcomp":
         x = np.stack([x1, x2], axis=0)
         # add imaginary dimension
         x = np.stack([x, 0 * x], axis=-1)
         aimg = x1
+
+        if save_results:
+            x1.tofile(results_dir+'true_comp0.img')
+            x2.tofile(results_dir+'true_comp1.img')
     else:
         raise NotImplementedError
 
@@ -206,16 +214,25 @@ elif model_sim == "fixed_comp":
     unknowns_sim = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
     unknowns_sim[pynamr.VarName.PARAM].value = x
 
+# save true images if required
+if save_results:
+    true_conc.tofile(results_dir+'true_conc.img')
+    true_te1.tofile(results_dir+'true_te1.img')
+    true_te2.tofile(results_dir+'true_te2.img')
+    true_gam.tofile(results_dir+'true_gam.img')
+
 
 #-------------------------------------------------------------------------------------
 # generate data
 y = fwd_model_sim.forward(unknowns_sim)
 
 # add noise
-if noise_level>0.:
-    data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
-else:
+if noiseless:
     data = y
+else:
+    #data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
+    # temporary, to ensure we have the same noise level computation for different options
+    data = y + noise_level * 0.014 * np.random.randn(*y.shape).astype(np.float64)
 
 #-------------------------------------------------------------------------------------
 # only simulate raw data end exit
@@ -234,14 +251,24 @@ else:
     std_te1 = np.abs(pynamr.simple_reconstruction(data[0,0]))
     std_te2 = np.abs(pynamr.simple_reconstruction(data[0,1]))
 
+std_te1 = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(std_te1, ds, axis=0), ds, axis=1), ds, axis=2)
+std_te2 = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(std_te2, ds, axis=0), ds, axis=1), ds, axis=2)
+
+
 # filter the SOS images and upsample to recon grid
-std_te1_filtered = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(gaussian_filter(std_te1, 1.), ds, axis=0), ds, axis=1), ds, axis=2)
-std_te2_filtered = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(gaussian_filter(std_te2, 1.), ds, axis=0), ds, axis=1), ds, axis=2)
+std_te1_filtered = gaussian_filter(std_te1, 1.)
+std_te2_filtered = gaussian_filter(std_te2, 1.)
+
+# save images if required
+if save_results:
+    std_te1.tofile(results_dir+'std_te1_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
+    std_te2.tofile(results_dir+'std_te2_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
+    std_te1_filtered.tofile(results_dir+'std_te1_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
+    std_te2_filtered.tofile(results_dir+'std_te2_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
 
 # only simulate raw data and simple recon
 if only_sim_simplerecon:
     sys.exit()
-
 
 #-------------------------------------------------------------------------------------
 # Reconstruction
@@ -258,7 +285,7 @@ if model_recon == "monoexp":
     fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part)
     unknowns = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([ds * x for x in data_shape]) + (2,)),
                     pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False)}
-elif model_recon == "fixed_comp":
+elif model_recon == "fixedcomp":
     fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, 0, t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
     unknowns = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
 else:
@@ -279,7 +306,7 @@ bowsher_loss = pynamr.generate_bowsher_loss(aimg, nnearest)
 if model_recon == "monoexp":
     penalty_info = {pynamr.VarName.IMAGE: bowsher_loss, pynamr.VarName.GAMMA: bowsher_loss}
     beta_info = {pynamr.VarName.IMAGE: beta_x, pynamr.VarName.GAMMA: beta_gam}
-elif model_recon == "fixed_comp":
+elif model_recon == "fixedcomp":
     penalty_info = {pynamr.VarName.PARAM: bowsher_loss}
     beta_info = {pynamr.VarName.PARAM: beta_x}
 else:
@@ -337,8 +364,13 @@ if model_recon=="monoexp":
                          true_gam,
                          gam_r],
                          imshow_kwargs=[ims_1,ims_1,ims_1,ims_2,ims_2])
+    if save_results:
+        x_r.tofile(results_dir+'x_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+'.img')
+        gam_r.tofile(results_dir+'gam_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+'.img')
 
-elif model_recon=="fixed_comp":
+
+
+elif model_recon=="fixedcomp":
     # allocate arrays for recons and copy over initial values
     unknowns[pynamr.VarName.PARAM].value = np.ones(unknowns[pynamr.VarName.PARAM].shape, np.float64)
 
@@ -361,6 +393,12 @@ elif model_recon=="fixed_comp":
                          x2,
                          np.linalg.norm(x_r[1], axis=-1)],
                          imshow_kwargs=[ims_1, ims_1, ims_1, ims_1])
+
+    if save_results:
+        x_r.tofile(results_dir+'x_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+'.img')
+
 else:
     raise NotImplementedError
+
+
 
