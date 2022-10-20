@@ -23,6 +23,7 @@ except ImportError:
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
+from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 from copy import deepcopy
 from argparse import ArgumentParser
@@ -64,6 +65,7 @@ parser.add_argument('--only_sim', default = False, action='store_true', help='on
 parser.add_argument('--only_sim_simplerecon', default = False, action='store_true', help='only simulate raw data and std recon')
 parser.add_argument('--save_results', default = False, action='store_true', help='save results to binary files .img')
 parser.add_argument('--results_dir', default = 'results/', help='folder for saving results')
+parser.add_argument('--hann_simplerecon', default = False, action='store_true', help='apply hanning filter for standard recon')
 
 
 
@@ -99,6 +101,7 @@ only_sim    = args.only_sim
 only_sim_simplerecon = args.only_sim_simplerecon
 save_results = args.save_results
 results_dir = args.results_dir
+hann_simplerecon   = args.hann_simplerecon
 
 #-------------------------------------------------------------------------------------
 # initialize some parameters
@@ -243,28 +246,52 @@ if only_sim:
 #-------------------------------------------------------------------------------------
 # "Standard/simple" recon
 #-------------------------------------------------------------------------------------
-if ncoils>1:
-    # currently sum of squares, TODO implement a better std recon
-    std_te1 = pynamr.sum_of_squares_reconstruction(data[:,0,...])
-    std_te2 = pynamr.sum_of_squares_reconstruction(data[:,1,...])
-else:
-    std_te1 = np.abs(pynamr.simple_reconstruction(data[0,0]))
-    std_te2 = np.abs(pynamr.simple_reconstruction(data[0,1]))
 
+# currently sum of squares, TODO implement a better std recon
+std_te1 = pynamr.sum_of_squares_reconstruction(data[:,0,...])
+std_te2 = pynamr.sum_of_squares_reconstruction(data[:,1,...])
+
+# upsample to recon size
 std_te1 = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(std_te1, ds, axis=0), ds, axis=1), ds, axis=2)
 std_te2 = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(std_te2, ds, axis=0), ds, axis=1), ds, axis=2)
 
+# produce filtered simple recon
+if hann_simplerecon:
+    # hann filter and zero padding
+    # half data size
+    data_n_half = data_n//2
 
-# filter the SOS images and upsample to recon grid
-std_te1_filtered = gaussian_filter(std_te1, 1.)
-std_te2_filtered = gaussian_filter(std_te2, 1.)
+    # multiplicative filter in fourier space
+    h_win = interp1d(np.arange(data_n_half), np.hanning(data_n)[data_n_half:], fill_value = 0, bounds_error = False)
+    k0,k1,k2 = np.meshgrid(np.arange(-data_n_half,data_n_half),np.arange(-data_n_half,data_n_half),np.arange(-data_n_half,data_n_half))
+    abs_k = np.sqrt(k0**2 + k1**2 + k2**2)
+    hmask = h_win(abs_k.flatten()).reshape(data_n,data_n,data_n)
+    hmask = np.fft.fftshift(hmask)
+
+    # zero padded and filtered complex data
+    data_filt = np.zeros((ncoils,nechos,n,n,n), np.complex128)
+    # padding size
+    dif = (n-data_n)//2
+    # normalization factor between low and high res fft
+    factor_fft_res_change = 2*np.sqrt([2])
+    for c in range(ncoils):
+        for e in range(nechos):
+            data_filt[c,e,:,:,:] = np.fft.fftshift(np.pad(np.fft.fftshift(hmask*pynamr.complex_view_of_real_array(data[c,e])), dif)*factor_fft_res_change)
+
+    # simple recon of zero padded and filtered data
+    std_te1_filtered = pynamr.sum_of_squares_reconstruction(data_filt[:,0], complex_format=True)
+    std_te2_filtered = pynamr.sum_of_squares_reconstruction(data_filt[:,1], complex_format=True)
+else:
+    # gaussian image filter
+    std_te1_filtered = gaussian_filter(std_te1, 1.)
+    std_te2_filtered = gaussian_filter(std_te2, 1.)
 
 # save images if required
 if save_results:
     std_te1.tofile(results_dir+'std_te1_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
     std_te2.tofile(results_dir+'std_te2_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
-    std_te1_filtered.tofile(results_dir+'std_te1_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
-    std_te2_filtered.tofile(results_dir+'std_te2_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
+    std_te1_filtered.tofile(results_dir+'std_te1_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+('_hann' if hann_simplerecon else '')+'.img')
+    std_te2_filtered.tofile(results_dir+'std_te2_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+('_hann' if hann_simplerecon else '')+'.img')
 
 # only simulate raw data and simple recon
 if only_sim_simplerecon:
