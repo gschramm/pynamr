@@ -113,8 +113,8 @@ data_shape = (data_n, data_n, data_n)
 # down sample factor (recon cube size / data cube size), must be integer
 ds = round(n/data_n)
 # create complex sensitivity images - TO BE IMPROVED
-sens = np.ones((ncoils, data_n, data_n, data_n)) + 0j * np.zeros(
-    (ncoils, data_n, data_n, data_n))
+sens = np.ones((ncoils, n, n, n)) + 0j * np.zeros(
+    (ncoils, n, n, n))
 # seed the random generator
 np.random.seed(seed)
 

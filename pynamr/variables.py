@@ -30,4 +30,8 @@ class Var():
     # real number type
     dtype: np.dtype = np.float64
 
+    def __post_init__(self):
+        # complex shape = number of components + spatial dimensions
+        self.complex_shape = (self.shape[:-1] if self.complex_var else self.shape)
+
 

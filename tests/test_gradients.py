@@ -30,8 +30,8 @@ class TestGradients(unittest.TestCase):
         self.image_shape = (self.n, self.n, self.n)
 
         self.sens = cp.random.rand(*(
-            (self.ncoils, ) + self.data_shape)) + 1j * cp.random.rand(*(
-                (self.ncoils, ) + self.data_shape))
+            (self.ncoils, ) + self.image_shape)) + 1j * cp.random.rand(*(
+                (self.ncoils, ) + self.image_shape))
         self.sens *= 1e-2
 
         self.gam = np.random.rand(*self.image_shape)
