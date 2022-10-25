@@ -33,6 +33,7 @@ import os
 from glob import glob
 from datetime import datetime
 
+import pymirc.viewer as pv
 import pynamr
 
 parser = ArgumentParser(description = '3D real Na MRI dual echo reconstruction')
@@ -248,8 +249,8 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 # run the recons
 if model_recon=="monoexp":
     # allocate initial values of unknown variables
-    unknowns[pynamr.VarName.IMAGE].value = pynamr.real_view_of_complex_array(std_te1_filtered)
-    unknowns[pynamr.VarName.GAMMA].value = np.clip(std_te2_filtered.real / (std_te1_filtered.real + 1e-7), 0, 1)
+    unknowns[pynamr.VarName.IMAGE].value = np.stack([std_te1_filtered, 0*std_te1_filtered], axis=-1)
+    unknowns[pynamr.VarName.GAMMA].value = np.clip(std_te2_filtered / (std_te1_filtered + 1e-7), 0, 1)
 
     #-------------------------------------------------------------------------------------
     # alternating LBFGS steps
@@ -282,19 +283,35 @@ if model_recon=="monoexp":
 
     # postprocess results
     x_r = unknowns[pynamr.VarName.IMAGE].value * scale_factor
-    gam_r = unknowns[pynamr.VarName.GAMMA].value * scale_factor
+    gam_r = unknowns[pynamr.VarName.GAMMA].value
 
     # show the results
     ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = std_te1.max())
     ims_2 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.)
+    t1_1 = dict(cmap=plt.cm.gray, vmin = 0, vmax = t1_vol.max())
 
-    import pymirc.viewer as pv
-    vi = pv.ThreeAxisViewer([np.linalg.norm(x, axis=-1),
-                         np.linalg.norm(std_te1_filtered, axis=-1),
+    # empirical rough estimate of gamma for TBI data
+    gam_rough_est = np.divide(std_te2, std_te1, where=std_te1>0.1*std_te1.max())
+    gam_rough_est[std_te1<=0.1*std_te1]=1.
+
+    # reconstructed image at time 0 and simple recon at TE1
+    vi_x_te1 = pv.ThreeAxisViewer([std_te1,
                          np.linalg.norm(x_r, axis=-1),
-                         gam,
+                         t1_vol,
                          gam_r],
-                         imshow_kwargs=[ims_1,ims_1,ims_1,ims_2,ims_2])
+                         imshow_kwargs=[ims_1, ims_1, t1_1, ims_2])
+
+    # reconstructed Gamma and a rough estimation from simple recons
+    vi_gam = pv.ThreeAxisViewer([gam_rough_est,
+                         gam_r],
+                         imshow_kwargs=[ims_2, ims_2])
+
+    # reconstructed and simple TE1 and TE2 images
+    vi_te1_te2 = pv.ThreeAxisViewer([std_te1,
+                         np.linalg.norm(x_r, axis=-1)*gam_r**(te1/delta_t),
+                         std_te2,
+                         np.linalg.norm(x_r, axis=-1)*gam_r**(1+(te1/delta_t))],
+                         imshow_kwargs=[ims_1, ims_1, ims_1, ims_1])
 
 elif model_recon=="fixedcomp":
     # allocate arrays for recons and copy over initial values
@@ -315,10 +332,10 @@ elif model_recon=="fixedcomp":
 
     # show the results
     ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = std_te1.max())
-    import pymirc.viewer as pv
+
     vi = pv.ThreeAxisViewer([np.linalg.norm(x_r[0], axis=-1),
                          np.linalg.norm(x_r[1], axis=-1)],
-                         np.linalg.norm(std_te1_filtered, axis=-1),
+                         std_te1_filtered,
                          imshow_kwargs=[ims_1, ims_1, ims_1])
 else:
     raise NotImplementedError

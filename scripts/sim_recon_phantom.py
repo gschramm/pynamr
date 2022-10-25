@@ -29,6 +29,7 @@ from copy import deepcopy
 from argparse import ArgumentParser
 import sys
 
+import pymirc.viewer as pv
 import pynamr
 
 parser = ArgumentParser(description = '3D phantom Na MRI dual echo simulation and reconstruction')
@@ -384,7 +385,6 @@ if model_recon=="monoexp":
     ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_conc.max())
     ims_2 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_gam.max())
 
-    import pymirc.viewer as pv
     vi = pv.ThreeAxisViewer([true_conc,
                          np.linalg.norm(x_r, axis=-1),
                          std_te1_filtered,
@@ -414,7 +414,7 @@ elif model_recon=="fixedcomp":
 
     # show the results
     ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = x.max())
-    import pymirc.viewer as pv
+
     vi = pv.ThreeAxisViewer([x1,
                          np.linalg.norm(x_r[0], axis=-1),
                          x2,
