@@ -3,6 +3,9 @@ import typing
 import abc
 import numpy as np
 import matplotlib.pyplot as plt
+import SimpleITK as sitk
+import pymirc.viewer as pv
+from scipy.ndimage import zoom
 
 # check whether cupy is available
 try:
@@ -350,3 +353,84 @@ def simple_reconstruction(data: np.ndarray, complex_format = False) -> np.ndarra
     recon = np.fft.ifftn(data_tmp, norm='ortho')
 
     return recon
+
+# simple ITK conversion
+def numpy_volume_to_sitk_image (vol: np.ndarray, voxel_size: np.ndarray, origin: np.ndarray) -> np.ndarray:
+  image = sitk.GetImageFromArray(np.swapaxes(vol, 0, 2))
+  image.SetSpacing(voxel_size.astype(np.float64))
+  image.SetOrigin(origin.astype(np.float64))
+
+  return image
+
+# simple ITK conversion
+def sitk_image_to_numpy_volume (img: np.ndarray) -> np.ndarray:
+  vol = np.swapaxes(sitk.GetArrayFromImage(img), 0, 2)
+
+  return vol
+
+
+# Registration of higher resolution proton MRI to Na MRI image using simple ITK
+def register_highresH_to_lowresNa (highresH: np.ndarray, lowresNa: np.ndarray, highresH_voxsize: np.ndarray, lowresNa_voxsize: np.ndarray, highresH_origin: np.ndarray, lowresNa_origin: np.ndarray) -> np.ndarray:
+
+    moving_image  = numpy_volume_to_sitk_image(highresH.astype(np.float32), highresH_voxsize, highresH_origin)
+    fixed_image = numpy_volume_to_sitk_image(lowresNa.astype(np.float32), lowresNa_voxsize, lowresNa_origin)
+
+    # Initial Alignment
+    initial_transform = sitk.CenteredTransformInitializer(fixed_image, moving_image,
+                                                      sitk.Euler3DTransform(),
+                                                      sitk.CenteredTransformInitializerFilter.GEOMETRY)
+
+    # Registration
+    registration_method = sitk.ImageRegistrationMethod()
+
+    # Similarity metric settings.
+    registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins = 50)
+    registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
+    registration_method.SetMetricSamplingPercentage(0.1)
+
+    registration_method.SetInterpolator(sitk.sitkLinear)
+
+
+    registration_method.SetOptimizerAsGradientDescentLineSearch(
+        learningRate            = 0.3,
+        numberOfIterations      = 200,
+        convergenceMinimumValue = 1e-7,
+        convergenceWindowSize   = 10)
+
+    registration_method.SetOptimizerScalesFromPhysicalShift()
+
+    # Setup for the multi-resolution framework.
+    registration_method.SetShrinkFactorsPerLevel(shrinkFactors = [4, 2, 1])
+    registration_method.SetSmoothingSigmasPerLevel(smoothingSigmas = [2, 1, 0])
+    registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
+
+    # Don't optimize in-place, we would possibly like to run this cell multiple times.
+    registration_method.SetInitialTransform(initial_transform, inPlace = False)
+
+    final_transform = registration_method.Execute(
+        sitk.Cast(fixed_image, sitk.sitkFloat32), sitk.Cast(moving_image, sitk.sitkFloat32))
+
+    # Post registration analysis
+    print(f"Optimizer's stopping condition, {registration_method.GetOptimizerStopConditionDescription()}")
+    print(f"Final metric value: {registration_method.GetMetricValue()}")
+    print(f"Final parameters: {final_transform.GetParameters()}")
+
+    moving_resampled = sitk.Resample(moving_image, fixed_image, final_transform, sitk.sitkLinear, 0.0,
+                                     moving_image.GetPixelID())
+
+    highresH_img_aligned = sitk_image_to_numpy_volume(moving_resampled)
+
+    return highresH_img_aligned
+
+# N4 correction for smooth inhomogeneities in MRI
+def n4 (img: np.ndarray) -> np.ndarray:
+    image = sitk.GetImageFromArray(np.swapaxes(img, 0, 2))
+
+    maskImage = sitk.OtsuThreshold(image, 0, 1, 200)
+    corrector = sitk.N4BiasFieldCorrectionImageFilter()
+    numberFittingLevels = 4
+
+    corrected_image = corrector.Execute(image, maskImage)
+    corrected_image = np.swapaxes(sitk.GetArrayFromImage(corrected_image),0,2)
+
+    return corrected_image
