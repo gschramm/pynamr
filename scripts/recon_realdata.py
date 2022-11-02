@@ -6,6 +6,11 @@
 
     Monoexponential T2* model:
     - unknowns: monoexponential T2* map (Gamma = T2* decay between TE1 and TE2), "concentration"
+
+    Data NYU: require some fast preprocessing, only the preprocessed higher resolution H MRI image is saved, other things are computed on the fly 
+
+    TODO:
+    - find a way to proceed to recon after checking the preprocessed data with pymirc viewer, instead of exiting and reexecuting the script
 """
 
 import warnings
@@ -60,7 +65,7 @@ parser.add_argument('--t2mono_map_filename', default = None, type = str, help='T
 parser.add_argument('--highres_mri_name', default = 'mprage', help='higher resolution mri name')
 parser.add_argument('--no_highres_prior', action = 'store_true', help='no additional higher resolution mri')
 parser.add_argument('--load_results', action = 'store_true', help='load already computed results, display and exit')
-parser.add_argument('--check', action = 'store_true', help='check the preprocessed data before recon')
+parser.add_argument('--check', action = 'store_true', help='check the preprocessed data and exit')
 
 
 args = parser.parse_args()
@@ -106,7 +111,7 @@ def display_results():
 
         # reconstructed image at time 0 and simple recon at TE1
         vi_x_te1 = pv.ThreeAxisViewer([std_te1,
-                         np.linalg.norm(x_r, axis=-1),
+                         np.abs(x_r),
                          highresH_img,
                          gam_r],
                          imshow_kwargs=[ims_1, ims_1, highresH_img_1, ims_2])
@@ -118,34 +123,38 @@ def display_results():
 
         # reconstructed and simple TE1 and TE2 images
         vi_te1_te2 = pv.ThreeAxisViewer([std_te1,
-                         np.linalg.norm(x_r, axis=-1)*gam_r**(te1/delta_t),
+                         np.abs(x_r)*gam_r**(te1/delta_t),
                          std_te2,
-                         np.linalg.norm(x_r, axis=-1)*gam_r**(1+(te1/delta_t))],
+                         np.abs(x_r)*gam_r**(1+(te1/delta_t))],
                          imshow_kwargs=[ims_1, ims_1, ims_1, ims_1])
     elif model_recon=="fixedcomp":
         ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = std_te1.max())
 
-        vi = pv.ThreeAxisViewer([np.linalg.norm(x_r[0], axis=-1),
-                         np.linalg.norm(x_r[1], axis=-1),
-                         std_te1_filtered],
-                         imshow_kwargs=[ims_1, ims_1, ims_1])
+        vi = pv.ThreeAxisViewer([np.abs(x_r[0]),
+                                 np.abs(x_r[1]),
+                                 std_te1_filtered],
+                                 imshow_kwargs=[ims_1, ims_1, ims_1])
     else:
         raise NotImplementedError
+    print("Displayed reconstruction results")
 
 # save reconstruction results to files
 def save_results():
+    if not os.path.exists(odir):
+        os.makedirs(odir)
     # write input arguments to file
     with open(os.path.join(odir,'input_params.csv'), 'w') as f:
         for x in args.__dict__.items():
             f.write("%s,%s\n"%(x[0],x[1]))
     # write images
     if model_recon=="monoexp":
-        x_r.tofile(os.path.join(odir,'x_r.img'))
-        gam_r.tofile(os.path.join(odir,'gam_r.img'))
+        np.save(os.path.join(odir,'x_r'), x_r)
+        np.save(os.path.join(odir,'gam_r'), gam_r)
     elif model_recon=="fixedcomp":
-        x_r.tofile(os.path.join(odir,'x_r.img'))
+        np.save(os.path.join(odir,'x_r'), x_r)
     else:
         raise NotImplementedError
+    print("Saved results and input parameters")
 
 
 #-------------------------------------------------------------------------------------
@@ -182,8 +191,6 @@ if (len(fnames1) != ncoils) or (len(fnames2) != ncoils):
 odir = os.path.join(sdir, casedir, f'betax_{beta_x:.1E}'+ (f'_betagam_{beta_gam:.1E}' if model_recon=='monoexp' else '')+
                                    (f'_{highres_mri_name}_nbow_{nnearest}' if not no_highres_prior else '')+
                                    (f'_t2bs_{t2bi_s:.1E}_t2bl_{t2bi_l:.1E}' if model_recon=='fixedcomp' else '') )
-if not os.path.exists(odir):
-  os.makedirs(odir)
 
 # high resolution proton MRI image
 if not no_highres_prior:
@@ -254,13 +261,17 @@ for i in range(ncoils):
 # scale signal to be not too far away from 1
 scale_factor = np.max(sos_te1_for_sens)
 data = data / scale_factor
+print("Loaded and preprocessed k-space data")
+print("Computed spatial sensitivity maps")
 
 # higher res proton image
 if not no_highres_prior:
     if os.path.exists(highresH_img_file):
         # load the already preprocessed image
         highresH_img = np.load(highresH_img_file)
+        print("Loaded already preprocessed higher res H prior image")
     else:
+        print("Launched registration of higher res H prior image to simply reconstructed Na image")
         # load the original image
         highresH_img_nii     = nib.load(highresH_img_file_nii)
         highresH_img_nii     = nib.as_closest_canonical(highresH_img_nii)
@@ -269,12 +280,17 @@ if not no_highres_prior:
         highresH_voxsize = highresH_img_nii.header['pixdim'][1:4]
         highresH_origin  = highresH_affine[:-1,-1]
 
+        # the images should be in the same orientation at least
+        # empirical fix for nifti without proper orientation info
+        if pathology=="CSF":
+            highresH_img = np.flip(highresH_img, (0,1))
+
         # n4 correction
         highresH_img = pynamr.n4(highresH_img)
 
         # simple recon of Sodium TE1 image, interpolated to higher resolution
         sos_te1_for_reg = pynamr.sum_of_squares_reconstruction(data[:,0,...], complex_format=True)
-        sos_te1_for_reg = zoom(sos_te1_for_reg, np.array(recon_shape)/ np.array(data_shape), order = 1, prefilter = False)
+        sos_te1_for_reg = zoom(sos_te1_for_reg, np.array(recon_shape)/ np.array(data_shape), order = 2, prefilter=False) 
         sos_te1_for_reg_voxsize = fov / np.array(recon_shape)
         sos_te1_for_reg_origin = np.full(3,-fov/2.)
 
@@ -286,6 +302,8 @@ if not no_highres_prior:
 
         # check the registration
         vi_check_reg = pv.ThreeAxisViewer([highresH_img, sos_te1_for_reg, highresH_img],[None, None, sos_te1_for_reg], imshow_kwargs = {'cmap':plt.cm.Greys_r})
+        print("Performed registration of higher res H prior image to simply reconstructed Na image and exited")
+
         # exit
         sys.exit()
 
@@ -293,7 +311,7 @@ if not no_highres_prior:
 # "Standard/simple" recon
 #-------------------------------------------------------------------------------------
 
-# currently sum of squares od padded kspace data
+# currently sum of squares of padded kspace data
 std_te1 = pynamr.sum_of_squares_reconstruction(data_pad[:,0,...], complex_format=True)
 std_te2 = pynamr.sum_of_squares_reconstruction(data_pad[:,1,...], complex_format=True)
 
@@ -301,6 +319,7 @@ std_te2 = pynamr.sum_of_squares_reconstruction(data_pad[:,1,...], complex_format
 std_te1_filtered = gaussian_filter(std_te1, 1.)
 std_te2_filtered = gaussian_filter(std_te2, 1.)
 
+print("Computed simple reconstructions")
 
 #-------------------------------------------------------------------------------------
 # Check the preprocessed data before proceeding to recon and exit
@@ -312,6 +331,7 @@ if check:
         sens_disp = np.abs(sens)
         vi_check_sens_1 = pv.ThreeAxisViewer([sens_disp[0], sens_disp[1], sens_disp[2], sens_disp[3]], imshow_kwargs = {'cmap':plt.cm.viridis})
         vi_check_sens_2 = pv.ThreeAxisViewer([sens_disp[4], sens_disp[5], sens_disp[6], sens_disp[7]], imshow_kwargs = {'cmap':plt.cm.viridis})
+    print("Displayed preprocessed data for checking and exited")
     sys.exit()
 
 #-------------------------------------------------------------------------------------
@@ -320,12 +340,13 @@ if check:
 
 if load_results:
     if model_recon == "monoexp":
-        x_r = np.fromfile(os.path.join(odir,'x_r.img'), dtype=np.float64).reshape(recon_shape+(2,))
-        gam_r = np.fromfile(os.path.join(odir,'gam_r.img'), dtype=np.float64).reshape(recon_shape)
+        x_r = np.load(os.path.join(odir,'x_r.npy'))
+        gam_r = np.load(os.path.join(odir,'gam_r.npy'))
         display_results()
     elif model_recon == "fixedcomp":
-        x_r = np.fromfile(os.path.join(odir,'x_r.img'), dtype=np.float64).reshape((2,)+recon_shape+(2,))
+        x_r = np.load(os.path.join(odir,'x_r.npy'))
         display_results()
+    print("Loaded and displayed previous reconstruction results and exited")
     sys.exit()
 
 
@@ -381,11 +402,8 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 
 
 #-------------------------------------------------------------------------------------
-# load existing results
-
-
-#-------------------------------------------------------------------------------------
 # run the recons
+print("Started reconstruction")
 if model_recon=="monoexp":
     # allocate initial values of unknown variables
     unknowns[pynamr.VarName.IMAGE].value = np.stack([std_te1_filtered, 0*std_te1_filtered], axis=-1)
@@ -421,7 +439,7 @@ if model_recon=="monoexp":
         unknowns[pynamr.VarName.GAMMA].value = res_2[0].copy().reshape(unknowns[pynamr.VarName.GAMMA].shape)
 
     # postprocess results
-    x_r = unknowns[pynamr.VarName.IMAGE].value * scale_factor
+    x_r = pynamr.complex_view_of_real_array(unknowns[pynamr.VarName.IMAGE].value * scale_factor)
     gam_r = unknowns[pynamr.VarName.GAMMA].value
 
     # save the results
@@ -444,7 +462,7 @@ elif model_recon=="fixedcomp":
 
     # postprocess the results
     unknowns[pynamr.VarName.PARAM].value = res_1[0].copy().reshape(unknowns[pynamr.VarName.PARAM].shape)
-    x_r = unknowns[pynamr.VarName.PARAM].value * scale_factor
+    x_r = pynamr.complex_view_of_real_array(unknowns[pynamr.VarName.PARAM].value * scale_factor)
 
     # save the results
     save_results()
