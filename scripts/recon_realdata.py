@@ -127,6 +127,7 @@ def display_results():
                          std_te2,
                          np.abs(x_r)*gam_r**(1+(te1/delta_t))],
                          imshow_kwargs=[ims_1, ims_1, ims_1, ims_1])
+        return (vi_x_te1, vi_gam, vi_te1_te2)
     elif model_recon=="fixedcomp":
         ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = std_te1.max())
 
@@ -134,6 +135,7 @@ def display_results():
                                  np.abs(x_r[1]),
                                  std_te1_filtered],
                                  imshow_kwargs=[ims_1, ims_1, ims_1])
+        return (vi,)
     else:
         raise NotImplementedError
     print("Displayed reconstruction results")
@@ -342,10 +344,10 @@ if load_results:
     if model_recon == "monoexp":
         x_r = np.load(os.path.join(odir,'x_r.npy'))
         gam_r = np.load(os.path.join(odir,'gam_r.npy'))
-        display_results()
+        vi = display_results()
     elif model_recon == "fixedcomp":
         x_r = np.load(os.path.join(odir,'x_r.npy'))
-        display_results()
+        vi = display_results()
     print("Loaded and displayed previous reconstruction results and exited")
     sys.exit()
 
@@ -446,7 +448,7 @@ if model_recon=="monoexp":
     save_results()
 
     # show the results
-    display_results()
+    vi = display_results()
 
 elif model_recon=="fixedcomp":
     # allocate arrays for recons and copy over initial values
@@ -468,7 +470,7 @@ elif model_recon=="fixedcomp":
     save_results()
 
     # show the results
-    display_results()
+    vi = display_results()
 
 else:
     raise NotImplementedError
