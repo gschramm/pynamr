@@ -434,3 +434,26 @@ def n4 (img: np.ndarray) -> np.ndarray:
     corrected_image = np.swapaxes(sitk.GetArrayFromImage(corrected_image),0,2)
 
     return corrected_image
+
+
+
+def safe_decay(time: float, t2: float | np.ndarray, t2_zero: float) -> float | np.ndarray:
+    """ utility function for computing the T2* decay, with safety net for very low T2* values
+
+    Parameters
+    ----------
+    time : decay time
+    t2 : T2* relaxation time, either scalar or spatial map
+
+    Returns
+    -------
+    float or np.ndarray
+        the multiplicative factor that represents the exponential decay
+    """
+    if np.isscalar(t2):
+        temp = np.exp(-time / t2) if t2 > t2_zero else 0.
+    else:
+        temp = np.zeros(t2.shape, np.float64)
+        temp[t2 > t2_zero] = np.exp( -time / t2[t2 > t2_zero])
+    return temp
+

@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 from argparse import ArgumentParser
 import sys
+import os
 
 import pymirc.viewer as pv
 import pynamr
@@ -41,7 +42,7 @@ parser.add_argument('--n', default = 128, type = int, choices = [128,256], help=
 parser.add_argument('--n_readout_bins', default = 16, type = int, help='TPI readout bins')
 parser.add_argument('--noise_level', default = 5.,  type = float, help='Gaussian noise level')
 parser.add_argument('--nnearest', default = 13,  type = int, help='Bowsher number of most similar voxels')
-parser.add_argument('--phantom',  default = 'rod', choices = ['rod'], help='phantom type')
+parser.add_argument('--phantom',  default = 'rod', choices = ['rod', 'realistic'], help='phantom type')
 parser.add_argument('--seed',     default = 1, type = int, help='seed for random generator')
 parser.add_argument('--delta_t', default = 4.7, type = float, help='Time between TE1 and TE2 acquisition')
 parser.add_argument('--te1', default = 0.3, type = float, help='TE1, start of the first acquisition')
@@ -55,13 +56,13 @@ parser.add_argument('--model_recon',   default = 'monoexp', type = str, choices 
                        help='forward model for reconstructing the raw data')
 parser.add_argument('--model_im',   default = 'monoexp', type = str, choices = ['monoexp','fixedcomp','custom'],
                        help='model for building the true image')
-parser.add_argument('--t2bi_s', default = 3., type = float, help='fixed T2* biexponential short component')
-parser.add_argument('--t2bi_l', default = 20., type = float, help='fixed T2* biexponential long component')
-parser.add_argument('--t2mono_l', default = 25., type = float, help='fixed T2* monoexponential component (i.e. fluid)')
-parser.add_argument('--t2bi_frac_l', default = 0.4, type = float, help='fixed T2* biexponential fraction of long component')
-parser.add_argument('--t2bi_smap_filename', default = None, type = str, help='T2* biexponential short component spatial map')
-parser.add_argument('--t2bi_lmap_filename', default = None, type = str, help='T2* biexponential long component spatial map')
-parser.add_argument('--t2mono_map_filename', default = None, type = str, help='T2* monoexponential (long) component spatial map (i.e. fluid)')
+parser.add_argument('--t2bi_s', default = 5., type = float, help='fixed T2* biexponential short component')
+parser.add_argument('--t2bi_l', default = 22., type = float, help='fixed T2* biexponential long component')
+parser.add_argument('--t2mono_l', default = 26., type = float, help='fixed T2* monoexponential component (i.e. fluid)')
+parser.add_argument('--t2bi_frac_l', default = 0.6, type = float, help='fixed T2* biexponential fraction of long component')
+#parser.add_argument('--t2bi_smap_filename', default = None, type = str, help='T2* biexponential short component spatial map')
+#parser.add_argument('--t2bi_lmap_filename', default = None, type = str, help='T2* biexponential long component spatial map')
+#parser.add_argument('--t2mono_map_filename', default = None, type = str, help='T2* monoexponential (long) component spatial map (i.e. fluid)')
 parser.add_argument('--only_sim', default = False, action='store_true', help='only simulate raw data')
 parser.add_argument('--only_sim_simplerecon', default = False, action='store_true', help='only simulate raw data and std recon')
 parser.add_argument('--save_results', default = False, action='store_true', help='save results to binary files .img')
@@ -95,9 +96,9 @@ t2bi_s      = args.t2bi_s
 t2bi_l      = args.t2bi_l
 t2bi_frac_l = args.t2bi_frac_l
 t2mono_l    = args.t2mono_l
-t2bi_smap_filename = args.t2bi_smap_filename
-t2bi_lmap_filename = args.t2bi_lmap_filename
-t2mono_map_filename = args.t2mono_map_filename
+#t2bi_smap_filename = args.t2bi_smap_filename
+#t2bi_lmap_filename = args.t2bi_lmap_filename
+#t2mono_map_filename = args.t2mono_map_filename
 only_sim    = args.only_sim
 only_sim_simplerecon = args.only_sim_simplerecon
 save_results = args.save_results
@@ -105,12 +106,19 @@ results_dir = args.results_dir
 hann_simplerecon   = args.hann_simplerecon
 
 #-------------------------------------------------------------------------------------
+# perform some checks on input parameters
+if model_sim=="fixedcomp":
+    assert(model_im=="fixedcomp")
+
+#-------------------------------------------------------------------------------------
 # initialize some parameters
 noiseless = (not (noise_level>0.))
 # 2 TE values currently
 nechos = 2
-# shape of the kspace data of a single coil
+# shape of the kspace data of a single coil and a single acquisition
 data_shape = (data_n, data_n, data_n)
+# spatial shape of the reconstructed image
+recon_shape = (n, n, n)
 # down sample factor (recon cube size / data cube size), must be integer
 ds = round(n/data_n)
 # create complex sensitivity images - TO BE IMPROVED
@@ -139,19 +147,59 @@ if phantom=='rod':
                                 axis=2)
     gam_ph /= gam_ph.max()
 
-    if model_im=="fixedcomp":
+    if model_im == "monoexp":
+        true_gam = gam_ph
+        true_conc = x_ph
+        true_te1 = true_conc * gam**(te1/delta_t)
+        true_te2 = true_te1 * gam
+        aimg = x_ph
+    elif model_im=="fixedcomp":
         # biexpo and monoexpo "concentrations" for the fixed compartmental T2* model
-        x1 = 0.5*x_ph
-        x2 = 0.5*np.swapaxes(x_ph,0,1)
+        x1 = 0.5 * x_ph
+        x2 = 0.5 * np.swapaxes(x_ph,0,1)
 
         # corresponding "true" TE1, TE2 and Gamma images 
         true_conc = x1 + x2
         true_te2 = x1 * ( (1-t2bi_frac_l) * np.exp(-(delta_t+te1)/t2bi_s) + t2bi_frac_l * np.exp(-(delta_t+te1)/t2bi_l) ) + x2 * np.exp(-(delta_t+te1)/t2mono_l)
         true_te1 = x1 * ( (1-t2bi_frac_l) * np.exp(-te1/t2bi_s) + t2bi_frac_l * np.exp(-te1/t2bi_l) ) + x2 * np.exp(-te1/t2mono_l)
 
-        # true_te1 * true_gam = true_te2, true_te1<=0.05 is the 0 background
-        true_gam = np.divide(true_te2,true_te1, where=(true_te1>1e-05))
-        true_gam[true_te1<=1e-05]=1.
+        # true_te1 * true_gam = true_te2, true_te1 <= 1e-5 is the 0 background
+        true_gam = np.divide(true_te2, true_te1, where=(true_te1>1e-5))
+        true_gam[true_te1 <= 1e-5] = 1.
+
+        # higher res image prior
+        aimg = x1
+
+elif phantom=='realistic':
+        phantom_dir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/SodiumMRIdata/Heterogeneous_NumericalPhantom/'
+        x1 = np.load(os.path.join(phantom_dir, 'vconc_bi_128.npy'))
+        x2 = np.load(os.path.join(phantom_dir, 'vconc_mono_128.npy'))
+        t2bi_s = np.load(os.path.join(phantom_dir, 't2bi_s_128.npy'))
+        t2bi_l = np.load(os.path.join(phantom_dir, 't2bi_l_128.npy'))
+        t2mono_l = np.load(os.path.join(phantom_dir, 't2mono_l_128.npy'))
+        t2bi_frac_l = np.load(os.path.join(phantom_dir, 't2bi_frac_l_128.npy'))
+        Hmri = np.load(os.path.join(phantom_dir, 'Hmri_128.npy'))
+
+        # corresponding "true" TE1, TE2 and Gamma images 
+        true_conc = x1 + x2
+
+        t2_zero = te1 * 0.1
+        decay_bi_s = pynamr.safe_decay( delta_t + te1, t2bi_s, t2_zero)
+        decay_bi_l = pynamr.safe_decay( delta_t + te1, t2bi_l, t2_zero)
+        decay_mono_l = pynamr.safe_decay( delta_t + te1, t2mono_l, t2_zero)
+        true_te2 = x1 * ( (1-t2bi_frac_l) * decay_bi_s + t2bi_frac_l * decay_bi_l ) + x2 * decay_mono_l
+
+        decay_bi_s = pynamr.safe_decay( te1, t2bi_s, t2_zero)
+        decay_bi_l = pynamr.safe_decay( te1, t2bi_l, t2_zero)
+        decay_mono_l = pynamr.safe_decay( te1, t2mono_l, t2_zero)
+        true_te1 = x1 * ( (1-t2bi_frac_l) * decay_bi_s + t2bi_frac_l * decay_bi_l ) + x2 * decay_mono_l
+
+        # true_te1 * true_gam = true_te2, true_te1 <= 1e-5 is the 0 background
+        true_gam = np.divide( true_te2, true_te1, where=(true_te1 > 1e-5))
+        true_gam[true_te1 <= 1e-5] = 1.
+
+        # higher res image prior
+        aimg = Hmri
 
 else:
     raise NotImplementedError
@@ -173,25 +221,10 @@ kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
 #-------------------------------------------------------------------------------------
 # forward model for simulating raw data
 if model_sim == "monoexp":
-    # construct true images
-    if model_im == "fixedcomp":
-        x = true_conc
-        # add imaginary dimension
-        x = np.stack([x, 0 * x], axis=-1)
-        gam = true_gam
-        aimg = true_conc
-    elif model_im == "monoexp":
-        x = x_ph
-        # add imaginary dimension
-        x = np.stack([x, 0 * x], axis=-1)
-        gam = gam_ph
-        true_gam = gam_ph
-        true_conc = x_ph
-        true_te1 = true_conc * gam**(te1/delta_t)
-        true_te2 = true_te1 * gam
-        aimg = x_ph
-    else:
-        raise NotImplementedError
+    x = true_conc
+    gam = true_gam
+    # add imaginary dimension to the image
+    x = np.stack([x, 0 * x], axis=-1)
 
     # forward model and unknown variables for simulating raw data
     fwd_model_sim = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part)
@@ -201,20 +234,17 @@ if model_sim == "monoexp":
     unknowns_sim[pynamr.VarName.GAMMA].value = gam
 
 elif model_sim == "fixedcomp":
-    if model_im == "fixedcomp":
-        x = np.stack([x1, x2], axis=0)
-        # add imaginary dimension
-        x = np.stack([x, 0 * x], axis=-1)
-        aimg = x1
-
-        if save_results:
-            x1.tofile(results_dir+'true_comp0.img')
-            x2.tofile(results_dir+'true_comp1.img')
-    else:
-        raise NotImplementedError
+    x = np.stack([x1, x2], axis=0)
+    # add imaginary dimension
+    x = np.stack([x, 0 * x], axis=-1)
 
     # forward model and unknown variables for simulating raw data
-    fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part,  0, t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
+    if phantom=="rod":
+        # single (spatially uniform) T2* values for compartments
+        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part, 0, t2mono_l, t2bi_s, t2bi_l, 1., t2bi_frac_l)
+    elif phantom=="realistic":
+        # spatially variable T2* values for compartments
+        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
     unknowns_sim = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
     unknowns_sim[pynamr.VarName.PARAM].value = x
 
@@ -224,7 +254,9 @@ if save_results:
     true_te1.tofile(results_dir+'true_te1.img')
     true_te2.tofile(results_dir+'true_te2.img')
     true_gam.tofile(results_dir+'true_gam.img')
-
+    if model_im=="fixedcomp":
+        x1.tofile(results_dir+'true_comp0.img')
+        x2.tofile(results_dir+'true_comp1.img')
 
 #-------------------------------------------------------------------------------------
 # generate data
@@ -234,9 +266,11 @@ y = fwd_model_sim.forward(unknowns_sim)
 if noiseless:
     data = y
 else:
-    #data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
-    # temporary, to ensure we have the same noise level computation for different options
-    data = y + noise_level * 0.014 * np.random.randn(*y.shape).astype(np.float64)
+    if phantom=="rod":
+        # temporary, to ensure we have the same noise level computation for different options
+        data = y + noise_level * 0.014 * np.random.randn(*y.shape).astype(np.float64)
+    elif phantom=="realistic":
+        data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
 
 #-------------------------------------------------------------------------------------
 # only simulate raw data end exit
@@ -314,7 +348,10 @@ if model_recon == "monoexp":
     unknowns = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([ds * x for x in data_shape]) + (2,)),
                     pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False)}
 elif model_recon == "fixedcomp":
-    fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, 0, t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
+    if phantom=='rod':
+        fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, 0., t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
+    elif phantom=='realistic':
+        fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
     unknowns = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
 else:
     raise NotImplementedError

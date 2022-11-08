@@ -21,7 +21,7 @@ class Var():
 
     # shape = number of components + spatial dimensions + 2 for real and imaginary parts if complex
     shape: tuple
-    # Number of spatial components (e.g. multicompartmental voxel model)
+    # Number of components (e.g. multicompartmental voxel model)
     nb_comp: int = 1
     # complex number variable: the last dimension is the real and imaginary component
     complex_var: bool = True
@@ -33,5 +33,6 @@ class Var():
     def __post_init__(self):
         # complex shape = number of components + spatial dimensions
         self.complex_shape = (self.shape[:-1] if self.complex_var else self.shape)
+        self.spatial_shape = (self.complex_shape[1:] if self.nb_comp>1 else self.complex_shape)
 
 
