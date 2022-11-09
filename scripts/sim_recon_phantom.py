@@ -65,8 +65,8 @@ parser.add_argument('--t2bi_frac_l', default = 0.6, type = float, help='fixed T2
 #parser.add_argument('--t2mono_map_filename', default = None, type = str, help='T2* monoexponential (long) component spatial map (i.e. fluid)')
 parser.add_argument('--only_sim', default = False, action='store_true', help='only simulate raw data')
 parser.add_argument('--only_sim_simplerecon', default = False, action='store_true', help='only simulate raw data and std recon')
-parser.add_argument('--save_results', default = False, action='store_true', help='save results to binary files .img')
-parser.add_argument('--results_dir', default = 'results/', help='folder for saving results')
+parser.add_argument('--save_results', default = False, action='store_true', help='save results to npy files')
+parser.add_argument('--results_dir', default = 'results', help='folder for saving results')
 parser.add_argument('--hann_simplerecon', default = False, action='store_true', help='apply hanning filter for standard recon')
 
 
@@ -126,6 +126,8 @@ sens = np.ones((ncoils, n, n, n)) + 0j * np.zeros(
     (ncoils, n, n, n))
 # seed the random generator
 np.random.seed(seed)
+if not os.path.exists(results_dir):
+    os.makedirs(results_dir)
 
 #-------------------------------------------------------------------------------------
 # setup the base phantom
@@ -250,13 +252,13 @@ elif model_sim == "fixedcomp":
 
 # save true images if required
 if save_results:
-    true_conc.tofile(results_dir+'true_conc.img')
-    true_te1.tofile(results_dir+'true_te1.img')
-    true_te2.tofile(results_dir+'true_te2.img')
-    true_gam.tofile(results_dir+'true_gam.img')
+    np.save(os.path.join(results_dir, 'true_conc'), true_conc)
+    np.save(os.path.join(results_dir, 'true_te1'), true_te1)
+    np.save(os.path.join(results_dir, 'true_te2'), true_te2)
+    np.save(os.path.join(results_dir, 'true_gam'), true_gam)
     if model_im=="fixedcomp":
-        x1.tofile(results_dir+'true_comp0.img')
-        x2.tofile(results_dir+'true_comp1.img')
+        np.save(results_dir+'true_comp0.img'), x1)
+        np.save(results_dir+'true_comp1.img'), x2)
 
 #-------------------------------------------------------------------------------------
 # generate data
@@ -323,10 +325,10 @@ else:
 
 # save images if required
 if save_results:
-    std_te1.tofile(results_dir+'std_te1_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
-    std_te2.tofile(results_dir+'std_te2_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+'.img')
-    std_te1_filtered.tofile(results_dir+'std_te1_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+('_hann' if hann_simplerecon else '')+'.img')
-    std_te2_filtered.tofile(results_dir+'std_te2_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+('_hann' if hann_simplerecon else '')+'.img')
+    np.save(os.path.join(results_dir, 'std_te1_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+''), std_te1)
+    np.save(os.path.join(results_dir, 'std_te2_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+''), std_te2)
+    np.save(os.path.join(results_dir, 'std_te1_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+('_hann' if hann_simplerecon else '')+''), std_te1_filtered)
+    np.save(os.path.join(results_dir, 'std_te2_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+('_hann' if hann_simplerecon else '')+''), std_te2_filtered)
 
 # only simulate raw data and simple recon
 if only_sim_simplerecon:
@@ -429,8 +431,8 @@ if model_recon=="monoexp":
                          gam_r],
                          imshow_kwargs=[ims_1,ims_1,ims_1,ims_2,ims_2])
     if save_results:
-        x_r.tofile(results_dir+'x_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+'.img')
-        gam_r.tofile(results_dir+'gam_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+'.img')
+        np.save(os.path.join(results_dir, 'x_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+''), x_r)
+        np.save(os.path.join(results_dir, 'gam_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+''), gam_r)
 
 
 
@@ -459,7 +461,7 @@ elif model_recon=="fixedcomp":
                          imshow_kwargs=[ims_1, ims_1, ims_1, ims_1])
 
     if save_results:
-        x_r.tofile(results_dir+'x_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+'.img')
+        np.save(os.path.join(results_dir, 'x_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+''), x_r)
 
 else:
     raise NotImplementedError
