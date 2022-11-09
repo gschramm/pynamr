@@ -126,6 +126,8 @@ sens = np.ones((ncoils, n, n, n)) + 0j * np.zeros(
     (ncoils, n, n, n))
 # seed the random generator
 np.random.seed(seed)
+# results dir
+results_dir += f"_{phantom}"
 if not os.path.exists(results_dir):
     os.makedirs(results_dir)
 
@@ -257,8 +259,8 @@ if save_results:
     np.save(os.path.join(results_dir, 'true_te2'), true_te2)
     np.save(os.path.join(results_dir, 'true_gam'), true_gam)
     if model_im=="fixedcomp":
-        np.save(results_dir+'true_comp0.img'), x1)
-        np.save(results_dir+'true_comp1.img'), x2)
+        np.save(os.path.join(results_dir+'true_comp0.img'), x1)
+        np.save(os.path.join(results_dir+'true_comp1.img'), x2)
 
 #-------------------------------------------------------------------------------------
 # generate data
@@ -417,7 +419,7 @@ if model_recon=="monoexp":
         # update current value
         unknowns[pynamr.VarName.GAMMA].value = res_2[0].copy().reshape(unknowns[pynamr.VarName.GAMMA].shape)
 
-    x_r = unknowns[pynamr.VarName.IMAGE].value
+    x_r = pynamr.complex_view_of_real_array(unknowns[pynamr.VarName.IMAGE].value)
     gam_r = unknowns[pynamr.VarName.GAMMA].value
 
     # show the results
@@ -449,7 +451,7 @@ elif model_recon=="fixedcomp":
                           disp=1)
 
     unknowns[pynamr.VarName.PARAM].value = res_1[0].copy().reshape(unknowns[pynamr.VarName.PARAM].shape)
-    x_r = unknowns[pynamr.VarName.PARAM].value
+    x_r = pynamr.complex_view_of_real_array(unknowns[pynamr.VarName.PARAM].value)
 
     # show the results
     ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = x.max())
