@@ -118,8 +118,9 @@ def display_results():
 
         # reconstructed Gamma and a rough estimation from simple recons
         vi_gam = pv.ThreeAxisViewer([gam_rough_est,
-                         gam_r],
-                         imshow_kwargs=[ims_2, ims_2])
+                         gam_r,
+                         highresH_img],
+                         imshow_kwargs=[ims_2, ims_2, highresH_img_1])
 
         # reconstructed and simple TE1 and TE2 images
         vi_te1_te2 = pv.ThreeAxisViewer([std_te1,

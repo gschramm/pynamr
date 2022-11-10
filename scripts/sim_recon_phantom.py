@@ -42,7 +42,7 @@ parser.add_argument('--n', default = 128, type = int, choices = [128,256], help=
 parser.add_argument('--n_readout_bins', default = 16, type = int, help='TPI readout bins')
 parser.add_argument('--noise_level', default = 5.,  type = float, help='Gaussian noise level')
 parser.add_argument('--nnearest', default = 13,  type = int, help='Bowsher number of most similar voxels')
-parser.add_argument('--phantom',  default = 'rod', choices = ['rod', 'realistic'], help='phantom type')
+parser.add_argument('--phantom',  default = 'rod', choices = ['rod', 'realistic', 'realistic_lesion'], help='phantom type')
 parser.add_argument('--seed',     default = 1, type = int, help='seed for random generator')
 parser.add_argument('--delta_t', default = 4.7, type = float, help='Time between TE1 and TE2 acquisition')
 parser.add_argument('--te1', default = 0.3, type = float, help='TE1, start of the first acquisition')
@@ -134,6 +134,9 @@ if phantom=='rod':
 elif phantom=='realistic':
     # this phantom is loaded from precomputed parameters
     sdir = os.path.join(sdir,'Heterogeneous_NumericalPhantom')
+elif phantom=='realistic_lesion':
+    # this phantom is loaded from precomputed parameters
+    sdir = os.path.join(sdir,'Heterogeneous_NumericalPhantom_Lesion')
 if not dont_save:
     # folder for saving the final simulated images, though currently not the generated k-space data
     sim_dir = os.path.join(sdir, 'im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else ''))
@@ -163,10 +166,8 @@ def display_results():
         # reconstructed image at time 0 and simple recon at TE1
         vi_x_te1 = pv.ThreeAxisViewer([true_conc,
                          np.abs(x_r),
-                         aimg,
-                         true_gam,
-                         gam_r],
-                         imshow_kwargs=[ims_1, ims_1, aimg_1, ims_2, ims_2])
+                         aimg],
+                         imshow_kwargs=[ims_1, ims_1, aimg_1])
 
         # reconstructed Gamma and a rough estimation from simple recons
         vi_gam = pv.ThreeAxisViewer([true_gam,
@@ -257,7 +258,7 @@ if phantom=='rod':
         # higher res image prior
         aimg = x1
 
-elif phantom=='realistic':
+elif 'realistic' in phantom:
         x1 = np.load(os.path.join(sdir, 'vconc_bi_128.npy'))
         x2 = np.load(os.path.join(sdir, 'vconc_mono_128.npy'))
         t2bi_s = np.load(os.path.join(sdir, 't2bi_s_128.npy'))
@@ -328,7 +329,7 @@ elif model_sim == "fixedcomp":
     if phantom=="rod":
         # single (spatially uniform) T2* values for compartments
         fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part, 0, t2mono_l, t2bi_s, t2bi_l, 1., t2bi_frac_l)
-    elif phantom=="realistic":
+    elif 'realistic' in phantom:
         # spatially variable T2* values for compartments
         fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
     unknowns_sim = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
@@ -356,7 +357,7 @@ else:
     if phantom=="rod":
         # temporary, to ensure we have the same noise level computation for different options
         data = y + noise_level * 0.014 * np.random.randn(*y.shape).astype(np.float64)
-    elif phantom=="realistic":
+    elif 'realistic' in phantom:
         data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
 
 #-------------------------------------------------------------------------------------
@@ -453,7 +454,7 @@ if model_recon == "monoexp":
 elif model_recon == "fixedcomp":
     if phantom=='rod':
         fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, 0., t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
-    elif phantom=='realistic':
+    elif 'realistic' in phantom:
         fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
     unknowns = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
 else:

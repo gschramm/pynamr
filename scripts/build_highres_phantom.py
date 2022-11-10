@@ -3,7 +3,7 @@ import nibabel as nib
 
 from scipy.ndimage     import zoom, gaussian_filter
 from scipy.interpolate import interp1d
-from scipy.ndimage import binary_dilation, binary_fill_holes, binary_closing
+from scipy.ndimage import binary_dilation, binary_fill_holes, binary_closing, grey_erosion, grey_closing
 from scipy.optimize import fmin_l_bfgs_b
 from scipy.stats import truncnorm
 
@@ -21,9 +21,16 @@ import pynamr
 
 
 build_csf = False
-compute_phantom = False
+compute_phantom = True
+add_lesion = True
 
 sdir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/Belzunce_Phantom'
+odir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/Belzunce_Phantom/NaMRI' + ('_lesion' if add_lesion else '')
+if not os.path.exists(odir):
+    os.makedirs(odir)
+
+# final cubic array size for the phantom
+final_n = 128
 
 seed = 42
 np.random.seed(seed)
@@ -44,13 +51,18 @@ cells_im /= cells_im.max()
 mri = nib.load(os.path.join(sdir,'mri_registered_2009b_sym.nii'))
 mri = nib.as_closest_canonical(mri)
 mri_im = mri.get_fdata()
+# inverse the contrast of this weird MRI so that the background is black
+mri_im = mri_im.max() - mri_im
 
+# original array shape for all the images
 common_shape = mri_im.shape
 
 # MRI with artificially added skull
 mri_skull = nib.load(os.path.join(sdir,'mri_registered_with_skull_2009b_sym.nii'))
 mri_skull = nib.as_closest_canonical(mri_skull)
 mri_im_skull = mri_skull.get_fdata()
+# inverse the contrast of this weird MRI so that the background is black
+mri_im_skull = mri_im_skull.max() - mri_im_skull
 
 # Hammersmith brain atlas, probability maps, no csf
 # pair contralateral regions to ensure the same image parameters
@@ -68,7 +80,6 @@ for i,f in enumerate(hammer_prob_files_L):
         hammer_prob_files_R_only.remove(contralat[0])
     else:
         hammer_prob_files_L_only.append(f)
-
 if len(hammer_prob_files_L_only) > 1 or len(hammer_prob_files_R_only) > 1:
     raise NotImplementedError
 
@@ -96,7 +107,6 @@ classes_full = nib.load(os.path.join(sdir, 'full_cls_400um_2009b_sym_with_csf_mf
 classes_full = nib.as_closest_canonical(classes_full)
 classes_full_im = classes_full.get_fdata().astype(np.uint8)
 
-
 # extract different tissue classes
 wm = (classes_full_im==3).astype(np.float64)
 gm = (classes_full_im==2).astype(np.float64)
@@ -112,6 +122,19 @@ csf = (classes_full_im==10).astype(np.float64)
 gm_full = gm + gm_sup + cerv + cerv_sup
 no_idea = nuclei + amygd + stem
 
+# add a lesion if required
+if add_lesion:
+    # load a region in GM and WM
+    lesion = nib.load(os.path.join(sdir, 'Hammersmith/probmap-full-r12-TL_superior_temporal_gyrus_middle_part_L.nii.gz_2009b.nii'))
+    lesion = nib.as_closest_canonical(lesion)
+    lesion = lesion.get_fdata()
+    
+    # reduce the size of the region asymmetrically
+    lesion = grey_erosion(lesion, size=(1,20,10))
+    lesion /= lesion.max()
+    lesion[lesion<0.7]=0.
+    # limit to GM and WM
+    lesion *= gm_full + wm
 
 # draw randomly T2* and Na concentration values for each region
 # from Gaussians truncated to realistic intervals
@@ -139,8 +162,11 @@ loc, scale = 15., 3.
 a, b = (5. - loc) / scale, (30. - loc) / scale
 conc_bi = truncnorm.rvs(a, b, loc, scale, size = nb_regions)
 
-# volume fraction of fluid (CSF and blood?), with monoexponential T2* relaxation
-v_mono = csf + gm_full * 0.1 + wm * 0.2 + no_idea *0.05
+# volume fraction of fluid (CSF and blood, though the blood may be slightly biexponential), with monoexponential T2* relaxation
+v_mono = csf + gm_full * 0.1 + wm * 0.2 + no_idea * 0.05
+if add_lesion:
+    v_mono += lesion * 0.4
+
 # the rest is the volume fraction of Na with biexponential T2* relaxation
 v_bi = 1 - v_mono
 
@@ -189,13 +215,13 @@ if compute_phantom:
     final_vconc_total = final_vconc_bi + final_vconc_mono
 
     # final Na phantom parameters in initial high resolution
-    np.save(os.path.join(sdir, 'vconc_bi'), final_vconc_bi)
-    np.save(os.path.join(sdir, 'vconc_mono'), final_vconc_mono)
-    np.save(os.path.join(sdir, 't2bi_s'), final_t2_bi_s)
-    np.save(os.path.join(sdir, 't2bi_l'), final_t2_bi_l)
-    np.save(os.path.join(sdir, 't2mono_l'), final_t2_mono_l)
-    np.save(os.path.join(sdir, 't2bi_frac_l'), final_t2_bi_frac_l)
-    np.save(os.path.join(sdir, 'mri'), mri_im)
+    np.save(os.path.join(odir, 'vconc_bi'), final_vconc_bi)
+    np.save(os.path.join(odir, 'vconc_mono'), final_vconc_mono)
+    np.save(os.path.join(odir, 't2bi_s'), final_t2_bi_s)
+    np.save(os.path.join(odir, 't2bi_l'), final_t2_bi_l)
+    np.save(os.path.join(odir, 't2mono_l'), final_t2_mono_l)
+    np.save(os.path.join(odir, 't2bi_frac_l'), final_t2_bi_frac_l)
+    np.save(os.path.join(odir, 'Hmri'), mri_im)
 
     # pad to cubic volume
     max_n = max(common_shape)
@@ -212,21 +238,21 @@ if compute_phantom:
     final_mri = np.pad(mri_im, pad_shape)
 
     # downsample to the voxel size used for reconstructing real Na MRI TPI data
-    ds = 128/max_n
-    final_vconc_bi_128 = zoom(final_vconc_bi, ds, order=1)
-    final_vconc_mono_128 = zoom(final_vconc_mono, ds, order=1)
-    final_vconc_total_128 = zoom(final_vconc_total, ds, order=1)
-    final_t2_bi_s_128 = zoom(final_t2_bi_s, ds, order=1)
-    final_t2_bi_l_128 = zoom(final_t2_bi_l, ds, order=1)
-    final_t2_mono_l_128 = zoom(final_t2_mono_l, ds, order=1)
-    final_t2_bi_frac_l_128 = zoom(final_t2_bi_frac_l, ds, order=1)
-    final_mri_128 = zoom(final_mri, ds, order=1)
+    ds = final_n/max_n
+    final_vconc_bi_final_n = zoom(final_vconc_bi, ds, order=1)
+    final_vconc_mono_final_n = zoom(final_vconc_mono, ds, order=1)
+    final_vconc_total_final_n = zoom(final_vconc_total, ds, order=1)
+    final_t2_bi_s_final_n = zoom(final_t2_bi_s, ds, order=1)
+    final_t2_bi_l_final_n = zoom(final_t2_bi_l, ds, order=1)
+    final_t2_mono_l_final_n = zoom(final_t2_mono_l, ds, order=1)
+    final_t2_bi_frac_l_final_n = zoom(final_t2_bi_frac_l, ds, order=1)
+    final_mri_final_n = zoom(final_mri, ds, order=1)
 
     # save downsampled parameters
-    np.save(os.path.join(sdir, 'vconc_bi_128'), final_vconc_bi_128)
-    np.save(os.path.join(sdir, 'vconc_mono_128'), final_vconc_mono_128)
-    np.save(os.path.join(sdir, 't2bi_s_128'), final_t2_bi_s_128)
-    np.save(os.path.join(sdir, 't2bi_l_128'), final_t2_bi_l_128)
-    np.save(os.path.join(sdir, 't2mono_l_128'), final_t2_mono_l_128)
-    np.save(os.path.join(sdir, 't2bi_frac_l_128'), final_t2_bi_frac_l_128)
-    np.save(os.path.join(sdir, 'mri_128'), final_mri_128)
+    np.save(os.path.join(odir, f"vconc_bi_{final_n}"), final_vconc_bi_final_n)
+    np.save(os.path.join(odir, f"vconc_mono_{final_n}"), final_vconc_mono_final_n)
+    np.save(os.path.join(odir, f"t2bi_s_{final_n}"), final_t2_bi_s_final_n)
+    np.save(os.path.join(odir, f"t2bi_l_{final_n}"), final_t2_bi_l_final_n)
+    np.save(os.path.join(odir, f"t2mono_l_{final_n}"), final_t2_mono_l_final_n)
+    np.save(os.path.join(odir, f"t2bi_frac_l_{final_n}"), final_t2_bi_frac_l_final_n)
+    np.save(os.path.join(odir, f"Hmri_{final_n}"), final_mri_final_n)
