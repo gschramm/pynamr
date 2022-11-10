@@ -190,7 +190,7 @@ fnames1 = sorted(glob(os.path.join(sdir1, fpattern)))
 fnames2 = sorted(glob(os.path.join(sdir2, fpattern)))
 if (len(fnames1) != ncoils) or (len(fnames2) != ncoils):
     raise ValueError('The number of data files is not correct')
-odir = os.path.join(sdir, casedir, f'betax_{beta_x:.1E}'+ (f'_betagam_{beta_gam:.1E}' if model_recon=='monoexp' else '')+
+odir = os.path.join(sdir, casedir, 'results', f'betax_{beta_x:.1E}'+ (f'_betagam_{beta_gam:.1E}' if model_recon=='monoexp' else '')+
                                    (f'_{highres_mri_name}_nbow_{nnearest}' if not no_highres_prior else '')+
                                    (f'_t2bs_{t2bi_s:.1E}_t2bl_{t2bi_l:.1E}' if model_recon=='fixedcomp' else '') )
 

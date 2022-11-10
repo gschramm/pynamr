@@ -65,9 +65,9 @@ parser.add_argument('--t2bi_lmap_filename', default = None, type = str, help='T2
 parser.add_argument('--t2mono_map_filename', default = None, type = str, help='T2* monoexponential (long) component spatial map (i.e. fluid)')
 parser.add_argument('--only_sim', default = False, action='store_true', help='only simulate raw data')
 parser.add_argument('--only_sim_simplerecon', default = False, action='store_true', help='only simulate raw data and std recon')
-parser.add_argument('--save_results', default = False, action='store_true', help='save results to npy files')
-parser.add_argument('--results_dir', default = 'results', help='folder for saving results')
-parser.add_argument('--hann_simplerecon', default = False, action='store_true', help='apply hanning filter for standard recon')
+parser.add_argument('--dont_save', action='store_true', help="don't save simulation not recon results")
+parser.add_argument('--load_results', action='store_true', help='load existing results, display and exit')
+parser.add_argument('--hann_simplerecon', action='store_true', help='apply hanning filter for standard recon')
 
 
 
@@ -101,8 +101,8 @@ t2bi_lmap_filename = args.t2bi_lmap_filename
 t2mono_map_filename = args.t2mono_map_filename
 only_sim    = args.only_sim
 only_sim_simplerecon = args.only_sim_simplerecon
-save_results = args.save_results
-results_dir = args.results_dir
+dont_save = args.dont_save
+load_results = args.load_results
 hann_simplerecon   = args.hann_simplerecon
 
 #-------------------------------------------------------------------------------------
@@ -119,8 +119,87 @@ sens = np.ones((ncoils, n, n, n)) + 0j * np.zeros(
     (ncoils, n, n, n))
 # seed the random generator
 np.random.seed(seed)
-if not os.path.exists(results_dir):
-    os.makedirs(results_dir)
+# folders with data and results
+sdir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/SodiumMRIdata/'
+if phantom=='rod':
+    sdir = os.path.join(sdir,'Rod_NumericalPhantom')
+if not dont_save:
+    sim_dir = os.path.join(sdir, 'im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else ''))
+    odir = os.path.join(sim_dir, 'results', f'betax_{beta_x:.1E}'+ (f'_betagam_{beta_gam:.1E}' if model_recon=='monoexp' else '')+
+                                   (f'_t2bs_{t2bi_s:.1E}_t2bl_{t2bi_l:.1E}' if model_recon=='fixedcomp' else '')+
+                                   ('_inst' if instant_tpi_recon else ''))
+    if not os.path.exists(sim_dir):
+        os.makedirs(sim_dir)
+    if not os.path.exists(odir):
+        os.makedirs(odir)
+# if loading existing results, don't save anything
+if load_results:
+    dont_save = True
+
+#-------------------------------------------------------------------------------------
+# Utility functions for results
+#-------------------------------------------------------------------------------------
+
+# display reconstruction results
+def display_results():
+    if model_recon=="monoexp":
+        ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_conc.max())
+        ims_2 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = 1.)
+        aimg_1 = dict(cmap=plt.cm.gray, vmin = 0, vmax = aimg.max())
+
+        # reconstructed image at time 0 and simple recon at TE1
+        vi_x_te1 = pv.ThreeAxisViewer([true_conc,
+                         np.abs(x_r),
+                         aimg,
+                         true_gam,
+                         gam_r],
+                         imshow_kwargs=[ims_1, ims_1, aimg_1, ims_2, ims_2])
+
+        # reconstructed Gamma and a rough estimation from simple recons
+        vi_gam = pv.ThreeAxisViewer([true_gam,
+                         gam_r,
+                         aimg],
+                         imshow_kwargs=[ims_2, ims_2, aimg_1])
+
+        # reconstructed and simple TE1 and TE2 images
+        vi_te1_te2 = pv.ThreeAxisViewer([std_te1,
+                         np.abs(x_r)*gam_r**(te1/delta_t),
+                         std_te2,
+                         np.abs(x_r)*gam_r**(1+(te1/delta_t))],
+                         imshow_kwargs=[ims_1, ims_1, ims_1, ims_1])
+        return (vi_x_te1, vi_gam, vi_te1_te2)
+
+    elif model_recon=="fixedcomp":
+        ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = x.max())
+        aimg_1 = dict(cmap=plt.cm.gray, vmin = 0, vmax = aimg.max())
+
+        vi = pv.ThreeAxisViewer([x1,
+                                 np.abs(x_r[0]),
+                                 x2,
+                                 np.abs(x_r[1]),
+                                 aimg
+                                 ],
+                                 imshow_kwargs=[ims_1, ims_1, ims_1, ims_1, aimg_1])
+        return (vi,)
+    else:
+        raise NotImplementedError
+    print("Displayed reconstruction results")
+
+# save reconstruction results to files
+def save_results():
+    # write input arguments to file
+    with open(os.path.join(odir,'input_params.csv'), 'w') as f:
+        for x in args.__dict__.items():
+            f.write("%s,%s\n"%(x[0],x[1]))
+    # write images
+    if model_recon=="monoexp":
+        np.save(os.path.join(odir,'x_r'), x_r)
+        np.save(os.path.join(odir,'gam_r'), gam_r)
+    elif model_recon=="fixedcomp":
+        np.save(os.path.join(odir,'x_r'), x_r)
+    else:
+        raise NotImplementedError
+    print("Saved results and input parameters")
 
 #-------------------------------------------------------------------------------------
 # setup the base phantom
@@ -210,9 +289,9 @@ elif model_sim == "fixedcomp":
         x = np.stack([x, 0 * x], axis=-1)
         aimg = x1
 
-        if save_results:
-            np.save(os.path.join(results_dir, 'true_comp0'), x1)
-            np.save(os.path.join(results_dir, 'true_comp1'), x2)
+        if not dont_save:
+            np.save(os.path.join(sim_dir, 'true_comp0'), x1)
+            np.save(os.path.join(sim_dir, 'true_comp1'), x2)
     else:
         raise NotImplementedError
 
@@ -222,11 +301,11 @@ elif model_sim == "fixedcomp":
     unknowns_sim[pynamr.VarName.PARAM].value = x
 
 # save true images if required
-if save_results:
-    np.save(os.path.join(results_dir, 'true_conc'), true_conc)
-    np.save(os.path.join(results_dir, 'true_te1'), true_te1)
-    np.save(os.path.join(results_dir, 'true_te2'), true_te2)
-    np.save(os.path.join(results_dir, 'true_gam'), true_gam)
+if not dont_save:
+    np.save(os.path.join(sim_dir, 'true_conc'), true_conc)
+    np.save(os.path.join(sim_dir, 'true_te1'), true_te1)
+    np.save(os.path.join(sim_dir, 'true_te2'), true_te2)
+    np.save(os.path.join(sim_dir, 'true_gam'), true_gam)
 
 
 #-------------------------------------------------------------------------------------
@@ -245,7 +324,6 @@ else:
 # only simulate raw data end exit
 if only_sim:
     sys.exit()
-
 
 #-------------------------------------------------------------------------------------
 # "Standard/simple" recon
@@ -291,15 +369,32 @@ else:
     std_te2_filtered = gaussian_filter(std_te2, 1.)
 
 # save images if required
-if save_results:
-    np.save(os.path.join(results_dir, 'std_te1_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+''), std_te1)
-    np.save(os.path.join(results_dir, 'std_te2_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+''), std_te2)
-    np.save(os.path.join(results_dir, 'std_te1_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+('_hann' if hann_simplerecon else '')+''), std_te1_filtered)
-    np.save(os.path.join(results_dir, 'std_te2_filt_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else '')+('_hann' if hann_simplerecon else '')+''), std_te2_filtered)
+if not dont_save:
+    np.save(os.path.join(sim_dir, 'std_te1'), std_te1)
+    np.save(os.path.join(sim_dir, 'std_te2'), std_te2)
+    np.save(os.path.join(sim_dir, 'std_te1_filt'+('_hann' if hann_simplerecon else '')), std_te1_filtered)
+    np.save(os.path.join(sim_dir, 'std_te2_filt'+('_hann' if hann_simplerecon else '')), std_te2_filtered)
 
 # only simulate raw data and simple recon
 if only_sim_simplerecon:
     sys.exit()
+
+
+#-------------------------------------------------------------------------------------
+# Load and display already computed reconstruction results and exit
+#-------------------------------------------------------------------------------------
+
+if load_results:
+    if model_recon == "monoexp":
+        x_r = np.load(os.path.join(odir,'x_r.npy'))
+        gam_r = np.load(os.path.join(odir,'gam_r.npy'))
+        vi = display_results()
+    elif model_recon == "fixedcomp":
+        x_r = np.load(os.path.join(odir,'x_r.npy'))
+        vi = display_results()
+    print("Loaded and displayed previous reconstruction results and exited")
+    sys.exit()
+
 
 #-------------------------------------------------------------------------------------
 # Reconstruction
@@ -381,24 +476,14 @@ if model_recon=="monoexp":
         # update current value
         unknowns[pynamr.VarName.GAMMA].value = res_2[0].copy().reshape(unknowns[pynamr.VarName.GAMMA].shape)
 
-    x_r = unknowns[pynamr.VarName.IMAGE].value
+    x_r = pynamr.complex_view_of_real_array(unknowns[pynamr.VarName.IMAGE].value)
     gam_r = unknowns[pynamr.VarName.GAMMA].value
 
     # show the results
-    ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_conc.max())
-    ims_2 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_gam.max())
+    vi = display_results()
 
-    vi = pv.ThreeAxisViewer([true_conc,
-                         np.linalg.norm(x_r, axis=-1),
-                         std_te1_filtered,
-                         true_gam,
-                         gam_r],
-                         imshow_kwargs=[ims_1,ims_1,ims_1,ims_2,ims_2])
-    if save_results:
-        np.save(os.path.join(results_dir, 'x_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+''), x_r)
-        np.save(os.path.join(results_dir, 'gam_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+''), gam_r)
-
-
+    if not dont_save:
+        save_results()
 
 elif model_recon=="fixedcomp":
     # allocate arrays for recons and copy over initial values
@@ -413,19 +498,13 @@ elif model_recon=="fixedcomp":
                           disp=1)
 
     unknowns[pynamr.VarName.PARAM].value = res_1[0].copy().reshape(unknowns[pynamr.VarName.PARAM].shape)
-    x_r = unknowns[pynamr.VarName.PARAM].value
+    x_r = pynamr.complex_view_of_real_array(unknowns[pynamr.VarName.PARAM].value)
 
     # show the results
-    ims_1 = dict(cmap=plt.cm.viridis, vmin = 0, vmax = x.max())
+    vi = display_results()
 
-    vi = pv.ThreeAxisViewer([x1,
-                         np.linalg.norm(x_r[0], axis=-1),
-                         x2,
-                         np.linalg.norm(x_r[1], axis=-1)],
-                         imshow_kwargs=[ims_1, ims_1, ims_1, ims_1])
-
-    if save_results:
-        np.save(os.path.join(results_dir, 'x_r_im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+'_rec'+model_recon+('_inst' if instant_tpi_recon else '')+('_noiseless' if noiseless else '')+''), x_r)
+    if not dont_save:
+        save_results()
 
 else:
     raise NotImplementedError
