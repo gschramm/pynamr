@@ -129,9 +129,15 @@ np.random.seed(seed)
 # folders with data and results
 sdir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/SodiumMRIdata/'
 if phantom=='rod':
+    # this phantom is generated on the fly as it is fast to compute
     sdir = os.path.join(sdir,'Rod_NumericalPhantom')
+elif phantom=='realistic':
+    # this phantom is loaded from precomputed parameters
+    sdir = os.path.join(sdir,'Heterogeneous_NumericalPhantom')
 if not dont_save:
+    # folder for saving the final simulated images, though currently not the generated k-space data
     sim_dir = os.path.join(sdir, 'im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else ''))
+    # folder for storing reconstruction results
     odir = os.path.join(sim_dir, 'results', f'betax_{beta_x:.1E}'+ (f'_betagam_{beta_gam:.1E}' if model_recon=='monoexp' else '')+
                                    (f'_t2bs_{t2bi_s:.1E}_t2bl_{t2bi_l:.1E}' if model_recon=='fixedcomp' else '')+
                                    ('_inst' if instant_tpi_recon else ''))
@@ -252,14 +258,13 @@ if phantom=='rod':
         aimg = x1
 
 elif phantom=='realistic':
-        phantom_dir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/SodiumMRIdata/Heterogeneous_NumericalPhantom/'
-        x1 = np.load(os.path.join(phantom_dir, 'vconc_bi_128.npy'))
-        x2 = np.load(os.path.join(phantom_dir, 'vconc_mono_128.npy'))
-        t2bi_s = np.load(os.path.join(phantom_dir, 't2bi_s_128.npy'))
-        t2bi_l = np.load(os.path.join(phantom_dir, 't2bi_l_128.npy'))
-        t2mono_l = np.load(os.path.join(phantom_dir, 't2mono_l_128.npy'))
-        t2bi_frac_l = np.load(os.path.join(phantom_dir, 't2bi_frac_l_128.npy'))
-        Hmri = np.load(os.path.join(phantom_dir, 'Hmri_128.npy'))
+        x1 = np.load(os.path.join(sdir, 'vconc_bi_128.npy'))
+        x2 = np.load(os.path.join(sdir, 'vconc_mono_128.npy'))
+        t2bi_s = np.load(os.path.join(sdir, 't2bi_s_128.npy'))
+        t2bi_l = np.load(os.path.join(sdir, 't2bi_l_128.npy'))
+        t2mono_l = np.load(os.path.join(sdir, 't2mono_l_128.npy'))
+        t2bi_frac_l = np.load(os.path.join(sdir, 't2bi_frac_l_128.npy'))
+        Hmri = np.load(os.path.join(sdir, 'Hmri_128.npy'))
 
         # corresponding "true" TE1, TE2 and Gamma images 
         true_conc = x1 + x2
