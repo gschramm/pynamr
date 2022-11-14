@@ -240,7 +240,10 @@ if phantom=='rod':
         true_conc = x_ph
         true_te1 = true_conc * gam**(te1/delta_t)
         true_te2 = true_te1 * gam
-        aimg = x_ph
+
+        # higher res image prior
+        aimg = (x_ph.max() - x_ph)**0.5
+
     elif model_im=="fixedcomp":
         # biexpo and monoexpo "concentrations" for the fixed compartmental T2* model
         x1 = 0.5 * x_ph
@@ -256,7 +259,7 @@ if phantom=='rod':
         true_gam[true_te1 <= 1e-5] = 1.
 
         # higher res image prior
-        aimg = x1
+        aimg = (x1.max() - x1)**0.5
 
 elif 'realistic' in phantom:
         x1 = np.load(os.path.join(sdir, 'vconc_bi_128.npy'))
@@ -467,7 +470,6 @@ data_fidelity_loss = pynamr.DataFidelityLoss(fwd_model, data)
 #-------------------------------------------------------------------------------------
 # setup the priors
 # simulate a perfect anatomical prior image (with changed contrast but matching edges)
-aimg = (aimg.max() - aimg)**0.5
 bowsher_loss = pynamr.generate_bowsher_loss(aimg, nnearest)
 
 #-------------------------------------------------------------------------------------
