@@ -1,3 +1,21 @@
+"""  Build a numerical brain phantom for Sodium MRI, high resolution, heterogeneous, with associated real proton high resolution MRI
+
+     Based on the PET/MRI phantom by Belzunce & Reader, but without actual fitting to patient data
+     Uses the BigBrain data (tissue classes, cell density from histology, real MRI) and the Hammersmith atlas
+
+     Produces volume fraction weighted concentrations and spatially varying T2* maps for a 2-compartmental Na model:
+     - monoexponential long T2* compartment (fluid, approx CSF, blood, extracellular)
+     - biexponential short and long T2* compartment (rather intracellular)
+
+     Realistic concentrations and T2* values based on the following paper and the literature cited within:
+     - Worthoff WA, Shymanskaya A, Shah NJ. Relaxometry and quantification in simultaneously acquired single and triple quantum filtered
+sodium MRI. Magn Reson Med. 201 ;81:303-315.
+     - Madelin et al NYU, Nigel et al. Heidelberg, etc.
+
+"""
+
+
+
 import numpy as np
 import nibabel as nib
 
@@ -21,7 +39,7 @@ import pynamr
 
 
 build_csf = False
-compute_phantom = True
+compute_phantom = False
 add_lesion = True
 
 sdir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/Belzunce_Phantom'
