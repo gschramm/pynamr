@@ -262,6 +262,7 @@ for i in range(ncoils):
     sens[i,...]   = coil_im / sos_te1_for_sens
 
 # scale signal to be not too far away from 1
+# currently no attempts at absolute quantification so the scale is irrelevant
 scale_factor = np.max(sos_te1_for_sens)
 data = data / scale_factor
 print("Loaded and preprocessed k-space data")
@@ -315,8 +316,14 @@ if not no_highres_prior:
 #-------------------------------------------------------------------------------------
 
 # currently sum of squares of padded kspace data
-std_te1 = pynamr.sum_of_squares_reconstruction(data_pad[:,0,...], complex_format=True)
-std_te2 = pynamr.sum_of_squares_reconstruction(data_pad[:,1,...], complex_format=True)
+#std_te1 = pynamr.sum_of_squares_reconstruction(data_pad[:,0,...], complex_format=True)
+#std_te2 = pynamr.sum_of_squares_reconstruction(data_pad[:,1,...], complex_format=True)
+
+# currently sums of squares followed by bilinear interpolation
+std_te1 = pynamr.sum_of_squares_reconstruction(data[:,0,...], complex_format=True) * scale_factor
+std_te1 = zoom(std_te1, np.array(recon_shape)/ np.array(data_shape), order = 1, prefilter=False)
+std_te2 = pynamr.sum_of_squares_reconstruction(data[:,1,...], complex_format=True) * scale_factor
+std_te2 = zoom(std_te2, np.array(recon_shape)/ np.array(data_shape), order = 1, prefilter=False)
 
 # filter the SOS images
 std_te1_filtered = gaussian_filter(std_te1, 1.)
