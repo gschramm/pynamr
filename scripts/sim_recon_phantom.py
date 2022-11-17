@@ -34,13 +34,13 @@ import pymirc.viewer as pv
 import pynamr
 
 parser = ArgumentParser(description = '3D phantom Na MRI dual echo simulation and reconstruction')
-parser.add_argument('--niter',  default = 20, type = int, help='number of optimization iterations')
+parser.add_argument('--niter',  default = 10, type = int, help='number of optimization iterations')
 parser.add_argument('--n_outer', default = 10, type = int, help='number of outer optimization iterations if multistep')
 parser.add_argument('--beta_x', default = 1e-2, type = float, help='penalty strength for image/param')
 parser.add_argument('--beta_gam', default = 1e-2, type = float, help='penalty strength for T2* decay')
 parser.add_argument('--n', default = 128, type = int, choices = [128,256], help='image size')
 parser.add_argument('--n_readout_bins', default = 16, type = int, help='TPI readout bins')
-parser.add_argument('--noise_level', default = 5.,  type = float, help='Gaussian noise level')
+parser.add_argument('--noise_level', default = 3.,  type = float, help='Gaussian noise level')
 parser.add_argument('--nnearest', default = 13,  type = int, help='Bowsher number of most similar voxels')
 parser.add_argument('--phantom',  default = 'rod', choices = ['rod', 'realistic', 'realistic_lesion'], help='phantom type')
 parser.add_argument('--seed',     default = 1, type = int, help='seed for random generator')
@@ -126,6 +126,10 @@ sens = np.ones((ncoils, n, n, n)) + 0j * np.zeros(
     (ncoils, n, n, n))
 # seed the random generator
 np.random.seed(seed)
+# T2 value considered almost 0 to avoid division by 0.
+t2_zero = te1 * 0.1
+# smallest value, to avoid division by 0.
+epsilon = 1e-7
 # folders with data and results
 sdir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/SodiumMRIdata/'
 if phantom=='rod':
@@ -139,7 +143,10 @@ elif phantom=='realistic_lesion':
     sdir = os.path.join(sdir,'Heterogeneous_NumericalPhantom_Lesion')
 if not dont_save:
     # folder for saving the final simulated images, though currently not the generated k-space data
-    sim_dir = os.path.join(sdir, 'im'+model_im+'_sim'+model_sim+('_inst' if instant_tpi_sim else '')+('_noiseless' if noiseless else ''))
+    sim_dir = os.path.join(sdir, 'im'+model_im+'_sim'+model_sim+
+                                ('_inst' if instant_tpi_sim else '')+
+                                ('_noiseless' if noiseless else '')+
+                                (f"_noise{noise_level:.0f}"))
     # folder for storing reconstruction results
     odir = os.path.join(sim_dir, 'results', f'betax_{beta_x:.1E}'+ (f'_betagam_{beta_gam:.1E}' if model_recon=='monoexp' else '')+
                                    (f'_t2bs_{t2bi_s:.1E}_t2bl_{t2bi_l:.1E}' if model_recon=='fixedcomp' else '')+
@@ -254,9 +261,9 @@ if phantom=='rod':
         true_te2 = x1 * ( (1-t2bi_frac_l) * np.exp(-(delta_t+te1)/t2bi_s) + t2bi_frac_l * np.exp(-(delta_t+te1)/t2bi_l) ) + x2 * np.exp(-(delta_t+te1)/t2mono_l)
         true_te1 = x1 * ( (1-t2bi_frac_l) * np.exp(-te1/t2bi_s) + t2bi_frac_l * np.exp(-te1/t2bi_l) ) + x2 * np.exp(-te1/t2mono_l)
 
-        # true_te1 * true_gam = true_te2, true_te1 <= 1e-5 is the 0 background
-        true_gam = np.divide(true_te2, true_te1, where=(true_te1>1e-5))
-        true_gam[true_te1 <= 1e-5] = 1.
+        # true_te1 * true_gam = true_te2, true_te1 <= epsilon is almost 0.
+        true_gam = np.divide(true_te2, true_te1, where = (true_te1 > epsilon))
+        true_gam[true_te1 <= epsilon] = 0.
 
         # higher res image prior
         aimg = (x1.max() - x1)**0.5
@@ -273,7 +280,6 @@ elif 'realistic' in phantom:
         # corresponding "true" TE1, TE2 and Gamma images 
         true_conc = x1 + x2
 
-        t2_zero = te1 * 0.1
         decay_bi_s = pynamr.safe_decay( delta_t + te1, t2bi_s, t2_zero)
         decay_bi_l = pynamr.safe_decay( delta_t + te1, t2bi_l, t2_zero)
         decay_mono_l = pynamr.safe_decay( delta_t + te1, t2mono_l, t2_zero)
@@ -284,9 +290,9 @@ elif 'realistic' in phantom:
         decay_mono_l = pynamr.safe_decay( te1, t2mono_l, t2_zero)
         true_te1 = x1 * ( (1-t2bi_frac_l) * decay_bi_s + t2bi_frac_l * decay_bi_l ) + x2 * decay_mono_l
 
-        # true_te1 * true_gam = true_te2, true_te1 <= 1e-5 is the 0 background
-        true_gam = np.divide( true_te2, true_te1, where=(true_te1 > 1e-5))
-        true_gam[true_te1 <= 1e-5] = 1.
+        # true_te1 * true_gam = true_te2, true_te1 <= epsilon is the 0 background
+        true_gam = np.divide( true_te2, true_te1, where = (true_te1 > epsilon))
+        true_gam[true_te1 <= epsilon] = 0.
 
         # higher res image prior
         aimg = Hmri
@@ -359,9 +365,9 @@ if noiseless:
 else:
     if phantom=="rod":
         # temporary, to ensure we have the same noise level computation for different options
-        data = y + noise_level * 0.014 * np.random.randn(*y.shape).astype(np.float64)
+        data = y + noise_level * 0.014 * np.random.randn(*y.shape).astype(np.float64) * kspace_part.kmask
     elif 'realistic' in phantom:
-        data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
+        data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64) * kspace_part.kmask
 
 #-------------------------------------------------------------------------------------
 # only simulate raw data end exit
@@ -490,7 +496,7 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 if model_recon=="monoexp":
     # allocate initial values of unknown variables
     unknowns[pynamr.VarName.IMAGE].value = np.stack([std_te1_filtered, 0*std_te1_filtered], axis=-1)
-    unknowns[pynamr.VarName.GAMMA].value = np.clip(std_te2_filtered / (std_te1_filtered + 1e-7), 0, 1)
+    unknowns[pynamr.VarName.GAMMA].value = np.clip(std_te2_filtered / (std_te1_filtered + epsilon), 0, 1)
 
     #-------------------------------------------------------------------------------------
     # alternating LBFGS steps
