@@ -68,6 +68,7 @@ parser.add_argument('--only_sim_simplerecon', default = False, action='store_tru
 parser.add_argument('--dont_save', action='store_true', help="don't save simulation not recon results")
 parser.add_argument('--load_results', action='store_true', help='load existing results, display and exit')
 parser.add_argument('--hann_simplerecon', action='store_true', help='apply hanning filter for standard recon')
+parser.add_argument('--recon_tag', default = '', type= str, help='add additional description to the reconstruction results folder name, for tests')
 
 
 
@@ -104,6 +105,8 @@ only_sim_simplerecon = args.only_sim_simplerecon
 dont_save = args.dont_save
 load_results = args.load_results
 hann_simplerecon   = args.hann_simplerecon
+recon_tag  = args.recon_tag
+
 
 #-------------------------------------------------------------------------------------
 # perform some checks on input parameters
@@ -150,7 +153,7 @@ if not dont_save:
     # folder for storing reconstruction results
     odir = os.path.join(sim_dir, 'results', f'betax_{beta_x:.1E}'+ (f'_betagam_{beta_gam:.1E}' if model_recon=='monoexp' else '')+
                                    (f'_t2bs_{t2bi_s:.1E}_t2bl_{t2bi_l:.1E}' if model_recon=='fixedcomp' else '')+
-                                   ('_inst' if instant_tpi_recon else ''))
+                                   ('_inst' if instant_tpi_recon else '') + recon_tag)
     if not os.path.exists(sim_dir):
         os.makedirs(sim_dir)
     if not os.path.exists(odir):
@@ -496,7 +499,10 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 if model_recon=="monoexp":
     # allocate initial values of unknown variables
     unknowns[pynamr.VarName.IMAGE].value = np.stack([std_te1_filtered, 0*std_te1_filtered], axis=-1)
-    unknowns[pynamr.VarName.GAMMA].value = np.clip(std_te2_filtered / (std_te1_filtered + epsilon), 0, 1)
+    # Gamma initialization more tricky, especially for noisy data
+    gam_init = np.divide( gaussian_filter( std_te2_filtered, 2.), gaussian_filter( std_te1_filtered + epsilon, 2.) )
+    # clip to the relevant interval
+    unknowns[pynamr.VarName.GAMMA].value = np.clip(gam_init, 0, 1)
 
     #-------------------------------------------------------------------------------------
     # alternating LBFGS steps
