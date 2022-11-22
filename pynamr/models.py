@@ -41,7 +41,7 @@ class DualTESodiumAcqModel(abc.ABC):
         ----------
         ds : int
             downsample factor (image shape / data shape)
-        sens : XpArray
+        sens : np.ndarray
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
@@ -99,7 +99,7 @@ class DualTESodiumAcqModel(abc.ABC):
         return self._num_coils
 
     @property
-    def sens(self) -> XpArray:
+    def sens(self) -> np.ndarray:
         return self._sens
 
     @property
@@ -208,7 +208,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
     def __init__(
         self,
         ds: int,
-        sens: XpArray,
+        sens: np.ndarray,
         dt: float,
         te1: float,
         readout_time: typing.Callable[[np.ndarray], np.ndarray],
@@ -226,7 +226,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         ----------
         ds : int
             downsample factor (image shape / data shape)
-        sens : XpArray
+        sens :np.ndarray 
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
@@ -581,7 +581,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
     def __init__(self,
                  ds: int,
-                 sens: XpArray,
+                 sens: np.ndarray,
                  dt: float,
                  te1: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
@@ -592,7 +592,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         ----------
         ds : int
             downsample factor (image shape / data shape)
-        sens : XpArray
+        sens : np.ndarray
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos

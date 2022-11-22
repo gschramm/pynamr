@@ -38,25 +38,38 @@ import pymirc.viewer as pv
 import pynamr
 
 
-build_csf = False
-compute_phantom = False
-add_lesion = True
+parser = ArgumentParser(description = 'Numerical phantom for Na MRI')
+parser.add_argument('--sdir', type=str, default='/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/Belzunce_Phantom', help="Folder containing source data")
+parser.add_argument('--add_lesion', action='store_true', help='add a lesion to the phantom')
+parser.add_argument('--final_n', type=int, default=128, help='final phantom size (cubic and even)')
+parser.add_argument('--seed', type=int, default=42, help='seed for the random generation')
+parser.add_argument('--rebuild_csf', action='store_true', help='recompute the added CSF region mask, as not available in source data')
+parser.add_argument('--recompute_phantom', action='store_true', help='recompute the whole phantom')
 
-sdir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/Belzunce_Phantom'
-odir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/Belzunce_Phantom/NaMRI' + ('_lesion' if add_lesion else '')
+args = parser.parse_args()
+
+sdir           = args.sdir
+add_lesion     = args.add_lesion
+final_n        = args.final_n
+rebuild_csf    = args.rebuild_csf
+recompute_phantom    = args.recompute_phantom
+seed           = args.seed
+
+# output dir for saving the phantom
+odir = os.path.join(sdir, f"NaMRI_{final_n}" + ('_lesion' if add_lesion else ''))
 if not os.path.exists(odir):
     os.makedirs(odir)
 
-# final cubic array size for the phantom
-final_n = 128
-
-seed = 42
+# initialize the random generator
 np.random.seed(seed)
 
 # brian tissue classes (gray matter, white matter, etc.) from 2 to 9, 1 is the background, no CSF
 classes = nib.load(os.path.join(sdir, 'full_cls_400um_2009b_sym.nii'))
 classes = nib.as_closest_canonical(classes)
 classes_im = classes.get_fdata().astype(np.uint8)
+
+# original array shape, the same for all the source images
+common_shape = classes_im.shape
 
 # cell density from histology
 cells = nib.load(os.path.join(sdir, 'full16_400um_2009b_sym.nii'))
@@ -72,8 +85,6 @@ mri_im = mri.get_fdata()
 # inverse the contrast of this weird MRI so that the background is black
 mri_im = mri_im.max() - mri_im
 
-# original array shape for all the images
-common_shape = mri_im.shape
 
 # MRI with artificially added skull
 mri_skull = nib.load(os.path.join(sdir,'mri_registered_with_skull_2009b_sym.nii'))
@@ -105,7 +116,7 @@ if len(hammer_prob_files_L_only) > 1 or len(hammer_prob_files_R_only) > 1:
 nb_regions = len(hammer_prob_files_LR)
 
 # add CSF to tissues classes
-if build_csf:
+if rebuild_csf:
     # whole brain mask including approximate CSF
     mask_whole = binary_fill_holes( binary_closing( binary_dilation( classes_im>1, iterations=3), iterations=6))
     mask_whole = binary_closing( binary_dilation( mask_whole, iterations=3), iterations=10)
@@ -177,11 +188,11 @@ a, b = (130. - loc) / scale, (150. - loc) / scale
 conc_mono = truncnorm.rvs(a, b, loc, scale, size = nb_regions + 1)
 
 loc, scale = 15., 3.
-a, b = (5. - loc) / scale, (30. - loc) / scale
+a, b = (10. - loc) / scale, (30. - loc) / scale
 conc_bi = truncnorm.rvs(a, b, loc, scale, size = nb_regions)
 
 # volume fraction of fluid (CSF and blood, though the blood may be slightly biexponential), with monoexponential T2* relaxation
-v_mono = csf + gm_full * 0.1 + wm * 0.2 + no_idea * 0.05
+v_mono = csf + gm_full * 0.2 + wm * 0.25 + no_idea * 0.05
 if add_lesion:
     v_mono += lesion * 0.4
 
@@ -202,7 +213,7 @@ final_t2_bi_frac_l = np.zeros(common_shape, np.float64)
 final_t2_mono_l = np.zeros(common_shape, np.float64)
 
 # compute the final phantom
-if compute_phantom:
+if recompute_phantom:
     # load hammersmith region probability maps
     for i,f in enumerate(hammer_prob_files_LR):
         # read left region
@@ -232,19 +243,11 @@ if compute_phantom:
     final_t2_mono_l += t2mono_l[i] * csf
     final_vconc_total = final_vconc_bi + final_vconc_mono
 
-    # final Na phantom parameters in initial high resolution
-    np.save(os.path.join(odir, 'vconc_bi'), final_vconc_bi)
-    np.save(os.path.join(odir, 'vconc_mono'), final_vconc_mono)
-    np.save(os.path.join(odir, 't2bi_s'), final_t2_bi_s)
-    np.save(os.path.join(odir, 't2bi_l'), final_t2_bi_l)
-    np.save(os.path.join(odir, 't2mono_l'), final_t2_mono_l)
-    np.save(os.path.join(odir, 't2bi_frac_l'), final_t2_bi_frac_l)
-    np.save(os.path.join(odir, 'Hmri'), mri_im)
-
-    # pad to cubic volume
-    max_n = max(common_shape)
+    # pad to cubic volume with even size
+    max_n = (max(common_shape) + 1) // 2
     pad_shape = list(common_shape)
-    pad_shape = [ [(max_n - x)//2, (max_n - x)//2]  for x in pad_shape ]
+    pad_shape = [ [max_n - x//2, max_n - (x+1)//2]  for x in pad_shape ]
+    print(f"pad shape {pad_shape} with max_n {max_n}")
 
     final_vconc_bi = np.pad(final_vconc_bi, pad_shape)
     final_vconc_mono = np.pad(final_vconc_mono, pad_shape)
@@ -255,8 +258,18 @@ if compute_phantom:
     final_t2_bi_frac_l = np.pad(final_t2_bi_frac_l, pad_shape)
     final_mri = np.pad(mri_im, pad_shape)
 
+    # final Na phantom parameters in high resolution
+    final_highres_n = max_n * 2
+    np.save(os.path.join(odir, f"vconc_bi_{final_highres_n}"), final_vconc_bi)
+    np.save(os.path.join(odir, f"vconc_mono_{final_highres_n}"), final_vconc_mono)
+    np.save(os.path.join(odir, f"t2bi_s_{final_highres_n}"), final_t2_bi_s)
+    np.save(os.path.join(odir, f"t2bi_l_{final_highres_n}"), final_t2_bi_l)
+    np.save(os.path.join(odir, f"t2mono_l_{final_highres_n}"), final_t2_mono_l)
+    np.save(os.path.join(odir, f"t2bi_frac_l_{final_highres_n}"), final_t2_bi_frac_l)
+    np.save(os.path.join(odir, f"Hmri_{final_highres_n}"), final_mri)
+
     # downsample to the voxel size used for reconstructing real Na MRI TPI data
-    ds = final_n/max_n
+    ds = final_n / final_highres_n
     final_vconc_bi_final_n = zoom(final_vconc_bi, ds, order=1)
     final_vconc_mono_final_n = zoom(final_vconc_mono, ds, order=1)
     final_vconc_total_final_n = zoom(final_vconc_total, ds, order=1)

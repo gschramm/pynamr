@@ -272,13 +272,13 @@ if phantom=='rod':
         aimg = (x1.max() - x1)**0.5
 
 elif 'realistic' in phantom:
-        x1 = np.load(os.path.join(sdir, 'vconc_bi_128.npy'))
-        x2 = np.load(os.path.join(sdir, 'vconc_mono_128.npy'))
-        t2bi_s = np.load(os.path.join(sdir, 't2bi_s_128.npy'))
-        t2bi_l = np.load(os.path.join(sdir, 't2bi_l_128.npy'))
-        t2mono_l = np.load(os.path.join(sdir, 't2mono_l_128.npy'))
-        t2bi_frac_l = np.load(os.path.join(sdir, 't2bi_frac_l_128.npy'))
-        Hmri = np.load(os.path.join(sdir, 'Hmri_128.npy'))
+        x1 = np.load(os.path.join(sdir, f"vconc_bi_{n}.npy"))
+        x2 = np.load(os.path.join(sdir, f"vconc_mono_{n}.npy"))
+        t2bi_s = np.load(os.path.join(sdir, f"t2bi_s_{n}.npy"))
+        t2bi_l = np.load(os.path.join(sdir, f"t2bi_l_{n}.npy"))
+        t2mono_l = np.load(os.path.join(sdir, f"t2mono_l_{n}.npy"))
+        t2bi_frac_l = np.load(os.path.join(sdir, f"t2bi_frac_l_{n}.npy"))
+        Hmri = np.load(os.path.join(sdir, f"Hmri_{n}.npy"))
 
         # corresponding "true" TE1, TE2 and Gamma images 
         true_conc = x1 + x2
