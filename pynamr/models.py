@@ -29,7 +29,7 @@ class DualTESodiumAcqModel(abc.ABC):
 
     def __init__(self,
                  ds: int,
-                 sens: XpArray,
+                 sens: np.ndarray,
                  dt: float,
                  te1: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
@@ -41,7 +41,7 @@ class DualTESodiumAcqModel(abc.ABC):
         ----------
         ds : int
             downsample factor (image shape / data shape)
-        sens : XpArray
+        sens : np.ndarray
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
@@ -85,6 +85,10 @@ class DualTESodiumAcqModel(abc.ABC):
         # readout time of every shell
         self._tr = self._readout_time(self._kspace_part.k)
 
+        # T2* value below which we can assume that the signal is completely lost
+        # for this pulse sequence
+        self._t2_zero = self._te1 * 0.1
+
 
     @property
     def data_shape(self) -> tuple[int, int, int]:
@@ -95,7 +99,7 @@ class DualTESodiumAcqModel(abc.ABC):
         return self._num_coils
 
     @property
-    def sens(self) -> XpArray:
+    def sens(self) -> np.ndarray:
         return self._sens
 
     @property
@@ -133,6 +137,31 @@ class DualTESodiumAcqModel(abc.ABC):
     @property
     def y_shape_real(self) -> tuple[int, int, int, int, int, int]:
         return self.y_shape_complex + (2, )
+
+    @property
+    def t2_zero(self) -> float:
+        return self._t2_zero
+
+    def safe_decay(self, time: float, t2: float | XpArray) -> float | XpArray:
+        """ utility function for computing the T2* decay, with safety net for very low T2* values
+
+        Parameters
+        ----------
+        time : decay time
+        t2 : T2* relaxation time, either scalar or spatial map
+
+        Returns
+        -------
+        float or XpArray
+            the multiplicative factor that represents the exponential decay
+        """
+        if self._xp.isscalar(t2):
+            temp = self._xp.exp( -time / t2) if t2 > self._t2_zero else 0.
+        else:
+            temp = self._xp.zeros(t2.shape, self._xp.float64)
+            temp[t2 > self._t2_zero] = self._xp.exp( -time / t2[t2 > self._t2_zero])
+        return temp
+
 
     @abc.abstractmethod
     def forward(self, var_dict: dict[VarName,Var]) -> np.ndarray:
@@ -179,17 +208,17 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
     def __init__(
         self,
         ds: int,
-        sens: XpArray,
+        sens: np.ndarray,
         dt: float,
         te1: float,
         readout_time: typing.Callable[[np.ndarray], np.ndarray],
         kspace_part: RadialKSpacePartitioner,
-        T2star_free_short: float,
-        T2star_free_long: float,
-        T2star_bound_short: float,
-        T2star_bound_long: float,
-        free_long_frac: float,
-        bound_long_frac: float,
+        T2star_free_short: float | np.ndarray,
+        T2star_free_long: float | np.ndarray,
+        T2star_bound_short: float | np.ndarray,
+        T2star_bound_long: float | np.ndarray,
+        free_long_frac: float | np.ndarray,
+        bound_long_frac: float | np.ndarray,
     ) -> None:
         """ two compartment dual echo sodium acquisition model with fixed T2star times
 
@@ -197,7 +226,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         ----------
         ds : int
             downsample factor (image shape / data shape)
-        sens : XpArray
+        sens :np.ndarray 
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
@@ -208,18 +237,18 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         kspace_part : RadialKSpacePartitioner
             RadialKSpacePartioner that partitions cartesian k-space volume
             into radial shells of "same" readout time
-        T2star_free_short : float
-            short T2start time of free compartment
-        T2star_free_long : float
-            long T2start time of free compartment
-        T2star_bound_short : float
-            short T2start time of bound compartment
-        T2star_bound_long : float
-            long T2start time of bound compartment
-        free_long_frac : float
-            fraction of free compartment undergoing long/slow decay
-        bound_long_frac : float
-            fraction of bound compartment undergoing long/slow decay
+        T2star_free_short : float | np.ndarray
+            short T2start time of free compartment, either scalar or spatial map
+        T2star_free_long : float | np.ndarray
+            long T2start time of free compartment, either scalar or spatial map
+        T2star_bound_short : float | np.ndarray
+            short T2start time of bound compartment, either scalar or spatial map
+        T2star_bound_long : float | np.ndarray
+            long T2start time of bound compartment, either scalar or spatial map
+        free_long_frac : float | np.ndarray
+            fraction of free compartment undergoing long/slow decay, either scalar or spatial map
+        bound_long_frac : float | np.ndarray
+            fraction of bound compartment undergoing long/slow decay, either scalar or spatial map
         """
 
         super().__init__(ds,
@@ -229,48 +258,27 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                          readout_time,
                          kspace_part)
 
-        self._T2star_free_short = T2star_free_short
-        self._T2star_free_long = T2star_free_long
-        self._T2star_bound_short = T2star_bound_short
-        self._T2star_bound_long = T2star_bound_long
+        # if T2* spatial maps and using cupy, convert immediately for convenience to cupy arrays
+        if self._xp.__name__ == 'cupy' and not self._xp.isscalar(T2star_bound_short):
+            self._T2star_free_short = self._xp.asarray(T2star_free_short)
+            self._T2star_free_long = self._xp.asarray(T2star_free_long)
+            self._T2star_bound_short = self._xp.asarray(T2star_bound_short)
+            self._T2star_bound_long = self._xp.asarray(T2star_bound_long)
 
-        self._free_long_frac = free_long_frac
-        self._bound_long_frac = bound_long_frac
+            self._free_long_frac = self._xp.asarray(free_long_frac)
+            self._bound_long_frac = self._xp.asarray(bound_long_frac)
+        else:
+            self._T2star_free_short = T2star_free_short
+            self._T2star_free_long = T2star_free_long
+            self._T2star_bound_short = T2star_bound_short
+            self._T2star_bound_long = T2star_bound_long
+
+            self._free_long_frac = free_long_frac
+            self._bound_long_frac = bound_long_frac
 
         self._free_short_frac = 1 - self._free_long_frac
         self._bound_short_frac = 1 - self._bound_long_frac 
 
-    @property
-    def T2star_free_short(self) -> float:
-        return self._T2star_free_short
-
-    @property
-    def T2star_free_long(self) -> float:
-        return self._T2star_free_long
-
-    @property
-    def T2star_bound_short(self) -> float:
-        return self._T2star_bound_short
-
-    @property
-    def T2star_bound_long(self) -> float:
-        return self._T2star_bound_long
-
-    @property
-    def free_long_frac(self) -> float:
-        return self._free_long_frac
-
-    @property
-    def bound_long_frac(self) -> float:
-        return self._bound_long_frac
-
-    @property
-    def free_short_frac(self) -> float:
-        return self._free_short_frac
-
-    @property
-    def bound_short_frac(self) -> float:
-        return self._bound_short_frac
 
     def forward(self, var_dict: dict[VarName,Var]) -> np.ndarray:
         """ forward step that calculates expected signal
@@ -294,110 +302,110 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         #----------------------
         # send f and gam to GPU
         if self._xp.__name__ == 'cupy':
-            x = self._xp.asarray(x)
+            x = self._xp.asarray(x) 
 
         y = self._xp.zeros(self.y_shape_complex, dtype=self._xp.complex128)
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
-                if self._bound_long_frac > 0:
                     # first echo - bound compartment - long
-                    temp = self.sens[i_sens, ...] * self._xp.exp(
-                                - (self._tr[it] + self._te1) / self._T2star_bound_long) * x[0, ...]
+                    temp = self._bound_long_frac * self.sens[i_sens, ...] \
+                            * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_long) \
+                            * x[0, ...]
                     temp = downsample(downsample(downsample(temp, self._ds, axis=0),
                                                             self._ds,
                                                             axis=1),
                                                  self._ds,
                                                  axis=2)
                     y[i_sens, 0, ...][self.readout_inds[
-                        it]] += self._bound_long_frac * self._xp.fft.fftn(temp,
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - bound compartment - long
-                    temp = self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1 + self._dt) /
-                                self._T2star_bound_long) * x[0, ...]
+                    temp = self._bound_long_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_long) \
+                    * x[0, ...]
                     temp = downsample(downsample(downsample(temp, self._ds, axis=0),
                                                             self._ds,
                                                             axis=1),
                                                  self._ds,
                                                  axis=2)
                     y[i_sens, 1, ...][self.readout_inds[
-                        it]] += self._bound_long_frac * self._xp.fft.fftn(temp,
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
 
-                if self._bound_short_frac > 0:
                     # first echo - bound compartment - short
-                    temp = self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1) / self._T2star_bound_short) * x[0, ...]
+                    temp = self._bound_short_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_short) \
+                    * x[0, ...]
                     temp = downsample(downsample(downsample(temp, self._ds, axis=0),
                                                             self._ds,
                                                             axis=1),
                                                  self._ds,
                                                  axis=2)
                     y[i_sens, 0, ...][self.readout_inds[
-                        it]] += self._bound_short_frac * self._xp.fft.fftn(temp,
+                        it]] += self._xp.fft.fftn(temp,
                                 norm='ortho')[self.readout_inds[it]]
                     # second echo - bound compartment - short
-                    temp = self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1 + self._dt) /
-                                self._T2star_bound_short) * x[0, ...]
+                    temp = self._bound_short_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_short) \
+                    * x[0, ...]
                     temp = downsample(downsample(downsample(temp, self._ds, axis=0),
                                                             self._ds,
                                                             axis=1),
                                                  self._ds,
                                                  axis=2)
                     y[i_sens, 1, ...][self.readout_inds[
-                        it]] += self._bound_short_frac * self._xp.fft.fftn(temp,
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
 
-                if self._free_long_frac > 0:
-                    temp = self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1) / self._T2star_free_long) * x[1, ...]
+                    # first echo - free compartment - long
+                    temp = self._free_long_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_long) \
+                    * x[1, ...]
                     temp = downsample(downsample(downsample(temp, self._ds, axis=0),
                                                             self._ds,
                                                             axis=1),
                                                  self._ds,
                                                  axis=2)
-                    # first echo - free compartment - long
                     y[i_sens, 0, ...][self.readout_inds[
-                        it]] += self._free_long_frac * self._xp.fft.fftn(temp,
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - free compartment - long
-                    temp = self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1 + self._dt) /
-                                self._T2star_free_long) * x[1, ...]
+                    temp = self._free_long_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_long) \
+                    * x[1, ...]
                     temp = downsample(downsample(downsample(temp, self._ds, axis=0),
                                                             self._ds,
                                                             axis=1),
                                                  self._ds,
                                                  axis=2)
                     y[i_sens, 1, ...][self.readout_inds[
-                        it]] += self._free_long_frac * self._xp.fft.fftn(temp,
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
 
-                if self._free_short_frac > 0:
                     # first echo - free compartment - short
-                    temp = self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1) / self._T2star_free_short) * x[1, ...]
+                    temp = self._free_short_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_short) \
+                    * x[1, ...]
                     temp = downsample(downsample(downsample(temp, self._ds, axis=0),
                                                             self._ds,
                                                             axis=1),
                                                  self._ds,
                                                  axis=2)
                     y[i_sens, 0, ...][self.readout_inds[
-                        it]] += self._free_short_frac * self._xp.fft.fftn(temp,
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - free compartment - short
-                    temp = self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1 + self._dt) /
-                                self._T2star_free_short) * x[1, ...]
+                    temp = self._free_short_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_short) \
+                    * x[1, ...]
                     temp = downsample(downsample(downsample(temp, self._ds, axis=0),
                                                             self._ds,
                                                             axis=1),
                                                  self._ds,
                                                  axis=2)
                     y[i_sens, 1, ...][self.readout_inds[
-                        it]] += self._free_short_frac * self._xp.fft.fftn(temp,
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
 
         # get y back from GPU
@@ -440,7 +448,6 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
-                if self._bound_long_frac > 0:
                     # first echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
                                          dtype=y.dtype)
@@ -454,10 +461,8 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                self._ds,
                                                axis=2)
 
-                    x[0, ...] += self._bound_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1) /
-                        self._T2star_bound_long)) * self._xp.conj(
-                            self.sens[i_sens]) * tmp
+                    x[0, ...] += self._bound_long_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_long) \
+                                * self._xp.conj(self.sens[i_sens]) * tmp
                     # second echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
                                          dtype=y.dtype)
@@ -469,12 +474,9 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                                     axis=1),
                                                self._ds,
                                                axis=2)
-                    x[0, ...] += self._bound_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1 + self._dt) /
-                        self._T2star_bound_long)) * self._xp.conj(
-                            self.sens[i_sens]) * tmp
+                    x[0, ...] += self._bound_long_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_long) \
+                                * self._xp.conj(self.sens[i_sens]) * tmp
 
-                if self._bound_short_frac > 0:
                     # first echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
                                          dtype=y.dtype)
@@ -486,10 +488,8 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                                     axis=1),
                                                self._ds,
                                                axis=2)
-                    x[0, ...] += self._bound_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1)/
-                        self._T2star_bound_short)) * self._xp.conj(
-                            self.sens[i_sens]) * tmp
+                    x[0, ...] += self._bound_short_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_short) \
+                                * self._xp.conj(self.sens[i_sens]) * tmp
                     # second echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
                                          dtype=y.dtype)
@@ -501,12 +501,9 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                                     axis=1),
                                                self._ds,
                                                axis=2)
-                    x[0, ...] += self._bound_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1 + self._dt) /
-                        self._T2star_bound_short)) * self._xp.conj(
-                            self.sens[i_sens]) * tmp
+                    x[0, ...] += self._bound_short_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_short) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
 
-                if self._free_long_frac > 0:
                     # first echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
                                          dtype=y.dtype)
@@ -518,10 +515,8 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                                     axis=1),
                                                self._ds,
                                                axis=2)
-                    x[1, ...] += self._free_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1)/
-                        self._T2star_free_long)) * self._xp.conj(
-                            self.sens[i_sens]) * tmp
+                    x[1, ...] += self._free_long_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_long) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
                     # second echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
                                          dtype=y.dtype)
@@ -533,12 +528,9 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                                     axis=1),
                                                self._ds,
                                                axis=2)
-                    x[1, ...] += self._free_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1 + self._dt) /
-                        self._T2star_free_long)) * self._xp.conj(
-                            self.sens[i_sens]) * tmp
+                    x[1, ...] += self._free_long_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_long) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
 
-                if self._free_short_frac > 0:
                     # first echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
                                          dtype=y.dtype)
@@ -550,10 +542,8 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                                     axis=1),
                                                self._ds,
                                                axis=2)
-                    x[1, ...] += self._free_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1)/
-                        self._T2star_free_short)) * self._xp.conj(
-                            self.sens[i_sens]) * tmp
+                    x[1, ...] += self._free_short_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_short) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
                     # second echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
                                          dtype=y.dtype)
@@ -565,10 +555,8 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                                     axis=1),
                                                self._ds,
                                                axis=2)
-                    x[1, ...] += self._free_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1 + self._dt) /
-                        self._T2star_free_short)) * self._xp.conj(
-                            self.sens[i_sens]) * tmp
+                    x[1, ...] += self._free_short_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_short) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
 
         # get x gam back from GPU
         if self._xp.__name__ == 'cupy':
@@ -593,7 +581,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
     def __init__(self,
                  ds: int,
-                 sens: XpArray,
+                 sens: np.ndarray,
                  dt: float,
                  te1: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
@@ -604,7 +592,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         ----------
         ds : int
             downsample factor (image shape / data shape)
-        sens : XpArray
+        sens : np.ndarray
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos

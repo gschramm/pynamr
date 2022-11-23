@@ -66,6 +66,7 @@ parser.add_argument('--highres_mri_name', default = 'mprage', help='higher resol
 parser.add_argument('--no_highres_prior', action = 'store_true', help='no additional higher resolution mri')
 parser.add_argument('--load_results', action = 'store_true', help='load already computed results, display and exit')
 parser.add_argument('--check', action = 'store_true', help='check the preprocessed data and exit')
+parser.add_argument('--recon_tag', default = '', type= str, help='add additional description to the reconstruction results folder name, for tests')
 
 
 args = parser.parse_args()
@@ -93,6 +94,7 @@ case        = args.case
 pathology  = args.pathology
 load_results = args.load_results
 check      = args.check
+recon_tag  = args.recon_tag
 
 #-------------------------------------------------------------------------------------
 # Utility functions for results
@@ -118,8 +120,9 @@ def display_results():
 
         # reconstructed Gamma and a rough estimation from simple recons
         vi_gam = pv.ThreeAxisViewer([gam_rough_est,
-                         gam_r],
-                         imshow_kwargs=[ims_2, ims_2])
+                         gam_r,
+                         highresH_img],
+                         imshow_kwargs=[ims_2, ims_2, highresH_img_1])
 
         # reconstructed and simple TE1 and TE2 images
         vi_te1_te2 = pv.ThreeAxisViewer([std_te1,
@@ -191,8 +194,8 @@ fnames2 = sorted(glob(os.path.join(sdir2, fpattern)))
 if (len(fnames1) != ncoils) or (len(fnames2) != ncoils):
     raise ValueError('The number of data files is not correct')
 odir = os.path.join(sdir, casedir, 'results', f'betax_{beta_x:.1E}'+ (f'_betagam_{beta_gam:.1E}' if model_recon=='monoexp' else '')+
-                                   (f'_{highres_mri_name}_nbow_{nnearest}' if not no_highres_prior else '')+
-                                   (f'_t2bs_{t2bi_s:.1E}_t2bl_{t2bi_l:.1E}' if model_recon=='fixedcomp' else '') )
+                                   (f'_{highres_mri_name}_nbow_{nnearest}' if not no_highres_prior else '') +
+                                   (f'_t2bs_{t2bi_s:.1E}_t2bl_{t2bi_l:.1E}' if model_recon=='fixedcomp' else '') + recon_tag )
 
 # high resolution proton MRI image
 if not no_highres_prior:
@@ -255,14 +258,18 @@ for i in range(ncoils):
 # calculate the sum of square image
 sos_te1_for_sens = pynamr.sum_of_squares_reconstruction(data_pad[:,0]*filt, complex_format=True)
 
+# scale signal to be not too far away from 1, to avoid numerical issues
+# currently no attempts at absolute quantification so the scale is irrelevant
+scale_factor = np.max(sos_te1_for_sens)
+data /= scale_factor
+data_pad /= scale_factor
+sos_te1_for_sens /= scale_factor
+
 # compute sensitivities
 for i in range(ncoils):
     coil_im = pynamr.simple_reconstruction(data_pad[i,0]*filt, complex_format=True)
     sens[i,...]   = coil_im / sos_te1_for_sens
 
-# scale signal to be not too far away from 1
-scale_factor = np.max(sos_te1_for_sens)
-data = data / scale_factor
 print("Loaded and preprocessed k-space data")
 print("Computed spatial sensitivity maps")
 
@@ -314,8 +321,14 @@ if not no_highres_prior:
 #-------------------------------------------------------------------------------------
 
 # currently sum of squares of padded kspace data
-std_te1 = pynamr.sum_of_squares_reconstruction(data_pad[:,0,...], complex_format=True)
-std_te2 = pynamr.sum_of_squares_reconstruction(data_pad[:,1,...], complex_format=True)
+#std_te1 = pynamr.sum_of_squares_reconstruction(data_pad[:,0,...], complex_format=True)
+#std_te2 = pynamr.sum_of_squares_reconstruction(data_pad[:,1,...], complex_format=True)
+
+# currently sums of squares followed by bilinear interpolation
+std_te1 = pynamr.sum_of_squares_reconstruction(data[:,0,...], complex_format=True) * scale_factor
+std_te1 = zoom(std_te1, np.array(recon_shape)/ np.array(data_shape), order = 1, prefilter=False)
+std_te2 = pynamr.sum_of_squares_reconstruction(data[:,1,...], complex_format=True) * scale_factor
+std_te2 = zoom(std_te2, np.array(recon_shape)/ np.array(data_shape), order = 1, prefilter=False)
 
 # filter the SOS images
 std_te1_filtered = gaussian_filter(std_te1, 1.)
@@ -409,7 +422,10 @@ print("Started reconstruction")
 if model_recon=="monoexp":
     # allocate initial values of unknown variables
     unknowns[pynamr.VarName.IMAGE].value = np.stack([std_te1_filtered, 0*std_te1_filtered], axis=-1)
-    unknowns[pynamr.VarName.GAMMA].value = np.clip(std_te2_filtered / (std_te1_filtered + 1e-7), 0, 1)
+    # Gamma initialization more tricky, especially for noisy data
+    gam_init = np.divide( gaussian_filter( std_te2_filtered/scale_factor, 2.), gaussian_filter( std_te1_filtered/scale_factor + 1e-7, 2.) )
+    # clip to the relevant interval
+    unknowns[pynamr.VarName.GAMMA].value = np.clip(gam_init, 0, 1)
 
     #-------------------------------------------------------------------------------------
     # alternating LBFGS steps
