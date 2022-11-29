@@ -39,7 +39,8 @@ parser.add_argument('--n_outer', default = 10, type = int, help='number of outer
 parser.add_argument('--beta_x', default = 1e-2, type = float, help='penalty strength for image/param')
 parser.add_argument('--beta_gam', default = 1e-2, type = float, help='penalty strength for T2* decay')
 parser.add_argument('--n', default = 128, type = int, choices = [128,256], help='image size')
-parser.add_argument('--n_readout_bins', default = 16, type = int, help='TPI readout bins')
+parser.add_argument('--n_readout_bins', default = 16, type = int, help='TPI readout bins for reconstruction')
+parser.add_argument('--n_readout_bins_sim', default = 32, type = int, help='TPI readout bins for simulation')
 parser.add_argument('--noise_level', default = 3.,  type = float, help='Gaussian noise level')
 parser.add_argument('--nnearest', default = 13,  type = int, help='Bowsher number of most similar voxels')
 parser.add_argument('--phantom',  default = 'rod', choices = ['rod', 'realistic', 'realistic_lesion'], help='phantom type')
@@ -80,6 +81,7 @@ beta_x      = args.beta_x
 beta_gam    = args.beta_gam
 n           = args.n
 n_readout_bins     = args.n_readout_bins
+n_readout_bins_sim     = args.n_readout_bins_sim
 noise_level = args.noise_level
 nnearest    = args.nnearest
 phantom     = args.phantom
@@ -308,14 +310,14 @@ else:
 # Simulation of raw data
 #-------------------------------------------------------------------------------------
 
-# readout config
+# readout time from k-space coordinates
 if instant_tpi_sim:
     readout_time_sim = pynamr.TPIInstantaneousReadOutTime()
 else:
     readout_time_sim = pynamr.TPIReadOutTime()
 
-# k-space config
-kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
+# k-space partitioning into bins
+kspace_part_sim = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins_sim)
 
 #-------------------------------------------------------------------------------------
 # forward model for simulating raw data
@@ -326,7 +328,7 @@ if model_sim == "monoexp":
     x = np.stack([x, 0 * x], axis=-1)
 
     # forward model and unknown variables for simulating raw data
-    fwd_model_sim = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part)
+    fwd_model_sim = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part_sim)
     unknowns_sim = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([ds * x for x in data_shape]) + (2,)),
                     pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False)}
     unknowns_sim[pynamr.VarName.IMAGE].value = x
@@ -340,10 +342,10 @@ elif model_sim == "fixedcomp":
     # forward model and unknown variables for simulating raw data
     if phantom=="rod":
         # single (spatially uniform) T2* values for compartments
-        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part, 0, t2mono_l, t2bi_s, t2bi_l, 1., t2bi_frac_l)
+        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part_sim, 0, t2mono_l, t2bi_s, t2bi_l, 1., t2bi_frac_l)
     elif 'realistic' in phantom:
         # spatially variable T2* values for compartments
-        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
+        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part_sim, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
     unknowns_sim = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
     unknowns_sim[pynamr.VarName.PARAM].value = x
 
@@ -368,9 +370,9 @@ if noiseless:
 else:
     if phantom=="rod":
         # temporary, to ensure we have the same noise level computation for different options
-        data = y + noise_level * 0.014 * np.random.randn(*y.shape).astype(np.float64) * kspace_part.kmask
+        data = y + noise_level * 0.014 * np.random.randn(*y.shape).astype(np.float64)
     elif 'realistic' in phantom:
-        data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64) * kspace_part.kmask
+        data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
 
 #-------------------------------------------------------------------------------------
 # only simulate raw data end exit
@@ -458,6 +460,9 @@ if instant_tpi_recon:
 else:
     readout_time = pynamr.TPIReadOutTime()
 
+# k-space partitioning into bins
+kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
+
 # forward model and unknowns for reconstruction
 if model_recon == "monoexp":
     fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part)
@@ -499,8 +504,10 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 if model_recon=="monoexp":
     # allocate initial values of unknown variables
     unknowns[pynamr.VarName.IMAGE].value = np.stack([std_te1_filtered, 0*std_te1_filtered], axis=-1)
+    #unknowns[pynamr.VarName.IMAGE].value = np.stack([true_conc, np.zeros(true_conc.shape, np.float64)], axis=-1)
     # Gamma initialization more tricky, especially for noisy data
     gam_init = np.divide( gaussian_filter( std_te2_filtered, 2.), gaussian_filter( std_te1_filtered + epsilon, 2.) )
+    #gam_init = true_gam
     # clip to the relevant interval
     unknowns[pynamr.VarName.GAMMA].value = np.clip(gam_init, 0, 1)
 
