@@ -17,42 +17,65 @@ XpArray = typing.Union[np.ndarray, cp.ndarray]
 
   
 class RadialKSpacePartitioner:
-    """partion cartesion volume of kspace points into a number of shells"""
+    """Partition Cartesion volume of kspace points into a number of equidistant shells
+
+        Parameters
+        ----------
+
+        data_shape : k-space dimensions
+
+        pad_factor : ratio of maximum spatial frequency in the output k-space and k_edge
+                     the frequencies larger than k_edge are set to zero
+
+        n_bins : number of equidistant shells
+
+        k_edge : real maximum spatial frequency reached by the pulse sequence
+
+
+        Returns
+        -------
+        Stores the indices of k-space points for each shell in a (possibly padded) k-space, sampling mask,
+        k-space vector magnitudes for each shell
+    """
 
     def __init__(self,
-                 data_shape: tuple[int, int, int],
-                 n_readout_bins: int,
+                 data_shape: tuple,
+                 pad_factor: float,
+                 n_bins: int,
                  k_edge: float = 1.8 * 0.8197) -> None:
 
-        self._data_shape = data_shape
-        self._n_readout_bins = n_readout_bins
+        self._n_bins = n_bins
         self._k_edge = k_edge
 
-        # setup the readout time and readout indexes
-        k0, k1, k2 = np.meshgrid(np.linspace(-k_edge, k_edge, data_shape[0]),
-                                 np.linspace(-k_edge, k_edge, data_shape[1]),
-                                 np.linspace(-k_edge, k_edge, data_shape[2]))
+        # the center coordinates of k-space data voxels
+        k_edge_for_ind = [k_edge*(1.-1./data_shape[0]), k_edge*(1.-1./data_shape[1]), k_edge*(1.-1./data_shape[2])]
+        k0, k1, k2 = np.meshgrid(np.linspace(-pad_factor*k_edge_for_ind[0], pad_factor*k_edge_for_ind[0], data_shape[0]),
+                                 np.linspace(-pad_factor*k_edge_for_ind[1], pad_factor*k_edge_for_ind[1], data_shape[1]),
+                                 np.linspace(-pad_factor*k_edge_for_ind[2], pad_factor*k_edge_for_ind[2], data_shape[2]))
 
+        # k-space vector magnitude for each k-space voxel
         abs_k = np.sqrt(k0**2 + k1**2 + k2**2)
         abs_k = np.fft.fftshift(abs_k)
 
-        k_1d = np.linspace(0, k_edge, n_readout_bins + 1)
+        # shells edges 
+        k_1d = np.linspace(0, k_edge, n_bins+1)
 
-        self._readout_inds = []
+        # k-space sample indices per shell
+        self._k_inds = []
+        # sampling mask
         self._kmask = np.zeros(data_shape, dtype=np.uint8)
-        self._k = np.zeros(n_readout_bins)
+        # k vector magnitude per shell
+        self._k = np.zeros(n_bins)
 
-        for i in range(n_readout_bins):
+        for i in range(n_bins):
             rinds = np.where(
                 np.logical_and(abs_k >= k_1d[i], abs_k < k_1d[i + 1]))
-            self._readout_inds.append(rinds)
+            self._k_inds.append(rinds)
             self.kmask[rinds] = 1
             self._k[i] = 0.5 * (k_1d[i] + k_1d[i + 1])
 
         # convert mutable list to tuple
-        self._readout_inds = tuple(self._readout_inds)
-        # convert kmask mask into a pseudo "complex" array
-        self._kmask = np.stack([self._kmask, self._kmask], axis=-1)
+        self._k_inds = tuple(self._k_inds)
 
     @property
     def kmask(self) -> np.ndarray:
@@ -67,32 +90,12 @@ class RadialKSpacePartitioner:
         return self._k_edge
 
     @property
-    def n_readout_bins(self) -> int:
-        return self._n_readout_bins
+    def n_bins(self) -> int:
+        return self._n_bins
 
     @property
-    def readout_inds(self) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-        return self._readout_inds
-
-    def show(self,
-             fftshift: bool = True,
-             sl: typing.Optional[int] = None,
-             **kwargs) -> None:
-        vol = np.zeros(self._data_shape, dtype=np.int16)
-
-        for i, inds in enumerate(self._readout_inds):
-            vol[inds] = i + 1
-
-        if fftshift:
-            vol = np.fft.fftshift(vol)
-
-        if sl is None:
-            sl = self._data_shape[2] // 2
-
-        fig, ax = plt.subplots()
-        ax.imshow(vol[:, :, sl], **kwargs)
-        fig.tight_layout()
-        fig.show()
+    def k_inds(self) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        return self._k_inds
 
 
 class RadialKSpaceReadOutTime(abc.ABC):

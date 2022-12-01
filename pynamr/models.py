@@ -28,7 +28,7 @@ class DualTESodiumAcqModel(abc.ABC):
     """ abstract base class for decay models for dual TE Na MR data """
 
     def __init__(self,
-                 ds: int,
+                 dim_info: dict,
                  sens: np.ndarray,
                  dt: float,
                  te1: float,
@@ -39,8 +39,8 @@ class DualTESodiumAcqModel(abc.ABC):
 
         Parameters
         ----------
-        ds : int
-            downsample factor (image shape / data shape)
+        dim_info: dict
+            dimension/resolution info
         sens : np.ndarray
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
@@ -54,8 +54,8 @@ class DualTESodiumAcqModel(abc.ABC):
             into radial shells of "same" readout time
         """
 
-        # downsampling factor
-        self._ds = ds
+        # dimension/resolution info
+        self._dim_info = dim_info
         # sensitivity "image" for each coil in downsampled data space
         self._sens = sens
         # number coils
@@ -79,8 +79,6 @@ class DualTESodiumAcqModel(abc.ABC):
 
         # object that partions cartesian k-space into radial shells
         self._kspace_part = kspace_part
-        # shape of the data
-        self._data_shape = self._kspace_part._data_shape
 
         # readout time of every shell
         self._tr = self._readout_time(self._kspace_part.k)
@@ -88,11 +86,6 @@ class DualTESodiumAcqModel(abc.ABC):
         # T2* value below which we can assume that the signal is completely lost
         # for this pulse sequence
         self._t2_zero = self._te1 * 0.1
-
-
-    @property
-    def data_shape(self) -> tuple[int, int, int]:
-        return self._data_shape
 
     @property
     def num_coils(self) -> int:
@@ -112,27 +105,19 @@ class DualTESodiumAcqModel(abc.ABC):
 
     @property
     def n_readout_bins(self) -> int:
-        return self._kspace_part.n_readout_bins
+        return self._kspace_part.n_bins
 
     @property
     def readout_inds(self) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-        return self._kspace_part.readout_inds
+        return self._kspace_part.k_inds
 
     @property
     def tr(self) -> float:
         return self._tr
 
     @property
-    def k_edge(self) -> float:
-        return self._kspace_part.k_edge
-
-    @property
-    def kmask(self) -> np.ndarray:
-        return self._kspace_part.kmask
-
-    @property
     def y_shape_complex(self) -> tuple[int, int, int, int, int]:
-        return (self.num_coils, ) + (2, ) + self.data_shape
+        return (self.num_coils, ) + (2, ) + self._dim_info['data_shape']
 
     @property
     def y_shape_real(self) -> tuple[int, int, int, int, int, int]:
@@ -207,7 +192,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
     def __init__(
         self,
-        ds: int,
+        dim_info: dict,
         sens: np.ndarray,
         dt: float,
         te1: float,
@@ -224,8 +209,8 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         Parameters
         ----------
-        ds : int
-            downsample factor (image shape / data shape)
+        dim_info : dict
+            dimension/resolution info
         sens :np.ndarray 
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
@@ -251,7 +236,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             fraction of bound compartment undergoing long/slow decay, either scalar or spatial map
         """
 
-        super().__init__(ds,
+        super().__init__(dim_info,
                          sens,
                          dt,
                          te1,
@@ -312,10 +297,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     temp = self._bound_long_frac * self.sens[i_sens, ...] \
                             * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_long) \
                             * x[0, ...]
-                    temp = downsample(downsample(downsample(temp, self._ds, axis=0),
-                                                            self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        temp = downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                                            self._dim_info['ds'],
                                                             axis=1),
-                                                 self._ds,
+                                                 self._dim_info['ds'],
                                                  axis=2)
                     y[i_sens, 0, ...][self.readout_inds[
                         it]] += self._xp.fft.fftn(temp,
@@ -324,10 +311,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     temp = self._bound_long_frac * self.sens[i_sens, ...] \
                     * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_long) \
                     * x[0, ...]
-                    temp = downsample(downsample(downsample(temp, self._ds, axis=0),
-                                                            self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        temp = downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                                            self._dim_info['ds'],
                                                             axis=1),
-                                                 self._ds,
+                                                 self._dim_info['ds'],
                                                  axis=2)
                     y[i_sens, 1, ...][self.readout_inds[
                         it]] += self._xp.fft.fftn(temp,
@@ -337,10 +326,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     temp = self._bound_short_frac * self.sens[i_sens, ...] \
                     * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_short) \
                     * x[0, ...]
-                    temp = downsample(downsample(downsample(temp, self._ds, axis=0),
-                                                            self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        temp = downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                                            self._dim_info['ds'],
                                                             axis=1),
-                                                 self._ds,
+                                                 self._dim_info['ds'],
                                                  axis=2)
                     y[i_sens, 0, ...][self.readout_inds[
                         it]] += self._xp.fft.fftn(temp,
@@ -349,10 +340,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     temp = self._bound_short_frac * self.sens[i_sens, ...] \
                     * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_short) \
                     * x[0, ...]
-                    temp = downsample(downsample(downsample(temp, self._ds, axis=0),
-                                                            self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        temp = downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                                            self._dim_info['ds'],
                                                             axis=1),
-                                                 self._ds,
+                                                 self._dim_info['ds'],
                                                  axis=2)
                     y[i_sens, 1, ...][self.readout_inds[
                         it]] += self._xp.fft.fftn(temp,
@@ -362,10 +355,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     temp = self._free_long_frac * self.sens[i_sens, ...] \
                     * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_long) \
                     * x[1, ...]
-                    temp = downsample(downsample(downsample(temp, self._ds, axis=0),
-                                                            self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        temp = downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                                            self._dim_info['ds'],
                                                             axis=1),
-                                                 self._ds,
+                                                 self._dim_info['ds'],
                                                  axis=2)
                     y[i_sens, 0, ...][self.readout_inds[
                         it]] += self._xp.fft.fftn(temp,
@@ -374,10 +369,13 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     temp = self._free_long_frac * self.sens[i_sens, ...] \
                     * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_long) \
                     * x[1, ...]
-                    temp = downsample(downsample(downsample(temp, self._ds, axis=0),
-                                                            self._ds,
+
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        temp = downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                                            self._dim_info['ds'],
                                                             axis=1),
-                                                 self._ds,
+                                                 self._dim_info['ds'],
                                                  axis=2)
                     y[i_sens, 1, ...][self.readout_inds[
                         it]] += self._xp.fft.fftn(temp,
@@ -387,10 +385,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     temp = self._free_short_frac * self.sens[i_sens, ...] \
                     * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_short) \
                     * x[1, ...]
-                    temp = downsample(downsample(downsample(temp, self._ds, axis=0),
-                                                            self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        temp = downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                                            self._dim_info['ds'],
                                                             axis=1),
-                                                 self._ds,
+                                                 self._dim_info['ds'],
                                                  axis=2)
                     y[i_sens, 0, ...][self.readout_inds[
                         it]] += self._xp.fft.fftn(temp,
@@ -399,10 +399,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     temp = self._free_short_frac * self.sens[i_sens, ...] \
                     * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_short) \
                     * x[1, ...]
-                    temp = downsample(downsample(downsample(temp, self._ds, axis=0),
-                                                            self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        temp = downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                                            self._dim_info['ds'],
                                                             axis=1),
-                                                 self._ds,
+                                                 self._dim_info['ds'],
                                                  axis=2)
                     y[i_sens, 1, ...][self.readout_inds[
                         it]] += self._xp.fft.fftn(temp,
@@ -455,10 +457,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                    ...][self.readout_inds[it]]
 
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
-                    tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._ds, axis=0),
-                                                                    self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._dim_info['ds'], axis=0),
+                                                                    self._dim_info['ds'],
                                                                     axis=1),
-                                               self._ds,
+                                               self._dim_info['ds'],
                                                axis=2)
 
                     x[0, ...] += self._bound_long_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_long) \
@@ -469,10 +473,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
-                    tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._ds, axis=0),
-                                                                    self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._dim_info['ds'], axis=0),
+                                                                    self._dim_info['ds'],
                                                                     axis=1),
-                                               self._ds,
+                                               self._dim_info['ds'],
                                                axis=2)
                     x[0, ...] += self._bound_long_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_long) \
                                 * self._xp.conj(self.sens[i_sens]) * tmp
@@ -483,10 +489,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
-                    tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._ds, axis=0),
-                                                                    self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._dim_info['ds'], axis=0),
+                                                                    self._dim_info['ds'],
                                                                     axis=1),
-                                               self._ds,
+                                               self._dim_info['ds'],
                                                axis=2)
                     x[0, ...] += self._bound_short_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_short) \
                                 * self._xp.conj(self.sens[i_sens]) * tmp
@@ -496,10 +504,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
-                    tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._ds, axis=0),
-                                                                    self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._dim_info['ds'], axis=0),
+                                                                    self._dim_info['ds'],
                                                                     axis=1),
-                                               self._ds,
+                                               self._dim_info['ds'],
                                                axis=2)
                     x[0, ...] += self._bound_short_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_short) \
                                     * self._xp.conj(self.sens[i_sens]) * tmp
@@ -510,10 +520,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
-                    tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._ds, axis=0),
-                                                                    self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._dim_info['ds'], axis=0),
+                                                                    self._dim_info['ds'],
                                                                     axis=1),
-                                               self._ds,
+                                               self._dim_info['ds'],
                                                axis=2)
                     x[1, ...] += self._free_long_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_long) \
                                     * self._xp.conj(self.sens[i_sens]) * tmp
@@ -523,10 +535,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
-                    tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._ds, axis=0),
-                                                                    self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._dim_info['ds'], axis=0),
+                                                                    self._dim_info['ds'],
                                                                     axis=1),
-                                               self._ds,
+                                               self._dim_info['ds'],
                                                axis=2)
                     x[1, ...] += self._free_long_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_long) \
                                     * self._xp.conj(self.sens[i_sens]) * tmp
@@ -537,10 +551,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
-                    tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._ds, axis=0),
-                                                                    self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._dim_info['ds'], axis=0),
+                                                                    self._dim_info['ds'],
                                                                     axis=1),
-                                               self._ds,
+                                               self._dim_info['ds'],
                                                axis=2)
                     x[1, ...] += self._free_short_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_short) \
                                     * self._xp.conj(self.sens[i_sens]) * tmp
@@ -550,10 +566,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
-                    tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._ds, axis=0),
-                                                                    self._ds,
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        tmp = downsample_transpose(downsample_transpose(downsample_transpose(tmp, self._dim_info['ds'], axis=0),
+                                                                    self._dim_info['ds'],
                                                                     axis=1),
-                                               self._ds,
+                                               self._dim_info['ds'],
                                                axis=2)
                     x[1, ...] += self._free_short_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_short) \
                                     * self._xp.conj(self.sens[i_sens]) * tmp
@@ -580,7 +598,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
     """ mono exponential dual TE sodium acquisition model assuming one compartment """
 
     def __init__(self,
-                 ds: int,
+                 dim_info: dict,
                  sens: np.ndarray,
                  dt: float,
                  te1: float,
@@ -590,8 +608,8 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         Parameters
         ----------
-        ds : int
-            downsample factor (image shape / data shape)
+        dim_info : dict
+            dimension/resolution info
         sens : np.ndarray
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
@@ -604,7 +622,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             RadialKSpacePartioner that partitions cartesian k-space volume
             into radial shells of "same" readout time
         """
-        super().__init__(ds,
+        super().__init__(dim_info,
                          sens,
                          dt,
                          te1,
@@ -644,19 +662,23 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
                 temp = self.sens[i_sens, ...] * gam**((self._tr[it] + self._te1) / self._dt) * x
-                temp =  downsample(downsample(downsample(temp, self._ds, axis=0),
-                                              self._ds,
+
+                if self._dim_info['ds_mode'] == 'image':
+                    temp =  downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                              self._dim_info['ds'],
                                               axis=1),
-                                   self._ds,
+                                   self._dim_info['ds'],
                                    axis=2)
 
                 y[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(temp, norm='ortho')[self.readout_inds[it]]
 
                 temp = self.sens[i_sens, ...] * gam**(((self._tr[it] + self._te1)/ self._dt) + 1) * x
-                temp =  downsample(downsample(downsample(temp, self._ds, axis=0),
-                                              self._ds,
+
+                if self._dim_info['ds_mode'] == 'image':
+                    temp =  downsample(downsample(downsample(temp, self._dim_info['ds'], axis=0),
+                                              self._dim_info['ds'],
                                               axis=1),
-                                   self._ds,
+                                   self._dim_info['ds'],
                                    axis=2)
 
                 y[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(temp, norm='ortho')[self.readout_inds[it]]
@@ -712,10 +734,11 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                 ...][self.readout_inds[it]]
                 tmp0 = self._xp.fft.ifftn(tmp0, norm='ortho')
 
-                tmp0 = downsample_transpose(downsample_transpose(downsample_transpose(tmp0, self._ds, axis=0),
-                                               self._ds,
+                if self._dim_info['ds_mode'] == 'image':
+                    tmp0 = downsample_transpose(downsample_transpose(downsample_transpose(tmp0, self._dim_info['ds'], axis=0),
+                                               self._dim_info['ds'],
                                                axis=1),
-                                    self._ds,
+                                    self._dim_info['ds'],
                                     axis=2)
 
 
@@ -728,10 +751,11 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
                 tmp1 = self._xp.fft.ifftn(tmp1, norm='ortho')
 
-                tmp1 = downsample_transpose(downsample_transpose(downsample_transpose(tmp1, self._ds, axis=0),
-                                               self._ds,
+                if self._dim_info['ds_mode'] == 'image':
+                    tmp1 = downsample_transpose(downsample_transpose(downsample_transpose(tmp1, self._dim_info['ds'], axis=0),
+                                               self._dim_info['ds'],
                                                axis=1),
-                                    self._ds,
+                                    self._dim_info['ds'],
                                     axis=2)
 
                 x += (gam**(((self._tr[it] + self._te1)/ self._dt) + 1)) * self._xp.conj(self.sens[i_sens]) * tmp1
@@ -797,10 +821,11 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                 ...][self.readout_inds[it]]
                 tmp0 = self._xp.fft.ifftn(tmp0, norm='ortho')
 
-                tmp0 = downsample_transpose(downsample_transpose(downsample_transpose(tmp0, self._ds, axis=0),
-                                               self._ds,
+                if self._dim_info['ds_mode'] == 'image':
+                    tmp0 = downsample_transpose(downsample_transpose(downsample_transpose(tmp0, self._dim_info['ds'], axis=0),
+                                               self._dim_info['ds'],
                                                axis=1),
-                                    self._ds,
+                                    self._dim_info['ds'],
                                     axis=2)
 
 
@@ -813,10 +838,11 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                                                 ...][self.readout_inds[it]]
                 tmp1 = self._xp.fft.ifftn(tmp1, norm='ortho')
 
-                tmp1 = downsample_transpose(downsample_transpose(downsample_transpose(tmp1, self._ds, axis=0),
-                                               self._ds,
+                if self._dim_info['ds_mode'] == 'image':
+                    tmp1 = downsample_transpose(downsample_transpose(downsample_transpose(tmp1, self._dim_info['ds'], axis=0),
+                                               self._dim_info['ds'],
                                                axis=1),
-                                    self._ds,
+                                    self._dim_info['ds'],
                                     axis=2)
                 x += (n + 1) * (gam**n) * self._xp.conj(
                     img.squeeze() * self.sens[i_sens]) * tmp1
