@@ -375,7 +375,9 @@ y = fwd_model_sim.forward(unknowns_sim)
 if noiseless:
     data = y
 else:
-    data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
+    # attempt to obtain the same SNR for different implementations
+    norm_mean = np.sqrt(ds*ds*ds) if ds_mode == 'kspace' else 1.
+    data = y + noise_level * np.abs(y).mean() * norm_mean * np.random.randn(*y.shape).astype(np.float64)
 
 #-------------------------------------------------------------------------------------
 # only simulate raw data end exit
