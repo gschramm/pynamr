@@ -49,7 +49,7 @@ parser.add_argument('--niter',  default = 20, type = int, help='number of optimi
 parser.add_argument('--n_outer', default = 10, type = int, help='number of outer optimization iterations if multistep')
 parser.add_argument('--beta_x', default = 1e-2, type = float, help='penalty strength for image/param')
 parser.add_argument('--beta_gam', default = 1e-2, type = float, help='penalty strength for T2* decay')
-parser.add_argument('--n', default = 128, type = int, choices = [128,256], help='image size')
+parser.add_argument('--recon_n', default = 128, type = int, choices = [128,256], help='reconstructed image size')
 parser.add_argument('--n_readout_bins', default = 16, type = int, help='TPI readout bins')
 parser.add_argument('--nnearest', default = 13,  type = int, help='Bowsher number of most similar voxels')
 parser.add_argument('--instant_tpi_recon',   default = False, action='store_true', help='TPI readout instantaneous for reconstruction')
@@ -67,6 +67,7 @@ parser.add_argument('--no_highres_prior', action = 'store_true', help='no additi
 parser.add_argument('--load_results', action = 'store_true', help='load already computed results, display and exit')
 parser.add_argument('--check', action = 'store_true', help='check the preprocessed data and exit')
 parser.add_argument('--recon_tag', default = '', type= str, help='add additional description to the reconstruction results folder name, for tests')
+parser.add_argument('--ds_mode', default = 'image', type= str, choices=['image','kspace'], help='how to deal with resolution difference between the acquired data and the reconstructed image')
 
 
 args = parser.parse_args()
@@ -75,7 +76,7 @@ niter       = args.niter
 n_outer     = args.n_outer
 beta_x      = args.beta_x
 beta_gam    = args.beta_gam
-n           = args.n
+recon_n           = args.recon_n
 n_readout_bins     = args.n_readout_bins
 nnearest    = args.nnearest
 instant_tpi_recon = args.instant_tpi_recon
@@ -95,6 +96,7 @@ pathology  = args.pathology
 load_results = args.load_results
 check      = args.check
 recon_tag  = args.recon_tag
+ds_mode    = args.ds_mode
 
 #-------------------------------------------------------------------------------------
 # Utility functions for results
@@ -200,19 +202,24 @@ odir = os.path.join(sdir, casedir, 'results', f'betax_{beta_x:.1E}'+ (f'_betagam
 # high resolution proton MRI image
 if not no_highres_prior:
     # already preprocessed .npy image (N4, registered)
-    highresH_img_file = os.path.join(sdir, casedir, f"proton/{highres_mri_name}_n4_aligned_{n}.npy")
+    highresH_img_file = os.path.join(sdir, casedir, f"proton/{highres_mri_name}_n4_aligned_{recon_n}.npy")
     # original nifti image without preprocessing
     highresH_img_file_nii = os.path.join(sdir, casedir, f"proton/{highres_mri_name}.nii")
 
 # initialize some parameters and variables
 # 2 TE values currently
 nechos = 2
-# shape of the kspace data of a single coil
-data_shape = (data_n, data_n, data_n)
+# shape of the kspace data of a single coil and a single acquisition
+if ds_mode == 'image':
+    data_shape = (data_n, data_n, data_n)
+elif ds_mode == 'kspace':
+    data_shape = (recon_n, recon_n, recon_n)
 # shape of the reconstructed image
-recon_shape = (n, n, n)
+recon_shape = (recon_n, recon_n, recon_n)
 # down sample factor (recon cube size / data cube size), must be integer
-ds = n//data_n
+ds = recon_n//data_n
+# useful info for dimensions/resolutions
+dim_info = {'data_shape': data_shape, 'recon_shape': recon_shape, 'ds': ds, 'ds_mode': ds_mode}
 # initialize variables
 data           = np.zeros((ncoils, nechos) + data_shape,  dtype = np.complex64)
 data_pad       = np.zeros((ncoils, nechos) + recon_shape,  dtype = np.complex64)
@@ -372,8 +379,9 @@ if load_results:
 # convert variables to suitable formats
 data = pynamr.real_view_of_complex_array(data)
 
-# k-space config
-kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
+# k-space partitioning into bins
+pad_factor = (ds if ds_mode=='kspace' else 1)
+kspace_part = pynamr.RadialKSpacePartitioner(data_shape, pad_factor, n_readout_bins)
 
 # readout config
 if instant_tpi_recon:
@@ -383,12 +391,12 @@ else:
 
 # forward model and unknowns for reconstruction
 if model_recon == "monoexp":
-    fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part)
-    unknowns = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([ds * x for x in data_shape]) + (2,)),
-                    pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False)}
+    fwd_model = pynamr.MonoExpDualTESodiumAcqModel(dim_info, sens, delta_t, te1, readout_time, kspace_part)
+    unknowns = {pynamr.VarName.IMAGE: pynamr.Var(shape=recon_shape + (2,)),
+                    pynamr.VarName.GAMMA: pynamr.Var(shape=recon_shape, nb_comp=1, complex_var=False)}
 elif model_recon == "fixedcomp":
-    fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, 0, t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
-    unknowns = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
+    fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(dim_info, sens, delta_t, te1, readout_time, kspace_part, 0, t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
+    unknowns = {pynamr.VarName.PARAM: pynamr.Var(shape=(2,) + recon_shape + (2,), nb_comp=2)}
 else:
     raise NotImplementedError
 

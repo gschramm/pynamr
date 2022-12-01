@@ -21,7 +21,7 @@ except ImportError:
     
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import zoom, gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
 from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
@@ -38,7 +38,7 @@ parser.add_argument('--niter',  default = 10, type = int, help='number of optimi
 parser.add_argument('--n_outer', default = 10, type = int, help='number of outer optimization iterations if multistep')
 parser.add_argument('--beta_x', default = 1e-2, type = float, help='penalty strength for image/param')
 parser.add_argument('--beta_gam', default = 1e-2, type = float, help='penalty strength for T2* decay')
-parser.add_argument('--n', default = 128, type = int, choices = [128,256], help='image size')
+parser.add_argument('--recon_n', default = 128, type = int, choices = [128,256], help='image size')
 parser.add_argument('--n_readout_bins', default = 16, type = int, help='TPI readout bins for reconstruction')
 parser.add_argument('--n_readout_bins_sim', default = 32, type = int, help='TPI readout bins for simulation')
 parser.add_argument('--noise_level', default = 3.,  type = float, help='Gaussian noise level')
@@ -70,6 +70,7 @@ parser.add_argument('--dont_save', action='store_true', help="don't save simulat
 parser.add_argument('--load_results', action='store_true', help='load existing results, display and exit')
 parser.add_argument('--hann_simplerecon', action='store_true', help='apply hanning filter for standard recon')
 parser.add_argument('--recon_tag', default = '', type= str, help='add additional description to the reconstruction results folder name, for tests')
+parser.add_argument('--ds_mode', default = 'image', type= str, choices=['image','kspace'], help='how to deal with resolution difference between the acquired data and the reconstructed image')
 
 
 
@@ -79,7 +80,7 @@ niter       = args.niter
 n_outer     = args.n_outer
 beta_x      = args.beta_x
 beta_gam    = args.beta_gam
-n           = args.n
+recon_n           = args.recon_n
 n_readout_bins     = args.n_readout_bins
 n_readout_bins_sim     = args.n_readout_bins_sim
 noise_level = args.noise_level
@@ -108,7 +109,7 @@ dont_save = args.dont_save
 load_results = args.load_results
 hann_simplerecon   = args.hann_simplerecon
 recon_tag  = args.recon_tag
-
+ds_mode = args.ds_mode
 
 #-------------------------------------------------------------------------------------
 # perform some checks on input parameters
@@ -121,14 +122,19 @@ noiseless = (not (noise_level>0.))
 # 2 TE values currently
 nechos = 2
 # shape of the kspace data of a single coil and a single acquisition
-data_shape = (data_n, data_n, data_n)
+if ds_mode == 'image':
+    data_shape = (data_n, data_n, data_n)
+elif ds_mode == 'kspace':
+    data_shape = (recon_n, recon_n, recon_n)
 # spatial shape of the reconstructed image
-recon_shape = (n, n, n)
+recon_shape = (recon_n, recon_n, recon_n)
 # down sample factor (recon cube size / data cube size), must be integer
-ds = round(n/data_n)
+ds = round(recon_n/data_n)
+# useful info for dimensions/resolutions
+dim_info = {'data_shape': data_shape, 'recon_shape': recon_shape, 'ds': ds, 'ds_mode': ds_mode}
 # create complex sensitivity images - TO BE IMPROVED
-sens = np.ones((ncoils, n, n, n)) + 0j * np.zeros(
-    (ncoils, n, n, n))
+sens = np.ones((ncoils, *recon_shape)) + 0j * np.zeros(
+    (ncoils, *recon_shape))
 # seed the random generator
 np.random.seed(seed)
 # T2 value considered almost 0 to avoid division by 0.
@@ -274,13 +280,13 @@ if phantom=='rod':
         aimg = (x1.max() - x1)**0.5
 
 elif 'realistic' in phantom:
-        x1 = np.load(os.path.join(sdir, f"vconc_bi_{n}.npy"))
-        x2 = np.load(os.path.join(sdir, f"vconc_mono_{n}.npy"))
-        t2bi_s = np.load(os.path.join(sdir, f"t2bi_s_{n}.npy"))
-        t2bi_l = np.load(os.path.join(sdir, f"t2bi_l_{n}.npy"))
-        t2mono_l = np.load(os.path.join(sdir, f"t2mono_l_{n}.npy"))
-        t2bi_frac_l = np.load(os.path.join(sdir, f"t2bi_frac_l_{n}.npy"))
-        Hmri = np.load(os.path.join(sdir, f"Hmri_{n}.npy"))
+        x1 = np.load(os.path.join(sdir, f"vconc_bi_{recon_n}.npy"))
+        x2 = np.load(os.path.join(sdir, f"vconc_mono_{recon_n}.npy"))
+        t2bi_s = np.load(os.path.join(sdir, f"t2bi_s_{recon_n}.npy"))
+        t2bi_l = np.load(os.path.join(sdir, f"t2bi_l_{recon_n}.npy"))
+        t2mono_l = np.load(os.path.join(sdir, f"t2mono_l_{recon_n}.npy"))
+        t2bi_frac_l = np.load(os.path.join(sdir, f"t2bi_frac_l_{recon_n}.npy"))
+        Hmri = np.load(os.path.join(sdir, f"Hmri_{recon_n}.npy"))
 
         # corresponding "true" TE1, TE2 and Gamma images 
         true_conc = x1 + x2
@@ -317,7 +323,8 @@ else:
     readout_time_sim = pynamr.TPIReadOutTime()
 
 # k-space partitioning into bins
-kspace_part_sim = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins_sim)
+pad_factor = (ds if ds_mode=='kspace' else 1)
+kspace_part_sim = pynamr.RadialKSpacePartitioner(data_shape, pad_factor, n_readout_bins_sim)
 
 #-------------------------------------------------------------------------------------
 # forward model for simulating raw data
@@ -328,9 +335,9 @@ if model_sim == "monoexp":
     x = np.stack([x, 0 * x], axis=-1)
 
     # forward model and unknown variables for simulating raw data
-    fwd_model_sim = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part_sim)
-    unknowns_sim = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([ds * x for x in data_shape]) + (2,)),
-                    pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False)}
+    fwd_model_sim = pynamr.MonoExpDualTESodiumAcqModel(dim_info, sens, delta_t, te1, readout_time_sim, kspace_part_sim)
+    unknowns_sim = {pynamr.VarName.IMAGE: pynamr.Var(shape= recon_shape + (2,)),
+                    pynamr.VarName.GAMMA: pynamr.Var(shape= recon_shape, nb_comp=1, complex_var=False)}
     unknowns_sim[pynamr.VarName.IMAGE].value = x
     unknowns_sim[pynamr.VarName.GAMMA].value = gam
 
@@ -342,11 +349,11 @@ elif model_sim == "fixedcomp":
     # forward model and unknown variables for simulating raw data
     if phantom=="rod":
         # single (spatially uniform) T2* values for compartments
-        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part_sim, 0, t2mono_l, t2bi_s, t2bi_l, 1., t2bi_frac_l)
+        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(dim_info, sens, delta_t, te1, readout_time_sim, kspace_part_sim, 0, t2mono_l, t2bi_s, t2bi_l, 1., t2bi_frac_l)
     elif 'realistic' in phantom:
         # spatially variable T2* values for compartments
-        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time_sim, kspace_part_sim, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
-    unknowns_sim = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
+        fwd_model_sim = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(dim_info, sens, delta_t, te1, readout_time_sim, kspace_part_sim, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
+    unknowns_sim = {pynamr.VarName.PARAM: pynamr.Var(shape= ((2,) + recon_shape + (2,)), nb_comp=2)}
     unknowns_sim[pynamr.VarName.PARAM].value = x
 
 # save true images if required
@@ -368,11 +375,9 @@ y = fwd_model_sim.forward(unknowns_sim)
 if noiseless:
     data = y
 else:
-    if phantom=="rod":
-        # temporary, to ensure we have the same noise level computation for different options
-        data = y + noise_level * 0.014 * np.random.randn(*y.shape).astype(np.float64)
-    elif 'realistic' in phantom:
-        data = y + noise_level * np.abs(y).mean() * np.random.randn(*y.shape).astype(np.float64)
+    # attempt to obtain the same SNR for different implementations
+    norm_mean = np.sqrt(ds*ds*ds) if ds_mode == 'kspace' else 1.
+    data = y + noise_level * np.abs(y).mean() * norm_mean * np.random.randn(*y.shape).astype(np.float64)
 
 #-------------------------------------------------------------------------------------
 # only simulate raw data end exit
@@ -385,11 +390,9 @@ if only_sim:
 
 # currently sum of squares, TODO implement a better std recon
 std_te1 = pynamr.sum_of_squares_reconstruction(data[:,0,...])
+std_te1 = zoom(std_te1, np.array(recon_shape)/ np.array(data_shape), order = 1, prefilter=False)
 std_te2 = pynamr.sum_of_squares_reconstruction(data[:,1,...])
-
-# upsample to recon size
-std_te1 = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(std_te1, ds, axis=0), ds, axis=1), ds, axis=2)
-std_te2 = pynamr.upsample_nearest(pynamr.upsample_nearest(pynamr.upsample_nearest(std_te2, ds, axis=0), ds, axis=1), ds, axis=2)
+std_te2 = zoom(std_te2, np.array(recon_shape)/ np.array(data_shape), order = 1, prefilter=False)
 
 # produce filtered simple recon
 if hann_simplerecon:
@@ -401,15 +404,15 @@ if hann_simplerecon:
     h_win = interp1d(np.arange(data_n_half), np.hanning(data_n)[data_n_half:], fill_value = 0, bounds_error = False)
     k0,k1,k2 = np.meshgrid(np.arange(-data_n_half,data_n_half),np.arange(-data_n_half,data_n_half),np.arange(-data_n_half,data_n_half))
     abs_k = np.sqrt(k0**2 + k1**2 + k2**2)
-    hmask = h_win(abs_k.flatten()).reshape(data_n,data_n,data_n)
+    hmask = h_win(abs_k.flatten()).reshape(*data_shape)
     hmask = np.fft.fftshift(hmask)
 
     # zero padded and filtered complex data
-    data_filt = np.zeros((ncoils,nechos,n,n,n), np.complex128)
+    data_filt = np.zeros((ncoils,nechos,*recon_shape), np.complex128)
     # padding size
-    dif = (n-data_n)//2
+    dif = (recon_n-data_n)//2
     # normalization factor between low and high res fft
-    factor_fft_res_change = 2*np.sqrt([2])
+    factor_fft_res_change = ds*np.sqrt(ds)
     for c in range(ncoils):
         for e in range(nechos):
             data_filt[c,e,:,:,:] = np.fft.fftshift(np.pad(np.fft.fftshift(hmask*pynamr.complex_view_of_real_array(data[c,e])), dif)*factor_fft_res_change)
@@ -461,19 +464,20 @@ else:
     readout_time = pynamr.TPIReadOutTime()
 
 # k-space partitioning into bins
-kspace_part = pynamr.RadialKSpacePartitioner(data_shape, n_readout_bins)
+pad_factor = (ds if ds_mode=='kspace' else 1)
+kspace_part = pynamr.RadialKSpacePartitioner(data_shape, pad_factor, n_readout_bins)
 
 # forward model and unknowns for reconstruction
 if model_recon == "monoexp":
-    fwd_model = pynamr.MonoExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part)
-    unknowns = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([ds * x for x in data_shape]) + (2,)),
-                    pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([ds * x for x in data_shape]), nb_comp=1, complex_var=False)}
+    fwd_model = pynamr.MonoExpDualTESodiumAcqModel(dim_info, sens, delta_t, te1, readout_time, kspace_part)
+    unknowns = {pynamr.VarName.IMAGE: pynamr.Var(shape= recon_shape + (2,)),
+                    pynamr.VarName.GAMMA: pynamr.Var(shape= recon_shape, nb_comp=1, complex_var=False)}
 elif model_recon == "fixedcomp":
     if phantom=='rod':
-        fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, 0., t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
+        fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(dim_info, sens, delta_t, te1, readout_time, kspace_part, 0., t2mono_l, t2bi_s, t2bi_l, 1, t2bi_frac_l)
     elif 'realistic' in phantom:
-        fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(ds, sens, delta_t, te1, readout_time, kspace_part, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
-    unknowns = {pynamr.VarName.PARAM: pynamr.Var(shape=tuple([2,] + [ds * x for x in data_shape] + [2,]), nb_comp=2)}
+        fwd_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(dim_info, sens, delta_t, te1, readout_time, kspace_part, np.zeros(t2mono_l.shape, t2mono_l.dtype), t2mono_l, t2bi_s, t2bi_l, np.ones(t2bi_frac_l.shape, t2bi_frac_l.dtype), t2bi_frac_l)
+    unknowns = {pynamr.VarName.PARAM: pynamr.Var(shape= ((2,) + recon_shape + (2,)), nb_comp=2)}
 else:
     raise NotImplementedError
 
@@ -503,11 +507,11 @@ loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 # run the recons
 if model_recon=="monoexp":
     # allocate initial values of unknown variables
-    unknowns[pynamr.VarName.IMAGE].value = np.stack([std_te1_filtered, 0*std_te1_filtered], axis=-1)
-    #unknowns[pynamr.VarName.IMAGE].value = np.stack([true_conc, np.zeros(true_conc.shape, np.float64)], axis=-1)
+    #unknowns[pynamr.VarName.IMAGE].value = np.stack([std_te1_filtered, 0*std_te1_filtered], axis=-1)
+    unknowns[pynamr.VarName.IMAGE].value = np.stack([true_conc, np.zeros(true_conc.shape, np.float64)], axis=-1)
     # Gamma initialization more tricky, especially for noisy data
-    gam_init = np.divide( gaussian_filter( std_te2_filtered, 2.), gaussian_filter( std_te1_filtered + epsilon, 2.) )
-    #gam_init = true_gam
+    #gam_init = np.divide( gaussian_filter( std_te2_filtered, 2.), gaussian_filter( std_te1_filtered + epsilon, 2.) )
+    gam_init = true_gam
     # clip to the relevant interval
     unknowns[pynamr.VarName.GAMMA].value = np.clip(gam_init, 0, 1)
 
