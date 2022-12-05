@@ -209,17 +209,19 @@ if not no_highres_prior:
 # initialize some parameters and variables
 # 2 TE values currently
 nechos = 2
+# 3D space
+spatial_n = 3
 # shape of the kspace data of a single coil and a single acquisition
 if ds_mode == 'image':
-    data_shape = (data_n, data_n, data_n)
+    data_shape = (data_n,) * spatial_n
 elif ds_mode == 'kspace':
-    data_shape = (recon_n, recon_n, recon_n)
+    data_shape = (recon_n,) * spatial_n
 # shape of the reconstructed image
-recon_shape = (recon_n, recon_n, recon_n)
+recon_shape = (recon_n,) * spatial_n
 # down sample factor (recon cube size / data cube size), must be integer
 ds = recon_n//data_n
 # useful info for dimensions/resolutions
-dim_info = {'data_shape': data_shape, 'recon_shape': recon_shape, 'ds': ds, 'ds_mode': ds_mode}
+dim_info = {'data_shape': data_shape, 'recon_shape': recon_shape, 'ds': ds, 'ds_mode': ds_mode, 'spatial_n':spatial_n}
 # initialize variables
 data           = np.zeros((ncoils, nechos) + data_shape,  dtype = np.complex64)
 data_pad       = np.zeros((ncoils, nechos) + recon_shape,  dtype = np.complex64)

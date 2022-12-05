@@ -21,37 +21,46 @@ class TestGradients(unittest.TestCase):
         self.noise_level = 0.1
         self.xp = np
         self.n_readout_bins = 8
+        self.n_ds = self.data_shape[0]
+        self.n = self.ds * self.n_ds
+        self.recon_shape = (self.n, self.n, self.n)
+        self.spatial_n = 3
+
+        # changing param
+        self.ds_mode = 'kspace'
+        if self.ds_mode == 'kspace':
+            self.data_shape = self.recon_shape
 
         #----------------------------------------------------------------------
         np.random.seed(1)
 
-        self.n_ds = self.data_shape[0]
-        self.n = self.ds * self.n_ds
-        self.image_shape = (self.n, self.n, self.n)
+
+        self.dim_info = {'data_shape': self.data_shape, 'recon_shape': self.recon_shape, 'ds': self.ds, 'ds_mode': self.ds_mode, 'spatial_n': self.spatial_n}
 
         self.sens = cp.random.rand(*(
-            (self.ncoils, ) + self.image_shape)) + 1j * cp.random.rand(*(
-                (self.ncoils, ) + self.image_shape))
+            (self.ncoils, ) + self.recon_shape)) + 1j * cp.random.rand(*(
+                (self.ncoils, ) + self.recon_shape))
         self.sens *= 1e-2
 
-        self.gam = np.random.rand(*self.image_shape)
+        self.gam = np.random.rand(*self.recon_shape)
 
         readout_time = pynamr.TPIReadOutTime()
-        kspace_part = pynamr.RadialKSpacePartitioner(self.data_shape,
-                                                     self.n_readout_bins)
+        pad_factor = (self.ds if self.ds_mode=='kspace' else 1)
+        kspace_part = pynamr.RadialKSpacePartitioner(self.data_shape, pad_factor, self.n_readout_bins)
+
 
         # generate mono-exp. data
-        self.mono_exp_model = pynamr.MonoExpDualTESodiumAcqModel(self.ds,
+        self.mono_exp_model = pynamr.MonoExpDualTESodiumAcqModel(self.dim_info,
                                                                  self.sens,
                                                                  self.dt,
                                                                  self.te1,
                                                                  readout_time,
                                                                  kspace_part)
 
-        self.unknowns_mono = {pynamr.VarName.IMAGE: pynamr.Var(shape=tuple([self.ds * x for x in self.data_shape]) + (2,)),
-        pynamr.VarName.GAMMA: pynamr.Var(shape=tuple([self.ds * x for x in self.data_shape]), nb_comp=1, complex_var=False)}
+        self.unknowns_mono = {pynamr.VarName.IMAGE: pynamr.Var(shape= self.recon_shape + (2,)),
+        pynamr.VarName.GAMMA: pynamr.Var(shape=self.recon_shape, nb_comp=1, complex_var=False)}
 
-        self.x = np.random.rand(*( (self.image_shape) + (2, )))
+        self.x = np.random.rand(*( (self.recon_shape) + (2, )))
         self.unknowns_mono[pynamr.VarName.IMAGE].value = self.x
         self.unknowns_mono[pynamr.VarName.GAMMA].value = self.gam
 
@@ -61,12 +70,12 @@ class TestGradients(unittest.TestCase):
 
         # generate bi-exp dual comp data
         self.bi_exp_model = pynamr.TwoCompartmentBiExpDualTESodiumAcqModel(
-            self.ds, self.sens, self.dt, self.te1, readout_time, kspace_part, 2, 20, 4,
+            self.dim_info, self.sens, self.dt, self.te1, readout_time, kspace_part, 2, 20, 4,
             16, 0.4, 0.2)
 
-        self.x_bi = np.random.rand(*((2, ) + (self.image_shape) + (2, )))
+        self.x_bi = np.random.rand(*((2, ) + (self.recon_shape) + (2, )))
 
-        self.unknowns_bi = {pynamr.VarName.PARAM: pynamr.Var( shape=tuple([2,] + [self.ds * x for x in self.data_shape] + [2,]), nb_comp=2)}
+        self.unknowns_bi = {pynamr.VarName.PARAM: pynamr.Var( shape= (2,) + self.recon_shape + (2,), nb_comp=2)}
         self.unknowns_bi[pynamr.VarName.PARAM].value = self.x_bi
 
         self.y_bi = self.bi_exp_model.forward(self.unknowns_bi)
@@ -80,8 +89,8 @@ class TestGradients(unittest.TestCase):
         loss = pynamr.DataFidelityLoss(self.mono_exp_model, self.data)
 
         # random values for variables
-        self.unknowns_mono[pynamr.VarName.IMAGE].value = np.random.rand(*( (self.image_shape) + (2, )))
-        self.unknowns_mono[pynamr.VarName.GAMMA].value = np.random.rand(*(self.image_shape))
+        self.unknowns_mono[pynamr.VarName.IMAGE].value = np.random.rand(*( (self.recon_shape) + (2, )))
+        self.unknowns_mono[pynamr.VarName.GAMMA].value = np.random.rand(*(self.recon_shape))
 
         loss.gradient_test(self.unknowns_mono, pynamr.VarName.IMAGE) 
         loss.gradient_test(self.unknowns_mono, pynamr.VarName.GAMMA)
@@ -93,7 +102,7 @@ class TestGradients(unittest.TestCase):
         loss = pynamr.DataFidelityLoss(self.bi_exp_model, self.data_bi)
 
         # random values for variables
-        self.unknowns_bi[pynamr.VarName.PARAM].value =  np.random.rand(*((2, ) + (self.image_shape) + (2, )))
+        self.unknowns_bi[pynamr.VarName.PARAM].value =  np.random.rand(*((2, ) + (self.recon_shape) + (2, )))
 
         loss.gradient_test(self.unknowns_bi, pynamr.VarName.PARAM) 
 
@@ -106,13 +115,13 @@ class TestGradients(unittest.TestCase):
 
         # setup the Bowsher loss
         nnearest = 2
-        aimg = np.random.rand(*self.image_shape)
+        aimg = np.random.rand(*self.recon_shape)
 
         s = np.array([[[0, 1, 0], [1, 1, 1], [0, 1, 0]],
                       [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
                       [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
 
-        nn_inds = np.zeros((np.prod(self.image_shape), nnearest),
+        nn_inds = np.zeros((np.prod(self.recon_shape), nnearest),
                            dtype=np.uint32)
         pynamr.nearest_neighbors(aimg, s, nnearest, nn_inds)
         nn_inds_adj = pynamr.is_nearest_neighbor_of(nn_inds)
@@ -127,8 +136,8 @@ class TestGradients(unittest.TestCase):
         loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 
         # random values for variables
-        self.unknowns_mono[pynamr.VarName.IMAGE].value = np.random.rand(*( (self.image_shape) + (2, )))
-        self.unknowns_mono[pynamr.VarName.GAMMA].value = np.random.rand(*(self.image_shape))
+        self.unknowns_mono[pynamr.VarName.IMAGE].value = np.random.rand(*( (self.recon_shape) + (2, )))
+        self.unknowns_mono[pynamr.VarName.GAMMA].value = np.random.rand(*(self.recon_shape))
 
         loss.gradient_test(self.unknowns_mono, pynamr.VarName.IMAGE)
         loss.gradient_test(self.unknowns_mono, pynamr.VarName.GAMMA, rtol=1e-3)
@@ -141,13 +150,13 @@ class TestGradients(unittest.TestCase):
 
         # setup the Bowsher loss
         nnearest = 2
-        aimg = np.random.rand(*self.image_shape)
+        aimg = np.random.rand(*self.recon_shape)
 
         s = np.array([[[0, 1, 0], [1, 1, 1], [0, 1, 0]],
                       [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
                       [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
 
-        nn_inds = np.zeros((np.prod(self.image_shape), nnearest),
+        nn_inds = np.zeros((np.prod(self.recon_shape), nnearest),
                            dtype=np.uint32)
         pynamr.nearest_neighbors(aimg, s, nnearest, nn_inds)
         nn_inds_adj = pynamr.is_nearest_neighbor_of(nn_inds)
@@ -161,22 +170,22 @@ class TestGradients(unittest.TestCase):
         loss = pynamr.TotalLoss(data_fidelity_loss, penalty_info, beta_info)
 
         # random values for variables
-        self.unknowns_bi[pynamr.VarName.PARAM].value =  np.random.rand(*((2, ) + (self.image_shape) + (2, )))
+        self.unknowns_bi[pynamr.VarName.PARAM].value =  np.random.rand(*((2, ) + (self.recon_shape) + (2, )))
 
         loss.gradient_test(self.unknowns_bi, pynamr.VarName.PARAM)
 
 
     def test_bowsher_gradient(self):
         nnearest = 2
-        image_shape = (4, 5, 6)
-        aimg = np.random.rand(*image_shape)
-        timg = np.random.rand(*image_shape)
+        recon_shape = (4, 5, 6)
+        aimg = np.random.rand(*recon_shape)
+        timg = np.random.rand(*recon_shape)
 
         s = np.array([[[0, 1, 0], [1, 1, 1], [0, 1, 0]],
                       [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
                       [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
 
-        nn_inds = np.zeros((np.prod(image_shape), nnearest), dtype=np.uint32)
+        nn_inds = np.zeros((np.prod(recon_shape), nnearest), dtype=np.uint32)
         pynamr.nearest_neighbors(aimg, s, nnearest, nn_inds)
         nn_inds_adj = pynamr.is_nearest_neighbor_of(nn_inds)
 
