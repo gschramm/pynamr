@@ -299,7 +299,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                             * x[0, ...]
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             temp = downsample(temp, self._dim_info['ds'], axis=s)
 
                     y[i_sens, 0, ...][self.readout_inds[
@@ -311,7 +311,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     * x[0, ...]
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             temp = downsample(temp, self._dim_info['ds'], axis=s)
 
                     y[i_sens, 1, ...][self.readout_inds[
@@ -324,7 +324,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     * x[0, ...]
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             temp = downsample(temp, self._dim_info['ds'], axis=s)
 
                     y[i_sens, 0, ...][self.readout_inds[
@@ -336,7 +336,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     * x[0, ...]
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             temp = downsample(temp, self._dim_info['ds'], axis=s)
 
                     y[i_sens, 1, ...][self.readout_inds[
@@ -349,7 +349,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     * x[1, ...]
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             temp = downsample(temp, self._dim_info['ds'], axis=s)
 
                     y[i_sens, 0, ...][self.readout_inds[
@@ -362,7 +362,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             temp = downsample(temp, self._dim_info['ds'], axis=s)
 
                     y[i_sens, 1, ...][self.readout_inds[
@@ -375,7 +375,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     * x[1, ...]
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             temp = downsample(temp, self._dim_info['ds'], axis=s)
 
                     y[i_sens, 0, ...][self.readout_inds[
@@ -387,7 +387,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     * x[1, ...]
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             temp = downsample(temp, self._dim_info['ds'], axis=s)
 
                     y[i_sens, 1, ...][self.readout_inds[
@@ -443,7 +443,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
 
                     x[0, ...] += self._bound_long_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_long) \
@@ -456,7 +456,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
 
                     x[0, ...] += self._bound_long_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_long) \
@@ -470,7 +470,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
 
                     x[0, ...] += self._bound_short_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_short) \
@@ -483,7 +483,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
 
                     x[0, ...] += self._bound_short_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_short) \
@@ -497,7 +497,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
 
                     x[1, ...] += self._free_long_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_long) \
@@ -510,7 +510,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
 
                     x[1, ...] += self._free_long_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_long) \
@@ -524,7 +524,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
 
                     x[1, ...] += self._free_short_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_short) \
@@ -537,7 +537,7 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                     tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
                     if self._dim_info['ds_mode'] == 'image':
-                        for s in range(dim_info['spatial_n']):
+                        for s in range(self._dim_info['spatial_n']):
                             tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
 
                     x[1, ...] += self._free_short_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_short) \
@@ -631,7 +631,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 temp = self.sens[i_sens, ...] * gam**((self._tr[it] + self._te1) / self._dt) * x
 
                 if self._dim_info['ds_mode'] == 'image':
-                    for s in range(dim_info['spatial_n']):
+                    for s in range(self._dim_info['spatial_n']):
                         temp =  downsample(temp, self._dim_info['ds'], axis=s)
 
                 y[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(temp, norm='ortho')[self.readout_inds[it]]
@@ -639,7 +639,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 temp = self.sens[i_sens, ...] * gam**(((self._tr[it] + self._te1)/ self._dt) + 1) * x
 
                 if self._dim_info['ds_mode'] == 'image':
-                    for s in range(dim_info['spatial_n']):
+                    for s in range(self._dim_info['spatial_n']):
                         temp =  downsample(temp, self._dim_info['ds'], axis=s)
 
                 y[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(temp, norm='ortho')[self.readout_inds[it]]
@@ -696,7 +696,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 tmp0 = self._xp.fft.ifftn(tmp0, norm='ortho')
 
                 if self._dim_info['ds_mode'] == 'image':
-                    for s in range(dim_info['spatial_n']):
+                    for s in range(self._dim_info['spatial_n']):
                         tmp0 = downsample_transpose(tmp0, self._dim_info['ds'], axis=s)
 
                 x += (gam**((self._tr[it] + self._te1) / self._dt)) * self._xp.conj(self.sens[i_sens]) * tmp0
@@ -709,7 +709,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 tmp1 = self._xp.fft.ifftn(tmp1, norm='ortho')
 
                 if self._dim_info['ds_mode'] == 'image':
-                    for s in range(dim_info['spatial_n']):
+                    for s in range(self._dim_info['spatial_n']):
                         tmp1 = downsample_transpose(tmp1, self._dim_info['ds'], axis=s)
 
                 x += (gam**(((self._tr[it] + self._te1)/ self._dt) + 1)) * self._xp.conj(self.sens[i_sens]) * tmp1
@@ -776,7 +776,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 tmp0 = self._xp.fft.ifftn(tmp0, norm='ortho')
 
                 if self._dim_info['ds_mode'] == 'image':
-                    for s in range(dim_info['spatial_n']):
+                    for s in range(self._dim_info['spatial_n']):
                         tmp0 = downsample_transpose(tmp0, self._dim_info['ds'], axis=s)
 
                 x += n * (gam**(n - 1)) * self._xp.conj(
@@ -789,7 +789,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 tmp1 = self._xp.fft.ifftn(tmp1, norm='ortho')
 
                 if self._dim_info['ds_mode'] == 'image':
-                    for s in range(dim_info['spatial_n']):
+                    for s in range(self._dim_info['spatial_n']):
                         tmp1 = downsample_transpose(tmp1, self._dim_info['ds'], axis=s)
 
                 x += (n + 1) * (gam**n) * self._xp.conj(
