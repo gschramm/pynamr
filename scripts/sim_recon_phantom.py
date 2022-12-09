@@ -140,8 +140,8 @@ elif ds_mode == 'kspace':
     data_shape = recon_shape
     data_shape_sim = phantom_shape
 # down sample factor (recon cube size / data cube size), must be integer
-ds = round(recon_n/data_n)
-ds_sim = round(phantom_n/data_n)
+ds = recon_n//data_n
+ds_sim = phantom_n//data_n
 # useful info for dimensions/resolutions
 dim_info = {'data_shape': data_shape, 'recon_shape': recon_shape, 'ds': ds, 'ds_mode': ds_mode, 'spatial_n': spatial_n}
 dim_info_sim = {'data_shape': data_shape_sim, 'recon_shape': phantom_shape, 'ds':  ds_sim, 'ds_mode': ds_mode, 'spatial_n': spatial_n}
@@ -172,6 +172,8 @@ if not dont_save:
     sim_dir = os.path.join(sdir, 'im'+model_im+'_sim'+model_sim+
                                 ('_inst' if instant_tpi_sim else '')+
                                 ('_noiseless' if noiseless else '')+
+                                ('_ds'+ds_mode)+
+                                (f"_phantom{phantom_n}")+
                                 (f"_noise{noise_level:.0f}"))
     # folder for storing reconstruction results
     odir = os.path.join(sim_dir, 'results', f'betax_{beta_x:.1E}'+ (f'_betagam_{beta_gam:.1E}' if model_recon=='monoexp' else '')+
