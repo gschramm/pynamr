@@ -33,6 +33,6 @@ class Var():
     def __post_init__(self):
         # complex shape = number of components + spatial dimensions
         self.complex_shape = (self.shape[:-1] if self.complex_var else self.shape)
-        self.spatial_shape = (self.complex_shape[1:] if self.nb_comp>1 else self.complex_shape)
+        self.nb_spatial = len(self.shape) - (0 if self.nb_comp==1 else 1) - (1 if self.complex_var else 0)
 
 

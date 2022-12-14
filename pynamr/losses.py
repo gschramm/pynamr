@@ -94,11 +94,33 @@ class DataFidelityLoss(DifferentiableLossFunction):
         # calculate the gradient with the original variables
         g = self.gradient(var_dict, var_name)
 
+        # compute indices for the unknown variable/loss gradient for all the relevant tests:
+        # specified spatial indices, real/imag part if complex number, all the components
+        indices = []
         for i in inds:
+            sl = (i,) * var_dict[var_name].nb_spatial
+            if var_dict[var_name].nb_comp>1:
+                for c in range(var_dict[var_name].nb_comp):
+                    slc = (c,) + sl
+                    if var_dict[var_name].complex_var:
+                        for j in range(2):
+                            indices.append(slc + (j,))
+                    else:
+                        indices.append(slc)
+            elif var_dict[var_name].complex_var:
+                for j in range(2):
+                    indices.append(sl + (j,))
+            else:
+                indices.append(sl)
+ 
+        # compare approximate and actual gradient
+        for item in indices:
+            print(item)
             # setup variables with small pertubation
             var_dict2 = deepcopy(var_dict)
             delta = np.zeros(var_dict[var_name].shape)
-            delta.ravel()[i] = eps
+
+            delta[item] = eps
             var_dict2[var_name].value += delta
 
             # calculate loss with pertubed variables
@@ -107,7 +129,7 @@ class DataFidelityLoss(DifferentiableLossFunction):
             # approximate gradient
             g_approx = (l2 - l1) / eps
 
-            assert (np.isclose(g.ravel()[i], g_approx, rtol=rtol, atol=atol))
+            assert (np.isclose(g[item], g_approx, rtol=rtol, atol=atol))
 
 
 class TotalLoss(DifferentiableLossScipy):
@@ -246,12 +268,35 @@ class TotalLoss(DifferentiableLossScipy):
         l1 = self.__call__(var_dict[var_name].value.ravel(), var_dict, var_name)
         # calculate the gradient with the original variables
         g = self.gradient(var_dict[var_name].value.ravel(), var_dict, var_name)
+        # have to reshape it as the total loss gradient is ravelled because it serves
+        # as interface to scipy
+        g = g.reshape(var_dict[var_name].shape)
 
+        # compute indices for the unknown variable/loss gradient for all the relevant tests:
+        # specified spatial indices, real/imag part if complex number, all the components
+        indices = []
         for i in inds:
+            sl = (i,) * var_dict[var_name].nb_spatial
+            if var_dict[var_name].nb_comp>1:
+                for c in range(var_dict[var_name].nb_comp):
+                    slc = (c,) + sl
+                    if var_dict[var_name].complex_var:
+                        for j in range(2):
+                            indices.append(slc + (j,))
+                    else:
+                        indices.append(slc)
+            elif var_dict[var_name].complex_var:
+                for j in range(2):
+                    indices.append(sl + (j,))
+            else:
+                indices.append(sl)
+
+        # compare approximate and actual gradient
+        for item in indices:
             # setup variables with small pertubation
             var_dict2 = deepcopy(var_dict)
             delta = np.zeros(var_dict[var_name].shape)
-            delta.ravel()[i] = eps
+            delta[item] = eps
             var_dict2[var_name].value += delta
 
             # calculate loss with pertubed variables
@@ -259,5 +304,5 @@ class TotalLoss(DifferentiableLossScipy):
             # approximate gradient
             g_approx = (l2 - l1) / eps
 
-            assert (np.isclose(g[i], g_approx, rtol=rtol, atol=atol))
+            assert (np.isclose(g[item], g_approx, rtol=rtol, atol=atol))
 
