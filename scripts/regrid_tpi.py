@@ -256,33 +256,66 @@ def show_tpi_readout(kx,
 
 if __name__ == '__main__':
 
+    # read the k-space trajectories from file
+    # they have physical units 1/cm
     kx, ky, kz, header, n_readouts_per_cone = read_tpi_gradient_files(
         '/data/tpi_gradients/n28p4dt10g16_23Na_v1')
-    #    '/data/tpi_gradients/n28p4dt10g32_23Na_v0')
-
     #show_tpi_readout(kx, ky, kz, header, n_readouts_per_cone)
 
+    # the gradient files only contain a half sphere
+    # we add the 2nd half where all gradients are reversed
+    kx = np.vstack((kx,-kx))
+    ky = np.vstack((ky,-ky))
+    kz = np.vstack((kz,-kz))
+
+    # calculate the max kvalue for a 64x64x64 image with a FOV of 220
+    # the max. k value is equal to 1 / (2*pixelsize) = 1 / (2*FOV/matrix_size)
     matrix_size: int = 64
     field_of_view: float = 22.
+    kmax = 1 / (2*field_of_view/matrix_size)
 
+    #----------------------------------------------------------------------------
+    #-- calculate a NUFFT of a simple test image --------------------------------
+    #----------------------------------------------------------------------------
+
+    import pynufft
+
+    img = np.pad(np.pad(2*np.ones((16,16,16)), 8, constant_values = 1), 16)
+
+    kspace_sample_points = np.zeros((kx.size, 3), dtype = np.float32)
+    kspace_sample_points[:, 0] = kx.ravel()
+    kspace_sample_points[:, 1] = ky.ravel()
+    kspace_sample_points[:, 2] = kz.ravel()
+
+    # for the NUFFT the nominal kmax needs to be scale to pi
+    kspace_sample_points *= (np.pi/kmax)
+
+    print('setting up NUFFT')
+    nufft_device = pynufft.helper.device_list()[0]
+    nufft_3d = pynufft.NUFFT(nufft_device)
+    print('NUFFT setup done')
+    nufft_3d.plan(kspace_sample_points, 3*(matrix_size,),
+                  3*(2*matrix_size,), 3*(6,))
+
+
+    nonuniform_data = nufft_3d.forward(img)
+
+
+    #---------------------------------------------------------------
+    # the k-value in 1/cm at which the trajectories start twisting
+    # we need that for the smapling density correction in the regridding later 
     kp: float = 0.4 * 18 / field_of_view
-    kmax: float = 1.8 * 18 / field_of_view
 
     cutoff: float = 1.
     window: npt.NDArray = np.ones(100)
 
-    #---------------------------------------------------------------
     # allocated memory for output arrays
-
-    data = np.random.rand(kx.shape[0]) + 1j * np.random.rand(kx.shape[0])
-
-    output: npt.NDArray = np.zeros((matrix_size, matrix_size, matrix_size),
+    regridded_data: npt.NDArray = np.zeros((matrix_size, matrix_size, matrix_size),
                                    dtype=complex)
-    #---------------------------------------------------------------
-
+    
     regrid_tpi_data(matrix_size,
                     1 / field_of_view,
-                    data,
+                    nonuniform_data,
                     kx.size,
                     kx.ravel(),
                     ky.ravel(),
@@ -291,22 +324,26 @@ if __name__ == '__main__':
                     kp,
                     window,
                     cutoff,
-                    output,
-                    output_weights=True)
+                    regridded_data,
+                    output_weights=False)
 
-    regrid_tpi_data(matrix_size,
-                    1 / field_of_view,
-                    data,
-                    kx.size,
-                    -kx.ravel(),
-                    -ky.ravel(),
-                    -kz.ravel(),
-                    0.95 * kmax,
-                    kp,
-                    window,
-                    cutoff,
-                    output,
-                    output_weights=True)
+    # don't forget to fft shift the data since the regridding function puts the kspace 
+    # origin in the center of the array
+    regridded_data = np.fft.fftshift(regridded_data)
+
+    # IFFT of the regridded data
+    ifft_recon = np.fft.fftshift(np.fft.ifftn(regridded_data))
+
+    # the regridding in kspace uses trilinear interpolation (convolution with a triangle)
+    # we the have to devide by the FT of a triangle (sinc^2)
+
+    tmp_x = np.linspace(-0.5,0.5,matrix_size)
+    TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
+    
+    # corretion field is sinc(R)**2
+    corr_field =  np.sinc(np.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2))**2
+
+    ifft_recon /= corr_field
 
     import pymirc.viewer as pv
-    vi = pv.ThreeAxisViewer(output.real)
+    vi = pv.ThreeAxisViewer([img,np.abs(ifft_recon)])
