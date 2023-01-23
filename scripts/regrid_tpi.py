@@ -20,6 +20,7 @@ def regrid_tpi_data(matrix_size: int,
                     window: npt.NDArray,
                     cutoff: float,
                     output: npt.NDArray,
+                    correct_tpi_sampling_density = True,
                     output_weights=False) -> None:
     """ function to regrid 3D TPI (twisted projection) k-space data on regular k-space grid
         using tri-linear interpolation, correction for sampling density and windowing
@@ -58,6 +59,8 @@ def regrid_tpi_data(matrix_size: int,
     output : npt.NDArray
         3D complex numpy array for the output
         if output_weights is True, it can be real
+    correct_tpi_sampling_density: bool
+        correct for the TPI sampling density (~k^2 if k <= kp)
     output_weights: bool
         output the regridding weights instead of the regridded data
     """
@@ -71,10 +74,15 @@ def regrid_tpi_data(matrix_size: int,
             # in the inner part where sampling is radial
             # and constant in the outer part where the trajectories start
             # twisting
-            if abs_k < kp:
-                sampling_density = abs_k**2
+
+            if correct_tpi_sampling_density:
+                if abs_k < kp:
+                    sampling_density = abs_k**2
+                else:
+                    sampling_density = kp**2
             else:
-                sampling_density = kp**2
+                sampling_density = 1.
+
 
             # calculate the window index and value
             i_window = int((abs_k / kmax) * cutoff)
@@ -256,23 +264,42 @@ def show_tpi_readout(kx,
 
 if __name__ == '__main__':
 
-    # read the k-space trajectories from file
-    # they have physical units 1/cm
-    kx, ky, kz, header, n_readouts_per_cone = read_tpi_gradient_files(
-        '/data/tpi_gradients/n28p4dt10g16_23Na_v1')
-    #show_tpi_readout(kx, ky, kz, header, n_readouts_per_cone)
-
-    # the gradient files only contain a half sphere
-    # we add the 2nd half where all gradients are reversed
-    kx = np.vstack((kx,-kx))
-    ky = np.vstack((ky,-ky))
-    kz = np.vstack((kz,-kz))
+    matrix_size: int = 64
+    field_of_view: float = 22.
+    trajectory:str = 'tpi'
 
     # calculate the max kvalue for a 64x64x64 image with a FOV of 220
     # the max. k value is equal to 1 / (2*pixelsize) = 1 / (2*FOV/matrix_size)
-    matrix_size: int = 64
-    field_of_view: float = 22.
     kmax = 1 / (2*field_of_view/matrix_size)
+
+    if trajectory == 'tpi':
+        # read the k-space trajectories from file
+        # they have physical units 1/cm
+        kx, ky, kz, header, n_readouts_per_cone = read_tpi_gradient_files(
+            '/data/tpi_gradients/n28p4dt10g16_23Na_v1')
+        #show_tpi_readout(kx, ky, kz, header, n_readouts_per_cone)
+
+        # the gradient files only contain a half sphere
+        # we add the 2nd half where all gradients are reversed
+        kx = np.vstack((kx,-kx))
+        ky = np.vstack((ky,-ky))
+        kz = np.vstack((kz,-kz))
+        correct_tpi_sampling_density = True
+    elif trajectory == 'cartesian':
+        num_samples = int((3192*3633)**(1/3))
+        tmp = np.linspace(-kmax, kmax, num_samples)
+        kx, ky, kz = np.meshgrid(tmp, tmp, tmp)
+        correct_tpi_sampling_density = False
+
+    elif trajectory == 'random':
+        num_samples = int(3192*3633)
+        kx = kmax * (2*np.random.rand(num_samples) - 1)
+        ky = kmax * (2*np.random.rand(num_samples) - 1)
+        kz = kmax * (2*np.random.rand(num_samples) - 1)
+        correct_tpi_sampling_density = False
+    else:
+        raise ValueError
+
 
     #----------------------------------------------------------------------------
     #-- calculate a NUFFT of a simple test image --------------------------------
@@ -280,7 +307,8 @@ if __name__ == '__main__':
 
     import pynufft
 
-    img = np.pad(np.pad(2*np.ones((16,16,16)), 8, constant_values = 1), 16)
+    #img = np.pad(np.pad(2*np.ones((16,16,16)), 8, constant_values = 1), 16)
+    img = np.pad(np.ones((32,32,32)), 16)
 
     kspace_sample_points = np.zeros((kx.size, 3), dtype = np.float32)
     kspace_sample_points[:, 0] = kx.ravel()
@@ -293,9 +321,9 @@ if __name__ == '__main__':
     print('setting up NUFFT')
     nufft_device = pynufft.helper.device_list()[0]
     nufft_3d = pynufft.NUFFT(nufft_device)
-    print('NUFFT setup done')
     nufft_3d.plan(kspace_sample_points, 3*(matrix_size,),
                   3*(2*matrix_size,), 3*(6,))
+    print('NUFFT setup done')
 
 
     nonuniform_data = nufft_3d.forward(img)
@@ -310,9 +338,27 @@ if __name__ == '__main__':
     window: npt.NDArray = np.ones(100)
 
     # allocated memory for output arrays
+    sampling_weights: npt.NDArray = np.zeros((matrix_size, matrix_size, matrix_size),
+                                   dtype=complex)
     regridded_data: npt.NDArray = np.zeros((matrix_size, matrix_size, matrix_size),
                                    dtype=complex)
-    
+
+    regrid_tpi_data(matrix_size,
+                    1 / field_of_view,
+                    nonuniform_data,
+                    kx.size,
+                    kx.ravel(),
+                    ky.ravel(),
+                    kz.ravel(),
+                    0.95 * kmax,
+                    kp,
+                    window,
+                    cutoff,
+                    sampling_weights,
+                    correct_tpi_sampling_density = correct_tpi_sampling_density,
+                    output_weights=True)
+
+   
     regrid_tpi_data(matrix_size,
                     1 / field_of_view,
                     nonuniform_data,
@@ -325,10 +371,12 @@ if __name__ == '__main__':
                     window,
                     cutoff,
                     regridded_data,
+                    correct_tpi_sampling_density = correct_tpi_sampling_density,
                     output_weights=False)
 
     # don't forget to fft shift the data since the regridding function puts the kspace 
     # origin in the center of the array
+    sampling_weights = np.fft.fftshift(sampling_weights.real)
     regridded_data = np.fft.fftshift(regridded_data)
 
     # IFFT of the regridded data
@@ -336,14 +384,13 @@ if __name__ == '__main__':
 
     # the regridding in kspace uses trilinear interpolation (convolution with a triangle)
     # we the have to devide by the FT of a triangle (sinc^2)
-
     tmp_x = np.linspace(-0.5,0.5,matrix_size)
     TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
     
     # corretion field is sinc(R)**2
     corr_field =  np.sinc(np.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2))**2
-
-    ifft_recon /= corr_field
-
+    
+    ifft_recon_corr = ifft_recon / corr_field
+    
     import pymirc.viewer as pv
-    vi = pv.ThreeAxisViewer([img,np.abs(ifft_recon)])
+    vi = pv.ThreeAxisViewer([img,np.abs(ifft_recon),np.abs(ifft_recon_corr)])
