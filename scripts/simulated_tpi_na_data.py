@@ -263,7 +263,7 @@ def show_tpi_readout(kx,
 
 if __name__ == '__main__':
 
-    matrix_size: int = 128
+    matrix_size: int = 256
     field_of_view: float = 22.
     # calculate the max kvalue for a 64x64x64 image with a FOV of 220
     # the max. k value is equal to 1 / (2*pixelsize) = 1 / (2*FOV/matrix_size)
@@ -295,7 +295,7 @@ if __name__ == '__main__':
     img[R <= 0.25] = 2.
 
     # split the array of all times points into a number of subsets
-    num_time_bins = 50
+    num_time_bins = 200
     time_bins_inds = np.array_split(np.arange(kx.shape[1]), num_time_bins)
 
     nuffts = []
@@ -399,7 +399,7 @@ if __name__ == '__main__':
     ifft_recon = np.fft.fftshift(np.fft.ifftn(regridded_data))
 
     # the regridding in kspace uses trilinear interpolation (convolution with a triangle)
-    # we the have to devide by the FT of a triangle (sinc^2)
+    # we the have to divide by the FT of a triangle (sinc^2)
     tmp_x = np.linspace(-0.5, 0.5, matrix_size)
     TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
 
