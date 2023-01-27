@@ -378,8 +378,19 @@ if __name__ == '__main__':
     # origin in the center of the array
     regridded_data = np.fft.fftshift(regridded_data)
 
-    # IFFT of the regridded data
-    ifft_recon = np.fft.fftshift(np.fft.ifftn(regridded_data))
+    # numpy's fft handles the phase factor of the DFT diffrently compared to pynufft
+    # so we have to apply a phase factor to the regridded data
+    # in 1D this phase factor is [1,-1,1,-1, ...]
+    # in 3D it is the 3D checkerboard version of this
+    # see here for details https://stackoverflow.com/questions/24077913/discretized-continuous-fourier-transform-with-numpy
+    tmp_x = np.arange(matrix_size)
+    TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
+
+    phase_correction = ((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z)
+    regridded_data_phase_corrected = phase_correction * regridded_data
+
+    # IFFT of the phase corrected regridded data
+    ifft_recon = np.fft.ifftn(regridded_data_phase_corrected)
 
     # the regridding in kspace uses trilinear interpolation (convolution with a triangle)
     # we the have to devide by the FT of a triangle (sinc^2)
