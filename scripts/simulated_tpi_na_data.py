@@ -3,8 +3,15 @@
 import numpy as np
 import math
 import numpy.typing as npt
+import nibabel as nib
 from numba import jit
+from pathlib import Path
 import matplotlib.pyplot as plt
+
+import pynufft
+
+import pymirc.viewer as pv
+from pymirc.image_operations import aff_transform, zoom3d
 
 
 @jit(nopython=True)
@@ -261,18 +268,147 @@ def show_tpi_readout(kx,
 #---------------------------------------------------------------------------------
 #---------------------------------------------------------------------------------
 
+
+def setup_brainweb_phantom(simulation_matrix_size: int,
+                           phantom_data_path: Path,
+                           field_of_view_cm: float = 22.,
+                           csf_na_concentration: float = 3.5,
+                           gm_na_concentration: float = 1.4,
+                           wm_na_concentration: float = 1.0,
+                           T2long_ms_csf: float = 50.,
+                           T2long_ms_gm: float = 15.,
+                           T2long_ms_wm: float = 18.,
+                           T2short_ms_csf: float = 50.,
+                           T2short_ms_gm: float = 8.,
+                           T2short_ms_wm: float = 9.):
+
+    simulation_voxel_size_mm: float = 10 * field_of_view_cm / simulation_matrix_size
+
+    # setup the phantom on a high resolution grid (0.5^3mm) first
+    label_nii = nib.load(phantom_data_path / 'subject54_crisp_v.mnc.gz')
+    label_nii = nib.as_closest_canonical(label_nii)
+
+    # pad o 434x434x434 voxels
+    lab = np.pad(label_nii.get_fdata(), ((36, 36), (0, 0), (36, 36)),
+                 'constant')
+
+    lab_affine = label_nii.affine.copy()
+    lab_affine[0, -1] -= 36 * lab_affine[0, 0]
+    lab_affine[2, -1] -= 36 * lab_affine[2, 2]
+
+    # CSF = 1, GM = 2, WM = 3
+    csf_inds = np.where(lab == 1)
+    gm_inds = np.where(lab == 2)
+    wm_inds = np.where(lab == 3)
+
+    # set up array for trans. magnetization
+    img = np.zeros(lab.shape, dtype=np.float32)
+    img[csf_inds] = csf_na_concentration
+    img[gm_inds] = gm_na_concentration
+    img[wm_inds] = wm_na_concentration
+
+    # set up array for Gamma (ratio between 2nd and 1st echo)
+    T2short_ms = np.full(lab.shape,
+                         0.5 * np.finfo(np.float32).max,
+                         dtype=np.float32)
+    T2short_ms[csf_inds] = T2short_ms_csf
+    T2short_ms[gm_inds] = T2short_ms_gm
+    T2short_ms[wm_inds] = T2short_ms_wm
+
+    T2long_ms = np.full(lab.shape,
+                        0.5 * np.finfo(np.float32).max,
+                        dtype=np.float32)
+    T2long_ms[csf_inds] = T2long_ms_csf
+    T2long_ms[gm_inds] = T2long_ms_gm
+    T2long_ms[wm_inds] = T2long_ms_wm
+
+    # read the T1 and interpolate to the grid of the high-res image
+    t1_nii = nib.load(phantom_data_path / 'subject54_t1w_p4.mnc.gz')
+    t1_nii = nib.as_closest_canonical(t1_nii)
+    t1 = t1_nii.get_fdata()
+    t1 = aff_transform(t1,
+                       np.linalg.inv(t1_nii.affine) @ lab_affine,
+                       lab.shape,
+                       cval=t1.min())
+
+    # extrapolate the all images to the voxel size we need for the data simulation
+    img_extrapolated = zoom3d(img, lab_affine[0, 0] / simulation_voxel_size_mm)
+    T2short_ms_extrapolated = zoom3d(
+        T2short_ms, lab_affine[0, 0] / simulation_voxel_size_mm)
+    T2long_ms_extrapolated = zoom3d(
+        T2long_ms, lab_affine[0, 0] / simulation_voxel_size_mm)
+    t1_extrapolated = zoom3d(t1, lab_affine[0, 0] / simulation_voxel_size_mm)
+
+    # since the FOV of the brainweb label image is slightly smaller than 220mm, we
+    # have to pad the image
+
+    pad_width = simulation_matrix_size - img_extrapolated.shape[0]
+    p0 = pad_width // 2
+    p1 = pad_width - p0
+
+    img_extrapolated = np.pad(img_extrapolated, (p0, p1))
+    T2short_ms_extrapolated = np.pad(
+        T2short_ms_extrapolated, (p0, p1),
+        constant_values=T2short_ms_extrapolated.max())
+    T2long_ms_extrapolated = np.pad(
+        T2long_ms_extrapolated, (p0, p1),
+        constant_values=T2long_ms_extrapolated.max())
+    t1_extrapolated = np.pad(t1_extrapolated, (p0, p1))
+
+    return img_extrapolated, t1_extrapolated, T2short_ms_extrapolated, T2long_ms_extrapolated
+
+
+#-----------------------------------------------------------------------
+#-----------------------------------------------------------------------
+#-----------------------------------------------------------------------
+#-----------------------------------------------------------------------
+
 if __name__ == '__main__':
 
-    matrix_size: int = 256
-    field_of_view: float = 22.
+    #---------------------------------------------------------------------
+    # input parameters
+
+    simulation_matrix_size: int = 256
+    field_of_view_cm: float = 22.
+    phantom_data_path: Path = Path('/data/sodium_mr/brainweb54')
+    #gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g16_23Na_v1'
+    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g32_23Na_v0'
+
+    # the number of time steps for the data simulation
+    num_time_bins: int = 200
+
+    # the two echo times in ms
+    t_echo_1_ms: float = 0.5
+    t_echo_2_ms: float = 5.
+
+    gridded_data_matrix_size: int = 128
+
+    output_path = Path(
+        '/data') / 'sodium_mr' / f'brainweb_{Path(gradient_file).name}'
+    output_path.mkdir(exist_ok=True)
+
+    #---------------------------------------------------------------------
+    #---------------------------------------------------------------------
+    #---------------------------------------------------------------------
+
+    # (1) setup the brainweb phantom with the given simulation matrix size
+    na_image, t1_image, T2short_ms, T2long_ms = setup_brainweb_phantom(
+        simulation_matrix_size,
+        phantom_data_path,
+        field_of_view_cm=field_of_view_cm)
+
+    #---------------------------------------------------------------------
+    #---------------------------------------------------------------------
+    # (2) read the TPI kspace trajectory from a gradient file
+
     # calculate the max kvalue for a 64x64x64 image with a FOV of 220
     # the max. k value is equal to 1 / (2*pixelsize) = 1 / (2*FOV/matrix_size)
-    kmax = 1 / (2 * field_of_view / 64)
+    kmax = 1 / (2 * field_of_view_cm / 64)
 
     # read the k-space trajectories from file
     # they have physical units 1/cm
     kx, ky, kz, header, n_readouts_per_cone = read_tpi_gradient_files(
-        '/data/tpi_gradients/n28p4dt10g16_23Na_v1')
+        gradient_file)
     #show_tpi_readout(kx, ky, kz, header, n_readouts_per_cone)
 
     # the gradient files only contain a half sphere
@@ -286,16 +422,7 @@ if __name__ == '__main__':
     #-- calculate a NUFFT of a simple test image --------------------------------
     #----------------------------------------------------------------------------
 
-    import pynufft
-
-    tmp = np.linspace(-1, 1, matrix_size)
-    TMP0, TMP1, TMP2 = np.meshgrid(tmp, tmp, tmp)
-    R = np.sqrt(TMP0**2 + TMP1**2 + TMP2**2)
-    img = (R <= 0.5).astype(np.float32)
-    img[R <= 0.25] = 2.
-
     # split the array of all times points into a number of subsets
-    num_time_bins = 200
     time_bins_inds = np.array_split(np.arange(kx.shape[1]), num_time_bins)
 
     nuffts = []
@@ -303,9 +430,11 @@ if __name__ == '__main__':
     k1 = []
     k2 = []
 
-    nonuniform_data = []
-    T2star = np.full(img.shape, 40, dtype=np.float32)
-    T2star[img == 2] = 8.
+    nonuniform_data_long_echo_1 = []
+    nonuniform_data_long_echo_2 = []
+
+    nonuniform_data_short_echo_1 = []
+    nonuniform_data_short_echo_2 = []
 
     nufft_device = pynufft.helper.device_list()[0]
     nufft_3d = pynufft.NUFFT(nufft_device)
@@ -328,18 +457,45 @@ if __name__ == '__main__':
         # for the NUFFT the nominal kmax needs to be scale to pi
         # remember that the kmax calculated above is for a 64,64,64 grid
         # if we use a different matrix size, we have to adjust kmax
-        kspace_sample_points *= (np.pi / (kmax * matrix_size / 64))
+        kspace_sample_points *= (np.pi / (kmax * simulation_matrix_size / 64))
 
         print(f'setting up NUFFT {(i+1):03}/{num_time_bins:03}')
-        nufft_3d.plan(kspace_sample_points, 3 * (matrix_size, ),
-                      3 * (2 * matrix_size, ), 3 * (6, ))
+        nufft_3d.plan(kspace_sample_points, 3 * (simulation_matrix_size, ),
+                      3 * (2 * simulation_matrix_size, ), 3 * (6, ))
 
-        t_readout = 0.5 + (time_bins_inds[i][0] / 100)
+        # setup the readout times in ms of the first and second echo
+        # the gradient data is sampled in 10 micro second steps, so we have to
+        # divide by 100 to get the time in ms
+        t_readout_echo_1_ms = t_echo_1_ms + (time_bins_inds[i][0] / 100)
+        t_readout_echo_2_ms = t_echo_2_ms + (time_bins_inds[i][0] / 100)
 
-        decayed_image = img * np.exp(-t_readout / T2star)
-        nonuniform_data.append(nufft_3d.forward(decayed_image))
+        # calculate the decayed images at the two echo times for the fast and slow decay
+        decayed_image_long_echo_1 = na_image * np.exp(
+            -t_readout_echo_1_ms / T2long_ms)
+        decayed_image_long_echo_2 = na_image * np.exp(
+            -t_readout_echo_2_ms / T2long_ms)
 
-    nonuniform_data = np.concatenate(nonuniform_data)
+        decayed_image_short_echo_1 = na_image * np.exp(
+            -t_readout_echo_1_ms / T2short_ms)
+        decayed_image_short_echo_2 = na_image * np.exp(
+            -t_readout_echo_2_ms / T2short_ms)
+
+        # calculate the nuffts of the decayed images
+        nonuniform_data_long_echo_1.append(
+            nufft_3d.forward(decayed_image_long_echo_1))
+        nonuniform_data_long_echo_2.append(
+            nufft_3d.forward(decayed_image_long_echo_2))
+        nonuniform_data_short_echo_1.append(
+            nufft_3d.forward(decayed_image_short_echo_1))
+        nonuniform_data_short_echo_2.append(
+            nufft_3d.forward(decayed_image_short_echo_2))
+
+    # convert the nufft data from list into 1D array
+    nonuniform_data_long_echo_1 = np.concatenate(nonuniform_data_long_echo_1)
+    nonuniform_data_long_echo_2 = np.concatenate(nonuniform_data_long_echo_2)
+    nonuniform_data_short_echo_1 = np.concatenate(nonuniform_data_short_echo_1)
+    nonuniform_data_short_echo_2 = np.concatenate(nonuniform_data_short_echo_2)
+
     k0 = np.concatenate(k0)
     k1 = np.concatenate(k1)
     k2 = np.concatenate(k2)
@@ -347,21 +503,56 @@ if __name__ == '__main__':
     #---------------------------------------------------------------
     # the k-value in 1/cm at which the trajectories start twisting
     # we need that for the smapling density correction in the regridding later
-    kp: float = 0.4 * 18 / field_of_view
+    kp: float = 0.4 * 18 / field_of_view_cm
+
+    # save the images and the nufft data to a file since the generation takes time
+    np.savez(output_path / 'simulated_nufft_data.npz',
+             nonuniform_data_long_echo_1=nonuniform_data_long_echo_1,
+             nonuniform_data_long_echo_2=nonuniform_data_long_echo_2,
+             nonuniform_data_short_echo_1=nonuniform_data_short_echo_1,
+             nonuniform_data_short_echo_2=nonuniform_data_short_echo_2,
+             k0=k0,
+             k1=k1,
+             k2=k2,
+             kp=kp,
+             kmax=kmax,
+             kx=kx,
+             ky=ky,
+             kz=kz,
+             t_echo_1_ms=t_echo_1_ms,
+             t_echo_2_ms=t_echo_2_ms,
+             field_of_view_cm=field_of_view_cm,
+             na_image=na_image,
+             t1_image=t1_image,
+             T2short_ms=T2short_ms,
+             T2long_ms=T2long_ms)
+
+    #-----------------------------------------------------------------------------
+    #-----------------------------------------------------------------------------
+    #-----------------------------------------------------------------------------
+    # regrid and IFFT echo 1 data as check
 
     cutoff: float = 1.
     window: npt.NDArray = np.ones(100)
 
     # allocated memory for output arrays
     sampling_weights: npt.NDArray = np.zeros(
-        (matrix_size, matrix_size, matrix_size), dtype=complex)
-    regridded_data: npt.NDArray = np.zeros(
-        (matrix_size, matrix_size, matrix_size), dtype=complex)
+        (gridded_data_matrix_size, gridded_data_matrix_size,
+         gridded_data_matrix_size),
+        dtype=complex)
+    regridded_data_echo_1: npt.NDArray = np.zeros(
+        (gridded_data_matrix_size, gridded_data_matrix_size,
+         gridded_data_matrix_size),
+        dtype=complex)
+    regridded_data_echo_2: npt.NDArray = np.zeros(
+        (gridded_data_matrix_size, gridded_data_matrix_size,
+         gridded_data_matrix_size),
+        dtype=complex)
 
     print('calculating weights')
-    regrid_tpi_data(matrix_size,
-                    1 / field_of_view,
-                    nonuniform_data,
+    regrid_tpi_data(gridded_data_matrix_size,
+                    1 / field_of_view_cm,
+                    nonuniform_data_long_echo_1,
                     k0.size,
                     k0.ravel(),
                     k1.ravel(),
@@ -375,9 +566,10 @@ if __name__ == '__main__':
                     output_weights=True)
 
     print('regridding data')
-    regrid_tpi_data(matrix_size,
-                    1 / field_of_view,
-                    nonuniform_data,
+    regrid_tpi_data(gridded_data_matrix_size,
+                    1 / field_of_view_cm,
+                    0.6 * nonuniform_data_short_echo_1 +
+                    0.4 * nonuniform_data_long_echo_1,
                     k0.size,
                     k0.ravel(),
                     k1.ravel(),
@@ -386,38 +578,43 @@ if __name__ == '__main__':
                     kp,
                     window,
                     cutoff,
-                    regridded_data,
+                    regridded_data_echo_1,
                     correct_tpi_sampling_density=correct_tpi_sampling_density,
                     output_weights=False)
 
     print('IFFT recon')
     # don't forget to fft shift the data since the regridding function puts the kspace
     # origin in the center of the array
-    regridded_data = np.fft.fftshift(regridded_data)
+    regridded_data_echo_1 = np.fft.fftshift(regridded_data_echo_1)
 
     # numpy's fft handles the phase factor of the DFT diffrently compared to pynufft
     # so we have to apply a phase factor to the regridded data
     # in 1D this phase factor is [1,-1,1,-1, ...]
     # in 3D it is the 3D checkerboard version of this
     # see here for details https://stackoverflow.com/questions/24077913/discretized-continuous-fourier-transform-with-numpy
-    tmp_x = np.arange(matrix_size)
+    tmp_x = np.arange(gridded_data_matrix_size)
     TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
 
     phase_correction = ((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z)
-    regridded_data_phase_corrected = phase_correction * regridded_data
+    regridded_data_echo_1_phase_corrected = phase_correction * regridded_data_echo_1
 
     # IFFT of the regridded data
-    ifft_recon = np.fft.ifftn(regridded_data_phase_corrected)
+    ifft_echo_1 = np.fft.ifftn(regridded_data_echo_1_phase_corrected)
 
     # the regridding in kspace uses trilinear interpolation (convolution with a triangle)
     # we the have to divide by the FT of a triangle (sinc^2)
-    tmp_x = np.linspace(-0.5, 0.5, matrix_size)
+    tmp_x = np.linspace(-0.5, 0.5, gridded_data_matrix_size)
     TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
 
     # corretion field is sinc(R)**2
     corr_field = np.sinc(np.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2))**2
 
-    ifft_recon_corr = ifft_recon / corr_field
+    ifft_echo_1_corr = ifft_echo_1 / corr_field
 
-    import pymirc.viewer as pv
-    vi = pv.ThreeAxisViewer([img, np.abs(ifft_recon), np.abs(ifft_recon_corr)])
+    # interpolate magnitude images to simulation grid size (which can be different from gridded data size)
+    a = zoom3d(np.abs(ifft_echo_1),
+               simulation_matrix_size / gridded_data_matrix_size)
+    b = zoom3d(np.abs(ifft_echo_1_corr),
+               simulation_matrix_size / gridded_data_matrix_size)
+
+    vi = pv.ThreeAxisViewer([na_image, a, b])
