@@ -1,27 +1,77 @@
-# TODO: - understand sampling density difference in the center (factor of 2)
-
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+from scipy.interpolate import interp1d
+from scipy.ndimage import gaussian_filter
+from scipy.optimize import fmin_l_bfgs_b
 
 from simulate_dual_echo_tpi_na_data import regrid_tpi_data
 from pymirc.image_operations import zoom3d
 
 import pymirc.viewer as pv
 
-#-------------------------------------------------------------------------
-# input parameters
-gridded_data_matrix_size: int = 128
-noise_level: float = 0  #4e5
-gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g16_23Na_v1'
-#gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g32_23Na_v0'
+# hacks to include old cost functions
+import sys
+if '..' not in sys.path:
+    sys.path.append('..')
 
+from cost_functions import multi_echo_bowsher_cost, multi_echo_bowsher_grad, multi_echo_bowsher_cost_gamma
+from cost_functions import multi_echo_bowsher_grad_gamma, multi_echo_bowsher_cost_total
+from nearest_neighbors import nearest_neighbors, is_nearest_neighbor_of
+
+#-------------------------------------------------------------------------
+parser = argparse.ArgumentParser()
+parser.add_argument('--gradient_strength',
+                    type=int,
+                    default=16,
+                    choices=[16, 24, 32, 48])
+parser.add_argument('--noise_level', type=float, default=0)
+parser.add_argument('--gridded_data_matrix_size',
+                    type=int,
+                    default=128,
+                    choices=[64, 128, 256])
+parser.add_argument('--show_trajectory', action='store_true')
+args = parser.parse_args()
+
+# input parameters
+gridded_data_matrix_size: int = args.gridded_data_matrix_size
+noise_level: float = args.noise_level
+gradient_strength: int = args.gradient_strength
+show_trajectory: bool = args.show_trajectory
+
+num_outer: int = 3
+num_inner: int = 10
+beta_recon: float = 0.1
+beta_gamma: float = 10.
+
+#-------------------------------------------------------------------------
+# fixed parameters
+num_echos: int = 2
+delta_t: float = 5.
+num_nearest: int = 4
+method: int = 0
+asym: int = 0
+readout_bin_width_ms: float = 0.5
 #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
 # restore the saved noise-free nufft data from file
 
+if gradient_strength == 16:
+    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g16_23Na_v1'
+elif gradient_strength == 24:
+    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g24f23'
+elif gradient_strength == 32:
+    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g32f23'
+elif gradient_strength == 48:
+    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g48f23'
+else:
+    raise ValueError
+
 simulated_data_path = Path(
     '/data') / 'sodium_mr' / f'brainweb_{Path(gradient_file).name}'
+
+print(simulated_data_path.name)
 
 data = np.load(simulated_data_path / 'simulated_nufft_data.npz')
 
@@ -48,25 +98,31 @@ T2long_ms = data['T2long_ms']
 simulation_matrix_size = na_image.shape[0]
 
 abs_k = np.sqrt(kx**2 + ky**2 + kz**2)
-print(kx[abs_k <= kmax].size)
+abs_k_spoke = abs_k[-1, :]
+t_spoke_ms = np.arange(abs_k.shape[1]) / 100
 
-#fig = plt.figure(figsize=(8, 8))
-#i = 1500
-#jmax = np.where(abs_k[i, :] <= kp)[0].max()
-#ax = fig.add_subplot(1, 1, 1, projection='3d')
-#ax.scatter3D(kx[i, :jmax], ky[i, :jmax], kz[i, :jmax], s=0.5)
-#ax.scatter3D(kx[i, jmax:], ky[i, jmax:], kz[i, jmax:], s=0.5)
-#ax.set_xlim(kx.min(), kx.max())
-#ax.set_ylim(ky.min(), ky.max())
-#ax.set_zlim(kz.min(), kz.max())
-#fig.tight_layout()
-#fig.show()
+# setup interpolation functions for abs_k(t) and t(abs_k)
+k_of_t = interp1d(t_spoke_ms, abs_k_spoke)
+t_of_k = interp1d(abs_k_spoke, t_spoke_ms)
 
-#fig, ax = plt.subplots()
-#ax.plot(abs_k[-1, :])
-#ax.axhline(kmax)
-#ax.axhline(kp)
-#fig.show()
+if show_trajectory:
+    fig = plt.figure(figsize=(8, 8))
+    i = 1500
+    jmax = np.where(abs_k[i, :] <= kp)[0].max()
+    ax = fig.add_subplot(1, 1, 1, projection='3d')
+    ax.scatter3D(kx[i, :jmax], ky[i, :jmax], kz[i, :jmax], s=0.5)
+    ax.scatter3D(kx[i, jmax:], ky[i, jmax:], kz[i, jmax:], s=0.5)
+    ax.set_xlim(-1.5, 1.5)
+    ax.set_ylim(-1.5, 1.5)
+    ax.set_zlim(-1.5, 1.5)
+    fig.tight_layout()
+    fig.show()
+
+    fig2, ax2 = plt.subplots()
+    ax2.plot(abs_k[-1, :])
+    ax2.axhline(kmax)
+    ax2.axhline(kp)
+    fig2.show()
 
 #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
@@ -151,11 +207,25 @@ regrid_tpi_data(gridded_data_matrix_size,
                 correct_tpi_sampling_density=True,
                 output_weights=False)
 
+# the sampling density in the center is is proportional to 1/gradient strength
+# (we go out we a speed ~ gradient strength)
+# in the next strep we correct for this difference in the sampling density
+regridded_data_echo_1 *= gradient_strength / 16.
+regridded_data_echo_2 *= gradient_strength / 16.
+
+# the norm of nufft + regridding is not 1
+# here we just divide the regridded data by a scaling factor such that
+# the IFFT image (with ortho norm) has approx. norm 1
+global_scale = 1.5e5
+regridded_data_echo_1 /= global_scale
+regridded_data_echo_2 /= global_scale
+
 print('IFFT recon')
 # don't forget to fft shift the data since the regridding function puts the kspace
 # origin in the center of the array
 regridded_data_echo_1 = np.fft.fftshift(regridded_data_echo_1)
 regridded_data_echo_2 = np.fft.fftshift(regridded_data_echo_2)
+sampling_weights = np.fft.fftshift(sampling_weights)
 
 # numpy's fft handles the phase factor of the DFT diffrently compared to pynufft
 # so we have to apply a phase factor to the regridded data
@@ -170,8 +240,8 @@ regridded_data_echo_1_phase_corrected = phase_correction * regridded_data_echo_1
 regridded_data_echo_2_phase_corrected = phase_correction * regridded_data_echo_2
 
 # IFFT of the regridded data
-ifft_echo_1 = np.fft.ifftn(regridded_data_echo_1_phase_corrected)
-ifft_echo_2 = np.fft.ifftn(regridded_data_echo_2_phase_corrected)
+ifft_echo_1 = np.fft.ifftn(regridded_data_echo_1_phase_corrected, norm='ortho')
+ifft_echo_2 = np.fft.ifftn(regridded_data_echo_2_phase_corrected, norm='ortho')
 
 # the regridding in kspace uses trilinear interpolation (convolution with a triangle)
 # we the have to divide by the FT of a triangle (sinc^2)
@@ -190,7 +260,136 @@ a = zoom3d(np.abs(ifft_echo_1_corr),
 b = zoom3d(np.abs(ifft_echo_2_corr),
            simulation_matrix_size / gridded_data_matrix_size)
 
-ims = [{}] + 2 * [{'vmin': 0, 'vmax': 400}]
-vi = pv.ThreeAxisViewer([na_image, a, b], imshow_kwargs=ims)
+ims = 3 * [{'vmin': 0, 'vmax': 1.2 * na_image.max()}]
+#vi = pv.ThreeAxisViewer([na_image, a, b], imshow_kwargs=ims)
 
-vi2 = pv.ThreeAxisViewer(sampling_weights.real)
+#----------------------------------------------------------------------------------------
+#--- AGR recon --------------------------------------------------------------------------
+#----------------------------------------------------------------------------------------
+
+# create an array for the dual echo (multi_channel data)
+
+signal = np.array([
+    regridded_data_echo_1_phase_corrected,
+    regridded_data_echo_2_phase_corrected
+])
+# we have to create the "coil" axis for the single coil
+signal = np.expand_dims(signal, 0)
+# convert the complex signal into a real pseudo complex array
+signal = np.ascontiguousarray(signal.view('(2,)float'))
+
+# setup the readout inds for the apodized fft
+k_fft = np.fft.fftfreq(gridded_data_matrix_size,
+                       d=field_of_view_cm / gridded_data_matrix_size)
+K0_fft, K1_fft, K2_fft = np.meshgrid(k_fft, k_fft, k_fft, indexing='ij')
+K_abs_fft = np.sqrt(K0_fft**2 + K1_fft**2 + K2_fft**2)
+
+readout_time_image_ms = np.full(K_abs_fft.shape, -1)
+
+# setup a pseudo-complex kspace mask that indicates which elements of kspace where sampled
+kmask = np.zeros(signal.shape)
+for j in range(1):
+    for i in range(2):
+        kmask[j, i, ..., 0] = (K_abs_fft < abs_k_spoke.max()).astype(float)
+        kmask[j, i, ..., 1] = (K_abs_fft < abs_k_spoke.max()).astype(float)
+
+inds = np.where(kmask[0, 0, ..., 0])
+readout_time_image_ms[inds] = t_of_k(K_abs_fft[inds])
+
+readout_bin_image = np.floor(readout_time_image_ms /
+                             readout_bin_width_ms).astype(int)
+
+tr = (np.arange(readout_bin_image.max() + 1) + 0.5) * readout_bin_width_ms
+readout_inds = []
+for i, _ in enumerate(tr):
+    readout_inds.append(np.where(readout_bin_image == i))
+#vi2 = pv.ThreeAxisViewer(np.fft.fftshift(readout_bin_image))
+
+# setup an initial guess for Gamma (the ratio between the second and first echo)
+
+e1 = gaussian_filter(np.abs(ifft_echo_1_corr), 4.)
+e2 = gaussian_filter(np.abs(ifft_echo_2_corr), 4.)
+Gam_bounds = (gridded_data_matrix_size**3) * [(0.001, 1)]
+Gam_recon = np.clip(e2 / (e1 + 0.001), 0.001, 1)
+#vi3 = pv.ThreeAxisViewer(Gam_recon)
+
+# setup the anatomical prior image and the nearest neighbors arrays for
+# the Bowsher prior
+aimg = zoom3d(t1_image, gridded_data_matrix_size / t1_image.shape[0])
+# structural element for the 80 nearest neighbots
+s = np.array([[[0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0],
+               [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]],
+              [[0, 1, 1, 1, 0], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1],
+               [1, 1, 1, 1, 1], [0, 1, 1, 1, 0]],
+              [[0, 1, 1, 1, 0], [1, 1, 1, 1, 1], [1, 1, 0, 1, 1],
+               [1, 1, 1, 1, 1], [0, 1, 1, 1, 0]],
+              [[0, 1, 1, 1, 0], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1],
+               [1, 1, 1, 1, 1], [0, 1, 1, 1, 0]],
+              [[0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0],
+               [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]]])
+
+ninds = np.zeros((np.prod(aimg.shape), num_nearest), dtype=np.uint32)
+nearest_neighbors(aimg, s, num_nearest, ninds)
+ninds2 = is_nearest_neighbor_of(ninds)
+
+# (2) the actual AGR recon
+cost = []
+# the shape of the pseudo-complex reconstruction
+recon_shape = signal.shape[2:]
+
+# squeeze simulated data into a format that we can digest with the AGR recon
+# setup initial recon as ifft of first echo
+# we need to convert to pseudo-complex array for fmin_l_bfgs
+recon = np.ascontiguousarray(ifft_echo_1_corr.view('(2,)float'))
+
+# create a pseudo complex sensitivity array full of real ones
+sens = np.zeros((1, ) + recon_shape)
+sens[..., 0] = 1
+
+for i in range(num_outer):
+    print('LBFGS to optimize for recon')
+    recon = recon.flatten()
+
+    cb = lambda x: cost.append(
+        multi_echo_bowsher_cost_total(
+            x, recon_shape, signal, readout_inds, Gam_recon, tr, delta_t,
+            num_echos, kmask, beta_recon, beta_gamma, ninds, method, sens, asym
+        ))
+
+    res = fmin_l_bfgs_b(multi_echo_bowsher_cost,
+                        recon,
+                        fprime=multi_echo_bowsher_grad,
+                        args=(recon_shape, signal, readout_inds, Gam_recon, tr,
+                              delta_t, num_echos, kmask, beta_recon, ninds,
+                              ninds2, method, sens, asym),
+                        callback=cb,
+                        maxiter=num_inner,
+                        disp=1)
+
+    recon = res[0].reshape(recon_shape)
+    abs_recon = np.linalg.norm(recon, axis=-1)
+
+    #---------------------------------------
+    print('LBFGS to optimize for gamma')
+    Gam_recon = Gam_recon.flatten()
+
+    cb = lambda x: cost.append(
+        multi_echo_bowsher_cost_total(
+            recon, recon_shape, signal, readout_inds, x, tr, delta_t,
+            num_echos, kmask, beta_recon, beta_gamma, ninds, method, sens, asym
+        ))
+
+    res = fmin_l_bfgs_b(multi_echo_bowsher_cost_gamma,
+                        Gam_recon,
+                        fprime=multi_echo_bowsher_grad_gamma,
+                        args=(recon_shape, signal, readout_inds, recon, tr,
+                              delta_t, num_echos, kmask, beta_gamma, ninds,
+                              ninds2, method, sens, asym),
+                        callback=cb,
+                        maxiter=num_inner,
+                        bounds=Gam_bounds,
+                        disp=1)
+
+    Gam_recon = res[0].reshape(recon_shape[:-1])
+
+vi4 = pv.ThreeAxisViewer([abs_recon, Gam_recon])

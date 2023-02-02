@@ -372,7 +372,7 @@ if __name__ == '__main__':
     field_of_view_cm: float = 22.
     phantom_data_path: Path = Path('/data/sodium_mr/brainweb54')
     #gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g16_23Na_v1'
-    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g32_23Na_v0'
+    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g48f23'
 
     # the number of time steps for the data simulation
     num_time_bins: int = 200
