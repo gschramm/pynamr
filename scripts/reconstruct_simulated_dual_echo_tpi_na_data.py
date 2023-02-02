@@ -1,4 +1,6 @@
 import argparse
+import json
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -32,6 +34,11 @@ parser.add_argument('--gridded_data_matrix_size',
                     default=128,
                     choices=[64, 128, 256])
 parser.add_argument('--show_trajectory', action='store_true')
+parser.add_argument('--beta_recon', type=float, default=1.)
+parser.add_argument('--beta_gamma', type=float, default=10.)
+parser.add_argument('--num_outer', type=int, default=10)
+parser.add_argument('--num_inner', type=int, default=20)
+parser.add_argument('--seed', type=int, default=0)
 args = parser.parse_args()
 
 # input parameters
@@ -39,11 +46,11 @@ gridded_data_matrix_size: int = args.gridded_data_matrix_size
 noise_level: float = args.noise_level
 gradient_strength: int = args.gradient_strength
 show_trajectory: bool = args.show_trajectory
-
-num_outer: int = 3
-num_inner: int = 10
-beta_recon: float = 0.1
-beta_gamma: float = 10.
+beta_recon: float = args.beta_recon
+beta_gamma: float = args.beta_gamma
+num_outer: int = args.num_outer
+num_inner: int = args.num_inner
+seed: int = args.seed
 
 #-------------------------------------------------------------------------
 # fixed parameters
@@ -53,6 +60,25 @@ num_nearest: int = 4
 method: int = 0
 asym: int = 0
 readout_bin_width_ms: float = 0.5
+
+#-------------------------------------------------------------------------
+np.random.seed(seed)
+
+# create the output directory and save the input parameters
+i_out = int(100 * time.time())
+output_dir = Path(f'run/{i_out}')
+
+while output_dir.exists():
+    time.sleep(0.1)
+    i_out = int(100 * time.time())
+    output_dir = Path(f'run/{i_out}')
+
+output_dir.mkdir(exist_ok=True, parents=True)
+
+# save input configuration
+with open(output_dir / 'config.json', 'w') as f:
+    json.dump(vars(args), f)
+
 #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
 # restore the saved noise-free nufft data from file
@@ -305,12 +331,35 @@ for i, _ in enumerate(tr):
     readout_inds.append(np.where(readout_bin_image == i))
 #vi2 = pv.ThreeAxisViewer(np.fft.fftshift(readout_bin_image))
 
+#-------------------------------------------------------------------------------
 # setup an initial guess for Gamma (the ratio between the second and first echo)
 
-e1 = gaussian_filter(np.abs(ifft_echo_1_corr), 4.)
-e2 = gaussian_filter(np.abs(ifft_echo_2_corr), 4.)
+# create the han window that we need to multiply to the mask
+h_win = interp1d(np.arange(32),
+                 np.hanning(64)[32:],
+                 fill_value=0,
+                 bounds_error=False)
+# abs_k was scaled to have the k edge at 32, we have to revert that for the han window
+hmask = h_win(K_abs_fft.ravel() * 32 / kmax).reshape(K_abs_fft.shape)
+
+ifft_echo_1_filtered = np.fft.ifftn(hmask *
+                                    regridded_data_echo_1_phase_corrected,
+                                    norm='ortho')
+ifft_echo_2_filtered = np.fft.ifftn(hmask *
+                                    regridded_data_echo_2_phase_corrected,
+                                    norm='ortho')
+
+ifft_echo_1_filtered_corr = ifft_echo_1_filtered / corr_field
+ifft_echo_2_filtered_corr = ifft_echo_2_filtered / corr_field
+
 Gam_bounds = (gridded_data_matrix_size**3) * [(0.001, 1)]
-Gam_recon = np.clip(e2 / (e1 + 0.001), 0.001, 1)
+Gam_recon = np.clip(
+    np.abs(ifft_echo_2_filtered_corr) /
+    (np.abs(ifft_echo_1_filtered_corr) + 0.001), 0.001, 1)
+Gam_recon[np.abs(ifft_echo_2_filtered_corr) < 0.1 *
+          np.abs(ifft_echo_2_filtered_corr).max()] = 1
+Gam_recon = gaussian_filter(Gam_recon, 1)
+
 #vi3 = pv.ThreeAxisViewer(Gam_recon)
 
 # setup the anatomical prior image and the nearest neighbors arrays for
@@ -346,6 +395,9 @@ recon = np.ascontiguousarray(ifft_echo_1_corr.view('(2,)float'))
 sens = np.zeros((1, ) + recon_shape)
 sens[..., 0] = 1
 
+abs_recons = np.zeros((num_outer, ) + ifft_echo_1_corr.shape)
+Gam_recons = np.zeros((num_outer, ) + ifft_echo_1_corr.shape)
+
 for i in range(num_outer):
     print('LBFGS to optimize for recon')
     recon = recon.flatten()
@@ -367,7 +419,7 @@ for i in range(num_outer):
                         disp=1)
 
     recon = res[0].reshape(recon_shape)
-    abs_recon = np.linalg.norm(recon, axis=-1)
+    abs_recons[i, ...] = np.linalg.norm(recon, axis=-1)
 
     #---------------------------------------
     print('LBFGS to optimize for gamma')
@@ -391,5 +443,38 @@ for i in range(num_outer):
                         disp=1)
 
     Gam_recon = res[0].reshape(recon_shape[:-1])
+    Gam_recons[i, ...] = Gam_recon
 
-vi4 = pv.ThreeAxisViewer([abs_recon, Gam_recon])
+# save the results
+np.save(output_dir / 'ifft_echo_1_corr.npy', ifft_echo_1_corr)
+np.save(output_dir / 'ifft_echo_2_corr.npy', ifft_echo_2_corr)
+np.save(output_dir / 'ifft_echo_1_filtered_corr.npy',
+        ifft_echo_1_filtered_corr)
+np.save(output_dir / 'ifft_echo_2_filtered_corr.npy',
+        ifft_echo_2_filtered_corr)
+np.save(output_dir / 'agr_na.npy',
+        np.squeeze(recon.view(dtype=np.complex128), axis=-1))
+np.save(output_dir / 'gamma.npy', Gam_recon)
+np.save(output_dir / 'anatomical_prior_image.npy', aimg)
+np.save(output_dir / 'true_na_image.npy', na_image)
+np.save(output_dir / 't1_image.npy', t1_image)
+np.save(output_dir / 'corr_field.npy', corr_field)
+
+ims = 3 * [{
+    'cmap': plt.cm.Greys_r,
+    'vmin': 0,
+    'vmax': 2.5
+}] + [{
+    'cmap': plt.cm.Greys_r,
+    'vmin': 0.5,
+    'vmax': 1.
+}]
+
+vi4 = pv.ThreeAxisViewer([
+    np.flip(abs_recons[-1, ...], (0, 1)),
+    np.flip(np.abs(ifft_echo_1_corr), (0, 1)),
+    np.flip(np.abs(ifft_echo_1_filtered_corr), (0, 1)),
+    np.flip(Gam_recons[-1, ...], (0, 1))
+],
+                         imshow_kwargs=ims)
+vi4.fig.savefig(output_dir / '00_screenshot.png')
