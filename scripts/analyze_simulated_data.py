@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import json
 from scipy.ndimage import binary_dilation
 
-import pymirc.viewer as pv
 from pymirc.image_operations import zoom3d
 
 import seaborn as sns
@@ -37,6 +36,7 @@ df = df.loc[df.noise_level == noise_level]
 
 # create an empty column for the GM/WM to
 df['GM/WM ratio'] = 0.
+df['GM/WM ratio conv'] = 0.
 
 # convert colums to categorical
 cats = ['noise_level', 'gradient_strength', 'beta_gamma', 'beta_recon']
@@ -75,6 +75,13 @@ gam_fig3, gam_ax3 = plt.subplots(4, 4, figsize=(9, 9))
 gam_figs = [gam_fig1, gam_fig2, gam_fig3]
 gam_axs = [gam_ax1, gam_ax2, gam_ax3]
 
+conv_fig1, conv_ax1 = plt.subplots(4, 4, figsize=(9, 9))
+conv_fig2, conv_ax2 = plt.subplots(4, 4, figsize=(9, 9))
+conv_fig3, conv_ax3 = plt.subplots(4, 4, figsize=(9, 9))
+
+conv_figs = [conv_fig1, conv_fig2, conv_fig3]
+conv_axs = [conv_ax1, conv_ax2, conv_ax3]
+
 for (gradient_strength,
      beta_gamma), ddf in df.groupby(['gradient_strength', 'beta_gamma']):
     print(gradient_strength, beta_gamma)
@@ -88,18 +95,25 @@ for (gradient_strength,
         run_dir = ddf.iloc[j].run_dir
         agr_na = np.abs(np.load(run_dir / 'agr_na.npy'))
         gam_recon = np.load(run_dir / 'gamma.npy')
+        conv = np.abs(np.load(run_dir / 'ifft_echo_1_filtered_corr.npy'))
 
         # for the quantification we have to interpolate the reconstructed
         # image to the 256 grid
         agr_na_interp = zoom3d(agr_na, 2)
         gm_wm_ratio = agr_na_interp[gm_256].mean(
         ) / agr_na_interp[local_wm_256].mean()
-
         df['GM/WM ratio'][ddf.index[j]] = gm_wm_ratio
+
+        conv_interp = zoom3d(conv, 2)
+
+        gm_wm_ratio_conv = conv_interp[gm_256].mean(
+        ) / conv_interp[local_wm_256].mean()
+        df['GM/WM ratio conv'][ddf.index[j]] = gm_wm_ratio_conv
 
         na_axs[fig_index][row_index, j].imshow(agr_na[..., sl].T, **ims_na)
         gam_axs[fig_index][row_index, j].imshow(gam_recon[..., sl].T,
                                                 **ims_gam)
+        conv_axs[fig_index][row_index, j].imshow(conv[..., sl].T, **ims_na)
 
         if row_index == 0:
             na_axs[fig_index][row_index, j].set_title(
@@ -107,15 +121,23 @@ for (gradient_strength,
                 fontsize='medium')
             gam_axs[fig_index][row_index, j].set_title(
                 f'beta recon {ddf.iloc[j].beta_recon}', fontsize='medium')
+            conv_axs[fig_index][row_index, j].set_title(
+                f'beta recon {ddf.iloc[j].beta_recon}, GM/WM {gm_wm_ratio_conv:.2f}',
+                fontsize='medium')
         else:
             na_axs[fig_index][row_index,
                               j].set_title(f'GM/WM {gm_wm_ratio:.2f}',
                                            fontsize='medium')
+            conv_axs[fig_index][row_index,
+                                j].set_title(f'GM/WM {gm_wm_ratio_conv:.2f}',
+                                             fontsize='medium')
 
         if j == 0:
             na_axs[fig_index][row_index, j].set_ylabel(
                 f'beta gamma {ddf.iloc[j].beta_gamma}')
             gam_axs[fig_index][row_index, j].set_ylabel(
+                f'beta gamma {ddf.iloc[j].beta_gamma}')
+            conv_axs[fig_index][row_index, j].set_ylabel(
                 f'beta gamma {ddf.iloc[j].beta_gamma}')
 
 for ax in na_axs:
@@ -134,6 +156,14 @@ for ax in gam_axs:
                         labelbottom=False,
                         bottom=False)
 
+for ax in conv_axs:
+    for axx in ax.ravel():
+        axx.tick_params(left=False,
+                        right=False,
+                        labelleft=False,
+                        labelbottom=False,
+                        bottom=False)
+
 for i, fig in enumerate(na_figs):
     fig.suptitle(f'gradient strength {df.gradient_strength.cat.categories[i]}')
     fig.tight_layout()
@@ -144,16 +174,26 @@ for i, fig in enumerate(gam_figs):
     fig.tight_layout()
     fig.show()
 
+for i, fig in enumerate(conv_figs):
+    fig.suptitle(f'gradient strength {df.gradient_strength.cat.categories[i]}')
+    fig.tight_layout()
+    fig.show()
+
 # searborn grid plot for quantifiction
-sns.set_context('paper')
+sns.set_context('notebook')
+sns.set(font_scale=1.1)
 sns.set_style('ticks')
-grid = sns.FacetGrid(df, col='beta_gamma', hue='gradient_strength')
+grid = sns.FacetGrid(df,
+                     col='beta_gamma',
+                     hue='gradient_strength',
+                     legend_out=False)
 grid.map(sns.stripplot, 'beta_recon', 'GM/WM ratio')
 grid.add_legend()
 
 for ax in grid.axes.ravel():
     ax.grid(ls=':')
     ax.set_ylim(0.95, 1.55)
-    ax.axhline(1.5, color='k', lw=0.5, ls='--')
+    ax.axhline(1.5, color='r', lw=0.5, ls='--')
+    ax.axhline(df['GM/WM ratio conv'].values[0], color='k', lw=0.5, ls='--')
 
 grid.fig.show()

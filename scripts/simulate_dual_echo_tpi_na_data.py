@@ -356,6 +356,36 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
         constant_values=T2long_ms_extrapolated.max())
     t1_extrapolated = np.pad(t1_extrapolated, (p0, p1))
 
+    ## export GM and WM image
+    #from scipy.ndimage import zoom
+
+    #aparc_nii = nib.load(phantom_data_path / 'aparc+aseg_native.nii.gz')
+    #aparc_nii = nib.as_closest_canonical(aparc_nii)
+
+    #cortex = (aparc_nii.get_fdata() >= 1000)
+
+    #cortex = aff_transform(cortex,
+    #                       np.linalg.inv(aparc_nii.affine) @ lab_affine,
+    #                       lab.shape,
+    #                       cval=t1.min())
+
+    #gm = (lab == 2)
+    #wm = (lab == 3)
+
+    #gm_extrapolated = np.pad(
+    #    zoom(gm, lab_affine[0, 0] / simulation_voxel_size_mm, order=0),
+    #    (p0, p1))
+    #wm_extrapolated = np.pad(
+    #    zoom(wm, lab_affine[0, 0] / simulation_voxel_size_mm, order=0),
+    #    (p0, p1))
+    #cortex_extrapolated = np.pad(
+    #    zoom(cortex, lab_affine[0, 0] / simulation_voxel_size_mm, order=0),
+    #    (p0, p1))
+
+    #np.save('gm_256.npy', gm_extrapolated)
+    #np.save('wm_256.npy', wm_extrapolated)
+    #np.save('cortex_256.npy', cortex_extrapolated)
+
     return img_extrapolated, t1_extrapolated, T2short_ms_extrapolated, T2long_ms_extrapolated
 
 
