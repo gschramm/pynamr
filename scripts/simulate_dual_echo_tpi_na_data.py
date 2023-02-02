@@ -1,5 +1,6 @@
 """script to regrid 3D TPI (twisted projection) k-space data"""
 
+import argparse
 import numpy as np
 import math
 import numpy.typing as npt
@@ -272,8 +273,8 @@ def show_tpi_readout(kx,
 def setup_brainweb_phantom(simulation_matrix_size: int,
                            phantom_data_path: Path,
                            field_of_view_cm: float = 22.,
-                           csf_na_concentration: float = 3.5,
-                           gm_na_concentration: float = 1.4,
+                           csf_na_concentration: float = 3.0,
+                           gm_na_concentration: float = 1.5,
                            wm_na_concentration: float = 1.0,
                            T2long_ms_csf: float = 50.,
                            T2long_ms_gm: float = 15.,
@@ -367,15 +368,32 @@ if __name__ == '__main__':
 
     #---------------------------------------------------------------------
     # input parameters
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--gradient_strength',
+                        type=int,
+                        default=16,
+                        choices=[16, 24, 32, 48])
+    args = parser.parse_args()
+
+    gradient_strength = args.gradient_strength
 
     simulation_matrix_size: int = 256
     field_of_view_cm: float = 22.
     phantom_data_path: Path = Path('/data/sodium_mr/brainweb54')
-    #gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g16_23Na_v1'
-    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g48f23'
+
+    if gradient_strength == 16:
+        gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g16_23Na_v1'
+    elif gradient_strength == 24:
+        gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g24f23'
+    elif gradient_strength == 32:
+        gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g32f23'
+    elif gradient_strength == 48:
+        gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g48f23'
+    else:
+        raise ValueError
 
     # the number of time steps for the data simulation
-    num_time_bins: int = 200
+    num_time_bins: int = 300
 
     # the two echo times in ms
     t_echo_1_ms: float = 0.5
