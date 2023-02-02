@@ -3,10 +3,16 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import json
+from scipy.ndimage import binary_dilation
+
 import pymirc.viewer as pv
+from pymirc.image_operations import zoom3d
+
+import seaborn as sns
 
 noise_level = 2e5
-config_files = sorted(list(Path('run_10_iter').rglob('config.json')))
+sim_path: Path = Path('run_10_iter')
+config_files = sorted(list(sim_path.rglob('config.json')))
 
 df = pd.DataFrame()
 
@@ -21,27 +27,6 @@ for i, config_file in enumerate(config_files):
     tmp["run_dir"] = run_dir
     df = pd.concat([df, tmp])
 
-    # load data
-    if i > 1000:
-        ifft_echo_1_corr = np.load(run_dir / 'ifft_echo_1_corr.npy')
-        ifft_echo_2_corr = np.load(run_dir / 'ifft_echo_2_corr.npy')
-        ifft_echo_1_filtered_corr = np.load(run_dir /
-                                            'ifft_echo_1_filtered_corr.npy')
-        ifft_echo_2_filtered_corr = np.load(run_dir /
-                                            'ifft_echo_2_filtered_corr.npy')
-        agr_na = np.load(run_dir / 'agr_na.npy')
-        Gam_recon = np.load(run_dir / 'gamma.npy')
-        aimg = np.load(run_dir / 'anatomical_prior_image.npy')
-        na_img = np.load(run_dir / 'true_na_image.npy')
-        t1_image = np.load(run_dir / 't1_image.npy')
-        corr_field = np.load(run_dir / 'corr_field.npy')
-
-        vi = pv.ThreeAxisViewer(
-            [np.abs(ifft_echo_1_filtered_corr),
-             np.abs(agr_na), Gam_recon])
-
-        dummy = input('')
-
 df.sort_values(
     ['noise_level', 'beta_gamma', 'gradient_strength', 'beta_recon'],
     inplace=True)
@@ -50,9 +35,24 @@ df.reset_index(inplace=True, drop=True)
 # select one data from one noise level
 df = df.loc[df.noise_level == noise_level]
 
+# create an empty column for the GM/WM to
+df['GM/WM ratio'] = 0.
+
 # convert colums to categorical
 cats = ['noise_level', 'gradient_strength', 'beta_gamma', 'beta_recon']
 df[cats] = df[cats].astype('category')
+
+# load the 256 GM, WM and cortex mask
+gm_256 = np.load(sim_path / 'gm_256.npy')
+wm_256 = np.load(sim_path / 'wm_256.npy')
+cortex_256 = np.load(sim_path / 'cortex_256.npy')
+
+# exclude subcortical region from GM mask
+gm_256[cortex_256 == 0] = 0
+
+gm_256_dilated = binary_dilation(gm_256, iterations=5).astype(int)
+local_wm_256 = np.logical_and((gm_256_dilated - gm_256).astype(int),
+                              wm_256.astype(int))
 
 #------------------------------------------------------------------------------
 # visualizations
@@ -86,19 +86,31 @@ for (gradient_strength,
     for j in range(ddf.shape[0]):
         print(fig_index, row_index, j)
         run_dir = ddf.iloc[j].run_dir
-        agr_na = np.load(run_dir / 'agr_na.npy')
+        agr_na = np.abs(np.load(run_dir / 'agr_na.npy'))
         gam_recon = np.load(run_dir / 'gamma.npy')
 
-        na_axs[fig_index][row_index,
-                          j].imshow(np.abs(agr_na)[..., sl].T, **ims_na)
+        # for the quantification we have to interpolate the reconstructed
+        # image to the 256 grid
+        agr_na_interp = zoom3d(agr_na, 2)
+        gm_wm_ratio = agr_na_interp[gm_256].mean(
+        ) / agr_na_interp[local_wm_256].mean()
+
+        df['GM/WM ratio'][ddf.index[j]] = gm_wm_ratio
+
+        na_axs[fig_index][row_index, j].imshow(agr_na[..., sl].T, **ims_na)
         gam_axs[fig_index][row_index, j].imshow(gam_recon[..., sl].T,
                                                 **ims_gam)
 
         if row_index == 0:
             na_axs[fig_index][row_index, j].set_title(
-                f'beta recon {ddf.iloc[j].beta_recon}')
+                f'beta recon {ddf.iloc[j].beta_recon}, GM/WM {gm_wm_ratio:.2f}',
+                fontsize='medium')
             gam_axs[fig_index][row_index, j].set_title(
-                f'beta recon {ddf.iloc[j].beta_recon}')
+                f'beta recon {ddf.iloc[j].beta_recon}', fontsize='medium')
+        else:
+            na_axs[fig_index][row_index,
+                              j].set_title(f'GM/WM {gm_wm_ratio:.2f}',
+                                           fontsize='medium')
 
         if j == 0:
             na_axs[fig_index][row_index, j].set_ylabel(
@@ -131,3 +143,17 @@ for i, fig in enumerate(gam_figs):
     fig.suptitle(f'gradient strength {df.gradient_strength.cat.categories[i]}')
     fig.tight_layout()
     fig.show()
+
+# searborn grid plot for quantifiction
+sns.set_context('paper')
+sns.set_style('ticks')
+grid = sns.FacetGrid(df, col='beta_gamma', hue='gradient_strength')
+grid.map(sns.stripplot, 'beta_recon', 'GM/WM ratio')
+grid.add_legend()
+
+for ax in grid.axes.ravel():
+    ax.grid(ls=':')
+    ax.set_ylim(0.95, 1.55)
+    ax.axhline(1.5, color='k', lw=0.5, ls='--')
+
+grid.fig.show()
