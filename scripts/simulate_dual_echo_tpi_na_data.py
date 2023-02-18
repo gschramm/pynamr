@@ -403,9 +403,11 @@ if __name__ == '__main__':
                         type=int,
                         default=16,
                         choices=[16, 24, 32, 48])
+    parser.add_argument('--no_decay', action='store_true')
     args = parser.parse_args()
 
     gradient_strength = args.gradient_strength
+    no_decay = args.no_decay
 
     simulation_matrix_size: int = 256
     field_of_view_cm: float = 22.
@@ -431,8 +433,26 @@ if __name__ == '__main__':
 
     gridded_data_matrix_size: int = 128
 
+    if no_decay:
+        decay_suffix = '_no_decay'
+        T2long_ms_csf: float = 1e7
+        T2long_ms_gm: float = 1e7
+        T2long_ms_wm: float = 1e7
+        T2short_ms_csf: float = 1e7
+        T2short_ms_gm: float = 1e7
+        T2short_ms_wm: float = 1e7
+    else:
+        decay_suffix = ''
+        T2long_ms_csf: float = 50.
+        T2long_ms_gm: float = 15.
+        T2long_ms_wm: float = 18.
+        T2short_ms_csf: float = 50.
+        T2short_ms_gm: float = 8.
+        T2short_ms_wm: float = 9.
+
     output_path = Path(
-        '/data') / 'sodium_mr' / f'brainweb_{Path(gradient_file).name}'
+        '/data'
+    ) / 'sodium_mr' / f'brainweb_{Path(gradient_file).name}{decay_suffix}'
     output_path.mkdir(exist_ok=True)
 
     #---------------------------------------------------------------------
@@ -443,7 +463,13 @@ if __name__ == '__main__':
     na_image, t1_image, T2short_ms, T2long_ms = setup_brainweb_phantom(
         simulation_matrix_size,
         phantom_data_path,
-        field_of_view_cm=field_of_view_cm)
+        field_of_view_cm=field_of_view_cm,
+        T2long_ms_csf=T2long_ms_csf,
+        T2long_ms_gm=T2long_ms_gm,
+        T2long_ms_wm=T2long_ms_wm,
+        T2short_ms_csf=T2short_ms_csf,
+        T2short_ms_gm=T2short_ms_gm,
+        T2short_ms_wm=T2short_ms_wm)
 
     #---------------------------------------------------------------------
     #---------------------------------------------------------------------
