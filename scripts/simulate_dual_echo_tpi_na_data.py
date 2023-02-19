@@ -8,6 +8,7 @@ import nibabel as nib
 from numba import jit
 from pathlib import Path
 import matplotlib.pyplot as plt
+from scipy.ndimage import gaussian_filter, binary_dilation
 
 import pynufft
 
@@ -389,6 +390,30 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     return img_extrapolated, t1_extrapolated, T2short_ms_extrapolated, T2long_ms_extrapolated
 
 
+def setup_blob_phantom(simulation_matrix_size: int):
+    """simple central blob phantom to test normalization factor between nufft data and IFFT"""
+
+    img_shape = 3 * (simulation_matrix_size, )
+
+    x = np.linspace(-1, 1, simulation_matrix_size)
+    X0, X1, X2 = np.meshgrid(x, x, x, indexing='ij')
+    R = np.sqrt(X0**2 + X1**2 + X2**2)
+
+    # create a central blob with sum() = 1
+    img = np.zeros(img_shape)
+    img[R < 0.25] = 1
+
+    img = gaussian_filter(img, 2)
+
+    # dummy proton T1 and Na T2star images
+    t1 = img.copy()
+
+    T2short = np.full(img_shape, 0.5 * np.finfo(np.float32).max)
+    T2long = np.full(img_shape, 0.5 * np.finfo(np.float32).max)
+
+    return img, t1, T2short, T2long
+
+
 #-----------------------------------------------------------------------
 #-----------------------------------------------------------------------
 #-----------------------------------------------------------------------
@@ -404,10 +429,14 @@ if __name__ == '__main__':
                         default=16,
                         choices=[16, 24, 32, 48])
     parser.add_argument('--no_decay', action='store_true')
+    parser.add_argument('--phantom',
+                        choices=['brainweb', 'blob'],
+                        default='brainweb')
     args = parser.parse_args()
 
     gradient_strength = args.gradient_strength
     no_decay = args.no_decay
+    phantom = args.phantom
 
     simulation_matrix_size: int = 256
     field_of_view_cm: float = 22.
@@ -450,26 +479,32 @@ if __name__ == '__main__':
         T2short_ms_gm: float = 8.
         T2short_ms_wm: float = 9.
 
-    output_path = Path(
-        '/data'
-    ) / 'sodium_mr' / f'brainweb_{Path(gradient_file).name}{decay_suffix}'
-    output_path.mkdir(exist_ok=True)
-
     #---------------------------------------------------------------------
     #---------------------------------------------------------------------
     #---------------------------------------------------------------------
 
     # (1) setup the brainweb phantom with the given simulation matrix size
-    na_image, t1_image, T2short_ms, T2long_ms = setup_brainweb_phantom(
-        simulation_matrix_size,
-        phantom_data_path,
-        field_of_view_cm=field_of_view_cm,
-        T2long_ms_csf=T2long_ms_csf,
-        T2long_ms_gm=T2long_ms_gm,
-        T2long_ms_wm=T2long_ms_wm,
-        T2short_ms_csf=T2short_ms_csf,
-        T2short_ms_gm=T2short_ms_gm,
-        T2short_ms_wm=T2short_ms_wm)
+    if phantom == 'brainweb':
+        na_image, t1_image, T2short_ms, T2long_ms = setup_brainweb_phantom(
+            simulation_matrix_size,
+            phantom_data_path,
+            field_of_view_cm=field_of_view_cm,
+            T2long_ms_csf=T2long_ms_csf,
+            T2long_ms_gm=T2long_ms_gm,
+            T2long_ms_wm=T2long_ms_wm,
+            T2short_ms_csf=T2short_ms_csf,
+            T2short_ms_gm=T2short_ms_gm,
+            T2short_ms_wm=T2short_ms_wm)
+    elif phantom == 'blob':
+        na_image, t1_image, T2short_ms, T2long_ms = setup_blob_phantom(
+            simulation_matrix_size)
+    else:
+        raise ValueError
+
+    output_path = Path(
+        '/data'
+    ) / 'sodium_mr' / f'{phantom}_{Path(gradient_file).name}{decay_suffix}'
+    output_path.mkdir(exist_ok=True)
 
     #---------------------------------------------------------------------
     #---------------------------------------------------------------------
@@ -673,7 +708,8 @@ if __name__ == '__main__':
     regridded_data_echo_1_phase_corrected = phase_correction * regridded_data_echo_1
 
     # IFFT of the regridded data
-    ifft_echo_1 = np.fft.ifftn(regridded_data_echo_1_phase_corrected)
+    ifft_echo_1 = np.fft.ifftn(regridded_data_echo_1_phase_corrected,
+                               norm='ortho')
 
     # the regridding in kspace uses trilinear interpolation (convolution with a triangle)
     # we the have to divide by the FT of a triangle (sinc^2)

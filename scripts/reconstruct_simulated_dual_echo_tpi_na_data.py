@@ -233,25 +233,34 @@ regrid_tpi_data(gridded_data_matrix_size,
                 correct_tpi_sampling_density=True,
                 output_weights=False)
 
-# the sampling density in the center is is proportional to 1/gradient strength
-# (we go out we a speed ~ gradient strength)
-# in the next strep we correct for this difference in the sampling density
-regridded_data_echo_1 *= gradient_strength / 16.
-regridded_data_echo_2 *= gradient_strength / 16.
-
-# the norm of nufft + regridding is not 1
-# here we just divide the regridded data by a scaling factor such that
-# the IFFT image (with ortho norm) has approx. norm 1
-global_scale = 1.5e5
-regridded_data_echo_1 /= global_scale
-regridded_data_echo_2 /= global_scale
-
 print('IFFT recon')
 # don't forget to fft shift the data since the regridding function puts the kspace
 # origin in the center of the array
 regridded_data_echo_1 = np.fft.fftshift(regridded_data_echo_1)
 regridded_data_echo_2 = np.fft.fftshift(regridded_data_echo_2)
 sampling_weights = np.fft.fftshift(sampling_weights)
+
+# correction for sampling density
+# different readouts have different sampling densities in the center
+# with faster readout, the sampling density decreases since we move out faster
+# to compensate for this, we divide the data by the sampling density in the center
+# since the sampling weights are fft shifted as well, the center is at [0,0,0]
+
+regridded_data_echo_1 /= sampling_weights[0, 0, 0].real
+regridded_data_echo_2 /= sampling_weights[0, 0, 0].real
+
+# the global norm of the nuFFT operator is not equal to one
+# based on the IFFT of a simple blob phantom, the norm is estimated to be 11626.0
+# when we regrid on a 128^3 grid
+
+nufft_norm = 11626.0
+regridded_data_echo_1 /= nufft_norm
+regridded_data_echo_2 /= nufft_norm
+
+# when we use a different gridding matrix size, there is an additional scaling factor
+
+regridded_data_echo_1 /= np.sqrt((128 / gridded_data_matrix_size)**3)
+regridded_data_echo_2 /= np.sqrt((128 / gridded_data_matrix_size)**3)
 
 # numpy's fft handles the phase factor of the DFT diffrently compared to pynufft
 # so we have to apply a phase factor to the regridded data
@@ -286,7 +295,7 @@ a = zoom3d(np.abs(ifft_echo_1_corr),
 b = zoom3d(np.abs(ifft_echo_2_corr),
            simulation_matrix_size / gridded_data_matrix_size)
 
-ims = 3 * [{'vmin': 0, 'vmax': 1.2 * na_image.max()}]
+#ims = 3 * [{'vmin': 0, 'vmax': 1.2 * na_image.max()}]
 #vi = pv.ThreeAxisViewer([na_image, a, b], imshow_kwargs=ims)
 
 #----------------------------------------------------------------------------------------
