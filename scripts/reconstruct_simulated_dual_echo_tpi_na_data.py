@@ -402,7 +402,9 @@ recon = np.ascontiguousarray(ifft_echo_1_corr.view('(2,)float'))
 
 # create a pseudo complex sensitivity array full of real ones
 sens = np.zeros((1, ) + recon_shape)
-sens[..., 0] = 1
+# due to interpolation in k-space, the sensitivity is not not uniform
+# but falls off toward the edge
+sens[0, ..., 0] = corr_field
 
 abs_recons = np.zeros((num_outer, ) + ifft_echo_1_corr.shape)
 Gam_recons = np.zeros((num_outer, ) + ifft_echo_1_corr.shape)
