@@ -65,13 +65,16 @@ readout_bin_width_ms: float = 0.5
 np.random.seed(seed)
 
 # create the output directory and save the input parameters
-i_out = int(100 * time.time())
-output_dir = Path(f'run/{i_out}')
+i_out = 0
+output_dir = Path(
+    f'run/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}_{i_out:03}'
+)
 
 while output_dir.exists():
-    time.sleep(0.1)
-    i_out = int(100 * time.time())
-    output_dir = Path(f'run/{i_out}')
+    i_out += 1
+    output_dir = Path(
+        f'run/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}_{i_out:03}'
+    )
 
 output_dir.mkdir(exist_ok=True, parents=True)
 
