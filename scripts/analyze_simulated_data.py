@@ -35,6 +35,10 @@ df.reset_index(inplace=True, drop=True)
 df = df.loc[df.noise_level == noise_level]
 
 # create an empty column for the GM/WM to
+df['GM'] = 0.
+df['GM conv'] = 0.
+df['WM'] = 0.
+df['WM conv'] = 0.
 df['GM/WM ratio'] = 0.
 df['GM/WM ratio conv'] = 0.
 
@@ -61,23 +65,47 @@ ims_na = dict(origin='lower', vmax=2.5, cmap=plt.cm.Greys_r)
 ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.Greys_r)
 sl = 64
 
-na_fig1, na_ax1 = plt.subplots(4, 4, figsize=(9, 9))
-na_fig2, na_ax2 = plt.subplots(4, 4, figsize=(9, 9))
-na_fig3, na_ax3 = plt.subplots(4, 4, figsize=(9, 9))
+na_fig1, na_ax1 = plt.subplots(4, 4, figsize=(9, 9), sharex=True, sharey=True)
+na_fig2, na_ax2 = plt.subplots(4, 4, figsize=(9, 9), sharex=True, sharey=True)
+na_fig3, na_ax3 = plt.subplots(4, 4, figsize=(9, 9), sharex=True, sharey=True)
 
 na_figs = [na_fig1, na_fig2, na_fig3]
 na_axs = [na_ax1, na_ax2, na_ax3]
 
-gam_fig1, gam_ax1 = plt.subplots(4, 4, figsize=(9, 9))
-gam_fig2, gam_ax2 = plt.subplots(4, 4, figsize=(9, 9))
-gam_fig3, gam_ax3 = plt.subplots(4, 4, figsize=(9, 9))
+gam_fig1, gam_ax1 = plt.subplots(4,
+                                 4,
+                                 figsize=(9, 9),
+                                 sharex=True,
+                                 sharey=True)
+gam_fig2, gam_ax2 = plt.subplots(4,
+                                 4,
+                                 figsize=(9, 9),
+                                 sharex=True,
+                                 sharey=True)
+gam_fig3, gam_ax3 = plt.subplots(4,
+                                 4,
+                                 figsize=(9, 9),
+                                 sharex=True,
+                                 sharey=True)
 
 gam_figs = [gam_fig1, gam_fig2, gam_fig3]
 gam_axs = [gam_ax1, gam_ax2, gam_ax3]
 
-conv_fig1, conv_ax1 = plt.subplots(4, 4, figsize=(9, 9))
-conv_fig2, conv_ax2 = plt.subplots(4, 4, figsize=(9, 9))
-conv_fig3, conv_ax3 = plt.subplots(4, 4, figsize=(9, 9))
+conv_fig1, conv_ax1 = plt.subplots(4,
+                                   4,
+                                   figsize=(9, 9),
+                                   sharex=True,
+                                   sharey=True)
+conv_fig2, conv_ax2 = plt.subplots(4,
+                                   4,
+                                   figsize=(9, 9),
+                                   sharex=True,
+                                   sharey=True)
+conv_fig3, conv_ax3 = plt.subplots(4,
+                                   4,
+                                   figsize=(9, 9),
+                                   sharex=True,
+                                   sharey=True)
 
 conv_figs = [conv_fig1, conv_fig2, conv_fig3]
 conv_axs = [conv_ax1, conv_ax2, conv_ax3]
@@ -100,14 +128,16 @@ for (gradient_strength,
         # for the quantification we have to interpolate the reconstructed
         # image to the 256 grid
         agr_na_interp = zoom3d(agr_na, 2)
-        gm_wm_ratio = agr_na_interp[gm_256].mean(
-        ) / agr_na_interp[local_wm_256].mean()
+        df['GM'][ddf.index[j]] = agr_na_interp[gm_256].mean()
+        df['WM'][ddf.index[j]] = agr_na_interp[wm_256].mean()
+        gm_wm_ratio = df['GM'][ddf.index[j]] / df['WM'][ddf.index[j]]
         df['GM/WM ratio'][ddf.index[j]] = gm_wm_ratio
 
         conv_interp = zoom3d(conv, 2)
-
-        gm_wm_ratio_conv = conv_interp[gm_256].mean(
-        ) / conv_interp[local_wm_256].mean()
+        df['GM conv'][ddf.index[j]] = conv_interp[gm_256].mean()
+        df['WM conv'][ddf.index[j]] = conv_interp[wm_256].mean()
+        gm_wm_ratio_conv = df['GM conv'][ddf.index[j]] / df['WM conv'][
+            ddf.index[j]]
         df['GM/WM ratio conv'][ddf.index[j]] = gm_wm_ratio_conv
 
         na_axs[fig_index][row_index, j].imshow(agr_na[..., sl].T, **ims_na)
@@ -179,7 +209,7 @@ for i, fig in enumerate(conv_figs):
     fig.tight_layout()
     fig.show()
 
-# searborn grid plot for quantifiction
+# searborn grid plot for GM/WM ratio
 sns.set_context('notebook')
 sns.set(font_scale=1.1)
 sns.set_style('ticks')
@@ -197,3 +227,35 @@ for ax in grid.axes.ravel():
     ax.axhline(df['GM/WM ratio conv'].values[0], color='k', lw=0.5, ls='--')
 
 grid.fig.show()
+
+# searborn grid plot for GM
+grid2 = sns.FacetGrid(df,
+                      col='beta_gamma',
+                      hue='gradient_strength',
+                      legend_out=False)
+grid2.map(sns.stripplot, 'beta_recon', 'GM')
+grid2.add_legend()
+
+for ax in grid2.axes.ravel():
+    ax.grid(ls=':')
+    ax.set_ylim(1.3, 1.65)
+    ax.axhline(1.5, color='r', lw=0.5, ls='--')
+    ax.axhline(df['GM conv'].values[0], color='k', lw=0.5, ls='--')
+
+grid2.fig.show()
+
+# searborn grid plot for wM
+grid3 = sns.FacetGrid(df,
+                      col='beta_gamma',
+                      hue='gradient_strength',
+                      legend_out=False)
+grid3.map(sns.stripplot, 'beta_recon', 'WM')
+grid3.add_legend()
+
+for ax in grid3.axes.ravel():
+    ax.grid(ls=':')
+    ax.set_ylim(0.7, 1.2)
+    ax.axhline(1.0, color='r', lw=0.5, ls='--')
+    ax.axhline(df['WM conv'].values[0], color='k', lw=0.5, ls='--')
+
+grid3.fig.show()
