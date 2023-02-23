@@ -171,13 +171,14 @@ if __name__ == '__main__':
     tmp_x = np.arange(recon_shape[0])
     TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
     phase_correction = ((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z)
-    hann_win = np.fft.fftshift(window3D(hann(recon_shape[0])))
+    hann_win = np.fft.fftshift(window3D(hann(recon_shape[0]))).astype(
+        np.float32)
 
     # calculate the kspace data
     echo_1_kspace_data = np.fft.fftn(na_echo_1 * phase_correction,
-                                     norm='ortho')
+                                     norm='ortho').astype(np.complex64)
     echo_2_kspace_data = np.fft.fftn(na_echo_2 * phase_correction,
-                                     norm='ortho')
+                                     norm='ortho').astype(np.complex64)
 
     # calculated smoothed images for registration
     na_echo_1_sm = np.abs(
