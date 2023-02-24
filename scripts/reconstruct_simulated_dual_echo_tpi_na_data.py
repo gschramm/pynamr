@@ -60,6 +60,7 @@ num_nearest: int = 4
 method: int = 0
 asym: int = 0
 readout_bin_width_ms: float = 0.5
+interpolation: str = 'trilinear'
 
 #-------------------------------------------------------------------------
 np.random.seed(seed)
@@ -200,7 +201,8 @@ regrid_tpi_data(gridded_data_matrix_size,
                 cutoff,
                 sampling_weights,
                 correct_tpi_sampling_density=True,
-                output_weights=True)
+                output_weights=True,
+                interpolation=interpolation)
 
 print('regridding echo 1 data')
 regrid_tpi_data(gridded_data_matrix_size,
@@ -217,7 +219,8 @@ regrid_tpi_data(gridded_data_matrix_size,
                 cutoff,
                 regridded_data_echo_1,
                 correct_tpi_sampling_density=True,
-                output_weights=False)
+                output_weights=False,
+                interpolation=interpolation)
 
 print('regridding echo 2 data')
 regrid_tpi_data(gridded_data_matrix_size,
@@ -234,7 +237,8 @@ regrid_tpi_data(gridded_data_matrix_size,
                 cutoff,
                 regridded_data_echo_2,
                 correct_tpi_sampling_density=True,
-                output_weights=False)
+                output_weights=False,
+                interpolation=interpolation)
 
 print('IFFT recon')
 # don't forget to fft shift the data since the regridding function puts the kspace
@@ -283,11 +287,14 @@ ifft_echo_2 = np.fft.ifftn(regridded_data_echo_2_phase_corrected, norm='ortho')
 
 # the regridding in kspace uses trilinear interpolation (convolution with a triangle)
 # we the have to divide by the FT of a triangle (sinc^2)
-tmp_x = np.linspace(-0.5, 0.5, gridded_data_matrix_size)
-TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
-
-# corretion field is sinc(R)**2
-corr_field = np.sinc(np.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2))**2
+if interpolation == 'trilinear':
+    # corretion field is sinc(R)**2
+    tmp_x = np.linspace(-0.5, 0.5, gridded_data_matrix_size)
+    TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
+    corr_field = np.sinc(np.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2))**2
+elif interpolation == 'nearest':
+    corr_field = np.ones((gridded_data_matrix_size, gridded_data_matrix_size,
+                          gridded_data_matrix_size))
 
 ifft_echo_1_corr = ifft_echo_1 / corr_field
 ifft_echo_2_corr = ifft_echo_2 / corr_field
@@ -298,8 +305,8 @@ a = zoom3d(np.abs(ifft_echo_1_corr),
 b = zoom3d(np.abs(ifft_echo_2_corr),
            simulation_matrix_size / gridded_data_matrix_size)
 
-#ims = 3 * [{'vmin': 0, 'vmax': 1.2 * na_image.max()}]
-#vi = pv.ThreeAxisViewer([na_image, a, b], imshow_kwargs=ims)
+ims = 3 * [{'vmin': 0, 'vmax': 1.2 * na_image.max()}]
+vi = pv.ThreeAxisViewer([na_image, a, b], imshow_kwargs=ims)
 
 #----------------------------------------------------------------------------------------
 #--- AGR recon --------------------------------------------------------------------------
@@ -405,7 +412,8 @@ recon = np.ascontiguousarray(ifft_echo_1_corr.view('(2,)float'))
 
 # create a pseudo complex sensitivity array full of real ones
 sens = np.zeros((1, ) + recon_shape)
-# due to interpolation in k-space, the sensitivity is not not uniform
+# due to interpolation in k-space,
+# if interpolation is tri-linear, sensitivity is not uniform
 # but falls off toward the edge
 sens[0, ..., 0] = corr_field
 
