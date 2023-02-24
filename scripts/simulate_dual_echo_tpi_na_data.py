@@ -29,8 +29,9 @@ def regrid_tpi_data(matrix_size: int,
                     window: npt.NDArray,
                     cutoff: float,
                     output: npt.NDArray,
-                    correct_tpi_sampling_density=True,
-                    output_weights=False) -> None:
+                    correct_tpi_sampling_density: bool = True,
+                    output_weights: bool = False,
+                    interpolation: str = 'trilinear') -> None:
     """ function to regrid 3D TPI (twisted projection) k-space data on regular k-space grid
         using tri-linear interpolation, correction for sampling density and windowing
 
@@ -72,6 +73,8 @@ def regrid_tpi_data(matrix_size: int,
         correct for the TPI sampling density (~k^2 if k <= kp)
     output_weights: bool
         output the regridding weights instead of the regridded data
+    interpolation: str
+        interpolation method: trilinear (default) or nearest
     """
 
     for i in range(Nmax):
@@ -109,6 +112,10 @@ def regrid_tpi_data(matrix_size: int,
             ky_shifted_low = math.floor(ky_shifted)
             kz_shifted_low = math.floor(kz_shifted)
 
+            kx_shifted_nearest = round(kx_shifted)
+            ky_shifted_nearest = round(ky_shifted)
+            kz_shifted_nearest = round(kz_shifted)
+
             kx_shifted_high = kx_shifted_low + 1
             ky_shifted_high = ky_shifted_low + 1
             kz_shifted_high = kz_shifted_low + 1
@@ -122,30 +129,43 @@ def regrid_tpi_data(matrix_size: int,
             else:
                 windowed_data = data[i] * window[i_window]
 
-            if (kx_shifted_low >= 0) and (ky_shifted_low >=
-                                          0) and (kz_shifted_low >= 0):
-                # fill output array according to trilinear interpolation
-                output[kx_shifted_low, ky_shifted_low,
-                       kz_shifted_low] += (1 - dkx) * (1 - dky) * (
-                           1 - dkz) * sampling_density * windowed_data
-                output[kx_shifted_high, ky_shifted_low,
-                       kz_shifted_low] += (dkx) * (1 - dky) * (
-                           1 - dkz) * sampling_density * windowed_data
-                output[kx_shifted_low, ky_shifted_high,
-                       kz_shifted_low] += (1 - dkx) * (dky) * (
-                           1 - dkz) * sampling_density * windowed_data
-                output[kx_shifted_high, ky_shifted_high, kz_shifted_low] += (
-                    dkx) * (dky) * (1 - dkz) * sampling_density * windowed_data
+            if interpolation == 'trilinear':
+                if (kx_shifted_low >= 0) and (ky_shifted_low >=
+                                              0) and (kz_shifted_low >= 0):
+                    # fill output array according to trilinear interpolation
+                    output[kx_shifted_low, ky_shifted_low,
+                           kz_shifted_low] += (1 - dkx) * (1 - dky) * (
+                               1 - dkz) * sampling_density * windowed_data
+                    output[kx_shifted_high, ky_shifted_low,
+                           kz_shifted_low] += (dkx) * (1 - dky) * (
+                               1 - dkz) * sampling_density * windowed_data
+                    output[kx_shifted_low, ky_shifted_high,
+                           kz_shifted_low] += (1 - dkx) * (dky) * (
+                               1 - dkz) * sampling_density * windowed_data
+                    output[kx_shifted_high, ky_shifted_high,
+                           kz_shifted_low] += (dkx) * (dky) * (
+                               1 - dkz) * sampling_density * windowed_data
 
-                output[kx_shifted_low, ky_shifted_low,
-                       kz_shifted_high] += (1 - dkx) * (1 - dky) * (
-                           dkz) * sampling_density * windowed_data
-                output[kx_shifted_high, ky_shifted_low, kz_shifted_high] += (
-                    dkx) * (1 - dky) * (dkz) * sampling_density * windowed_data
-                output[kx_shifted_low, ky_shifted_high, kz_shifted_high] += (
-                    1 - dkx) * (dky) * (dkz) * sampling_density * windowed_data
-                output[kx_shifted_high, ky_shifted_high, kz_shifted_high] += (
-                    dkx) * (dky) * (dkz) * sampling_density * windowed_data
+                    output[kx_shifted_low, ky_shifted_low,
+                           kz_shifted_high] += (1 - dkx) * (1 - dky) * (
+                               dkz) * sampling_density * windowed_data
+                    output[kx_shifted_high, ky_shifted_low,
+                           kz_shifted_high] += (dkx) * (1 - dky) * (
+                               dkz) * sampling_density * windowed_data
+                    output[kx_shifted_low, ky_shifted_high,
+                           kz_shifted_high] += (1 - dkx) * (dky) * (
+                               dkz) * sampling_density * windowed_data
+                    output[kx_shifted_high, ky_shifted_high,
+                           kz_shifted_high] += (dkx) * (dky) * (
+                               dkz) * sampling_density * windowed_data
+            elif interpolation == 'nearest':
+                if (kx_shifted_nearest >= 0) and (
+                        ky_shifted_nearest >= 0) and (kz_shifted_nearest >= 0):
+                    output[
+                        kx_shifted_nearest, ky_shifted_nearest,
+                        kz_shifted_nearest] += sampling_density * windowed_data
+            else:
+                raise ValueError('Interpolation method not supported')
 
 
 def read_single_tpi_gradient_file(gradient_file: str,
