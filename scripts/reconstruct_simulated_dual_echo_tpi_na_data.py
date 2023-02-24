@@ -1,6 +1,5 @@
 import argparse
 import json
-import time
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -8,7 +7,7 @@ from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
 
-from simulate_dual_echo_tpi_na_data import regrid_tpi_data
+from utils import TriliniearKSpaceRegridder, tpi_sampling_density
 from pymirc.image_operations import zoom3d
 
 import pymirc.viewer as pv
@@ -39,6 +38,11 @@ parser.add_argument('--beta_gamma', type=float, default=10.)
 parser.add_argument('--num_outer', type=int, default=10)
 parser.add_argument('--num_inner', type=int, default=20)
 parser.add_argument('--seed', type=int, default=0)
+parser.add_argument('--phantom',
+                    type=str,
+                    default='brainweb',
+                    choices=['brainweb', 'blob'])
+parser.add_argument('--no_decay', action='store_true')
 args = parser.parse_args()
 
 # input parameters
@@ -51,6 +55,12 @@ beta_gamma: float = args.beta_gamma
 num_outer: int = args.num_outer
 num_inner: int = args.num_inner
 seed: int = args.seed
+phantom: str = args.phantom
+
+if args.no_decay:
+    decay_suffix = '_no_decay'
+else:
+    decay_suffix = ''
 
 #-------------------------------------------------------------------------
 # fixed parameters
@@ -99,7 +109,8 @@ else:
     raise ValueError
 
 simulated_data_path = Path(
-    '/data') / 'sodium_mr' / f'brainweb_{Path(gradient_file).name}'
+    '/data'
+) / 'sodium_mr' / f'{phantom}_{Path(gradient_file).name}{decay_suffix}'
 
 print(simulated_data_path.name)
 
@@ -112,8 +123,8 @@ nonuniform_data_short_echo_2 = data['nonuniform_data_short_echo_2']
 k0 = data['k0']
 k1 = data['k1']
 k2 = data['k2']
-kp = data['kp']
-kmax = data['kmax']
+kp = float(data['kp'])
+kmax = float(data['kmax'])
 kx = data['kx']
 ky = data['ky']
 kz = data['kz']
@@ -155,26 +166,6 @@ if show_trajectory:
     fig2.show()
 
 #-------------------------------------------------------------------------
-#-------------------------------------------------------------------------
-
-cutoff = 1.
-window = np.ones(100)
-
-# allocated memory for output arrays
-sampling_weights = np.zeros(
-    (gridded_data_matrix_size, gridded_data_matrix_size,
-     gridded_data_matrix_size),
-    dtype=complex)
-
-regridded_data_echo_1 = np.zeros(
-    (gridded_data_matrix_size, gridded_data_matrix_size,
-     gridded_data_matrix_size),
-    dtype=complex)
-regridded_data_echo_2 = np.zeros(
-    (gridded_data_matrix_size, gridded_data_matrix_size,
-     gridded_data_matrix_size),
-    dtype=complex)
-
 # add noise to the non-uniform fft data
 data_size = nonuniform_data_long_echo_1.size
 noisy_nonuniform_data_long_echo_1 = nonuniform_data_long_echo_1 + noise_level * (
@@ -187,126 +178,41 @@ noisy_nonuniform_data_short_echo_1 = nonuniform_data_short_echo_1 + noise_level 
 noisy_nonuniform_data_short_echo_2 = nonuniform_data_short_echo_2 + noise_level * (
     np.random.randn(data_size) + 1j * np.random.randn(data_size))
 
-print('calculating weights')
-regrid_tpi_data(gridded_data_matrix_size,
-                1 / field_of_view_cm,
-                nonuniform_data_long_echo_1,
-                k0.size,
-                k0.ravel(),
-                k1.ravel(),
-                k2.ravel(),
-                kmax,
-                kp,
-                window,
-                cutoff,
-                sampling_weights,
-                correct_tpi_sampling_density=True,
-                output_weights=True,
-                interpolation=interpolation)
+#-------------------------------------------------------------------------
 
-print('regridding echo 1 data')
-regrid_tpi_data(gridded_data_matrix_size,
-                1 / field_of_view_cm,
-                0.6 * noisy_nonuniform_data_short_echo_1 +
-                0.4 * noisy_nonuniform_data_long_echo_1,
-                k0.size,
-                k0.ravel(),
-                k1.ravel(),
-                k2.ravel(),
-                kmax,
-                kp,
-                window,
-                cutoff,
-                regridded_data_echo_1,
-                correct_tpi_sampling_density=True,
-                output_weights=False,
-                interpolation=interpolation)
+delta_k = 1 / field_of_view_cm
 
-print('regridding echo 2 data')
-regrid_tpi_data(gridded_data_matrix_size,
-                1 / field_of_view_cm,
-                0.6 * noisy_nonuniform_data_short_echo_2 +
-                0.4 * noisy_nonuniform_data_long_echo_2,
-                k0.size,
-                k0.ravel(),
-                k1.ravel(),
-                k2.ravel(),
-                kmax,
-                kp,
-                window,
-                cutoff,
-                regridded_data_echo_2,
-                correct_tpi_sampling_density=True,
-                output_weights=False,
-                interpolation=interpolation)
+# calculate vector of TPI sampling densities for all kspace points in the non-uniform data
+sampling_density = tpi_sampling_density(k0.ravel(), k1.ravel(), k2.ravel(), kp)
 
-print('IFFT recon')
-# don't forget to fft shift the data since the regridding function puts the kspace
-# origin in the center of the array
-regridded_data_echo_1 = np.fft.fftshift(regridded_data_echo_1)
-regridded_data_echo_2 = np.fft.fftshift(regridded_data_echo_2)
-sampling_weights = np.fft.fftshift(sampling_weights)
+regridder = TriliniearKSpaceRegridder(gridded_data_matrix_size, delta_k,
+                                      k0.ravel(), k1.ravel(), k2.ravel(),
+                                      sampling_density, kmax)
 
-# correction for sampling density
-# different readouts have different sampling densities in the center
-# with faster readout, the sampling density decreases since we move out faster
-# to compensate for this, we divide the data by the sampling density in the center
-# since the sampling weights are fft shifted as well, the center is at [0,0,0]
+regridded_data_echo_1 = regridder.regrid(
+    0.6 * noisy_nonuniform_data_short_echo_1 +
+    0.4 * noisy_nonuniform_data_long_echo_1)
 
-regridded_data_echo_1 /= sampling_weights[0, 0, 0].real
-regridded_data_echo_2 /= sampling_weights[0, 0, 0].real
+regridded_data_echo_2 = regridder.regrid(
+    0.6 * noisy_nonuniform_data_short_echo_2 +
+    0.4 * noisy_nonuniform_data_long_echo_2)
 
-# the global norm of the nuFFT operator is not equal to one
-# based on the IFFT of a simple blob phantom, the norm is estimated to be 11626.0
-# when we regrid on a 128^3 grid
-
+# correct for the global norm of the FFT operator
 nufft_norm = 11626.0
 regridded_data_echo_1 /= nufft_norm
 regridded_data_echo_2 /= nufft_norm
 
-# when we use a different gridding matrix size, there is an additional scaling factor
-
-regridded_data_echo_1 /= np.sqrt((128 / gridded_data_matrix_size)**3)
-regridded_data_echo_2 /= np.sqrt((128 / gridded_data_matrix_size)**3)
-
-# numpy's fft handles the phase factor of the DFT diffrently compared to pynufft
-# so we have to apply a phase factor to the regridded data
-# in 1D this phase factor is [1,-1,1,-1, ...]
-# in 3D it is the 3D checkerboard version of this
-# see here for details https://stackoverflow.com/questions/24077913/discretized-continuous-fourier-transform-with-numpy
-tmp_x = np.arange(gridded_data_matrix_size)
-TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
-
-phase_correction = ((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z)
-regridded_data_echo_1_phase_corrected = phase_correction * regridded_data_echo_1
-regridded_data_echo_2_phase_corrected = phase_correction * regridded_data_echo_2
-
-# IFFT of the regridded data
-ifft_echo_1 = np.fft.ifftn(regridded_data_echo_1_phase_corrected, norm='ortho')
-ifft_echo_2 = np.fft.ifftn(regridded_data_echo_2_phase_corrected, norm='ortho')
-
-# the regridding in kspace uses trilinear interpolation (convolution with a triangle)
-# we the have to divide by the FT of a triangle (sinc^2)
-if interpolation == 'trilinear':
-    # corretion field is sinc(R)**2
-    tmp_x = np.linspace(-0.5, 0.5, gridded_data_matrix_size)
-    TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
-    corr_field = np.sinc(np.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2))**2
-elif interpolation == 'nearest':
-    corr_field = np.ones((gridded_data_matrix_size, gridded_data_matrix_size,
-                          gridded_data_matrix_size))
-
-ifft_echo_1_corr = ifft_echo_1 / corr_field
-ifft_echo_2_corr = ifft_echo_2 / corr_field
+ifft_echo_1 = np.fft.ifftn(regridded_data_echo_1, norm='ortho')
+ifft_echo_2 = np.fft.ifftn(regridded_data_echo_2, norm='ortho')
 
 # interpolate magnitude images to simulation grid size (which can be different from gridded data size)
-a = zoom3d(np.abs(ifft_echo_1_corr),
+a = zoom3d(np.abs(ifft_echo_1),
            simulation_matrix_size / gridded_data_matrix_size)
-b = zoom3d(np.abs(ifft_echo_2_corr),
+b = zoom3d(np.abs(ifft_echo_2),
            simulation_matrix_size / gridded_data_matrix_size)
 
-ims = 3 * [{'vmin': 0, 'vmax': 1.2 * na_image.max()}]
-vi = pv.ThreeAxisViewer([na_image, a, b], imshow_kwargs=ims)
+#ims = 3 * [{'vmin': 0, 'vmax': 1.2 * na_image.max()}]
+#vi = pv.ThreeAxisViewer([na_image, a, b], imshow_kwargs=ims)
 
 #----------------------------------------------------------------------------------------
 #--- AGR recon --------------------------------------------------------------------------
@@ -314,10 +220,7 @@ vi = pv.ThreeAxisViewer([na_image, a, b], imshow_kwargs=ims)
 
 # create an array for the dual echo (multi_channel data)
 
-signal = np.array([
-    regridded_data_echo_1_phase_corrected,
-    regridded_data_echo_2_phase_corrected
-])
+signal = np.array([regridded_data_echo_1, regridded_data_echo_2])
 # we have to create the "coil" axis for the single coil
 signal = np.expand_dims(signal, 0)
 # convert the complex signal into a real pseudo complex array
@@ -329,16 +232,18 @@ k_fft = np.fft.fftfreq(gridded_data_matrix_size,
 K0_fft, K1_fft, K2_fft = np.meshgrid(k_fft, k_fft, k_fft, indexing='ij')
 K_abs_fft = np.sqrt(K0_fft**2 + K1_fft**2 + K2_fft**2)
 
-readout_time_image_ms = np.full(K_abs_fft.shape, -1)
+readout_time_image_ms = np.full(K_abs_fft.shape, -1., dtype=np.float64)
+
+mask = (K_abs_fft < abs_k_spoke.max()).astype(float)
 
 # setup a pseudo-complex kspace mask that indicates which elements of kspace where sampled
 kmask = np.zeros(signal.shape)
 for j in range(1):
     for i in range(2):
-        kmask[j, i, ..., 0] = (K_abs_fft < abs_k_spoke.max()).astype(float)
-        kmask[j, i, ..., 1] = (K_abs_fft < abs_k_spoke.max()).astype(float)
+        kmask[j, i, ..., 0] = mask
+        kmask[j, i, ..., 1] = mask
 
-inds = np.where(kmask[0, 0, ..., 0])
+inds = np.where(mask > 0)
 readout_time_image_ms[inds] = t_of_k(K_abs_fft[inds])
 
 readout_bin_image = np.floor(readout_time_image_ms /
@@ -348,6 +253,7 @@ tr = (np.arange(readout_bin_image.max() + 1) + 0.5) * readout_bin_width_ms
 readout_inds = []
 for i, _ in enumerate(tr):
     readout_inds.append(np.where(readout_bin_image == i))
+
 #vi2 = pv.ThreeAxisViewer(np.fft.fftshift(readout_bin_image))
 
 #-------------------------------------------------------------------------------
@@ -361,22 +267,17 @@ h_win = interp1d(np.arange(32),
 # abs_k was scaled to have the k edge at 32, we have to revert that for the han window
 hmask = h_win(K_abs_fft.ravel() * 32 / kmax).reshape(K_abs_fft.shape)
 
-ifft_echo_1_filtered = np.fft.ifftn(hmask *
-                                    regridded_data_echo_1_phase_corrected,
+ifft_echo_1_filtered = np.fft.ifftn(hmask * regridded_data_echo_1,
                                     norm='ortho')
-ifft_echo_2_filtered = np.fft.ifftn(hmask *
-                                    regridded_data_echo_2_phase_corrected,
+ifft_echo_2_filtered = np.fft.ifftn(hmask * regridded_data_echo_2,
                                     norm='ortho')
-
-ifft_echo_1_filtered_corr = ifft_echo_1_filtered / corr_field
-ifft_echo_2_filtered_corr = ifft_echo_2_filtered / corr_field
 
 Gam_bounds = (gridded_data_matrix_size**3) * [(0.001, 1)]
 Gam_recon = np.clip(
-    np.abs(ifft_echo_2_filtered_corr) /
-    (np.abs(ifft_echo_1_filtered_corr) + 0.001), 0.001, 1)
-Gam_recon[np.abs(ifft_echo_2_filtered_corr) < 0.1 *
-          np.abs(ifft_echo_2_filtered_corr).max()] = 1
+    np.abs(ifft_echo_2_filtered) / (np.abs(ifft_echo_1_filtered) + 0.001),
+    0.001, 1)
+Gam_recon[np.abs(ifft_echo_2_filtered) < 0.1 *
+          np.abs(ifft_echo_2_filtered).max()] = 1
 Gam_recon = gaussian_filter(Gam_recon, 1)
 
 #vi3 = pv.ThreeAxisViewer(Gam_recon)
@@ -408,17 +309,14 @@ recon_shape = signal.shape[2:]
 # squeeze simulated data into a format that we can digest with the AGR recon
 # setup initial recon as ifft of first echo
 # we need to convert to pseudo-complex array for fmin_l_bfgs
-recon = np.ascontiguousarray(ifft_echo_1_corr.view('(2,)float'))
+recon = np.ascontiguousarray(ifft_echo_1.view('(2,)float'))
 
 # create a pseudo complex sensitivity array full of real ones
 sens = np.zeros((1, ) + recon_shape)
-# due to interpolation in k-space,
-# if interpolation is tri-linear, sensitivity is not uniform
-# but falls off toward the edge
-sens[0, ..., 0] = corr_field
+sens[0, ..., 0] = 1
 
-abs_recons = np.zeros((num_outer, ) + ifft_echo_1_corr.shape)
-Gam_recons = np.zeros((num_outer, ) + ifft_echo_1_corr.shape)
+abs_recons = np.zeros((num_outer, ) + ifft_echo_1.shape)
+Gam_recons = np.zeros((num_outer, ) + ifft_echo_1.shape)
 
 for i in range(num_outer):
     print('LBFGS to optimize for recon')
@@ -468,19 +366,16 @@ for i in range(num_outer):
     Gam_recons[i, ...] = Gam_recon
 
 # save the results
-np.save(output_dir / 'ifft_echo_1_corr.npy', ifft_echo_1_corr)
-np.save(output_dir / 'ifft_echo_2_corr.npy', ifft_echo_2_corr)
-np.save(output_dir / 'ifft_echo_1_filtered_corr.npy',
-        ifft_echo_1_filtered_corr)
-np.save(output_dir / 'ifft_echo_2_filtered_corr.npy',
-        ifft_echo_2_filtered_corr)
+np.save(output_dir / 'ifft_echo_1_corr.npy', ifft_echo_1)
+np.save(output_dir / 'ifft_echo_2_corr.npy', ifft_echo_2)
+np.save(output_dir / 'ifft_echo_1_filtered_corr.npy', ifft_echo_1_filtered)
+np.save(output_dir / 'ifft_echo_2_filtered_corr.npy', ifft_echo_2_filtered)
 np.save(output_dir / 'agr_na.npy',
         np.squeeze(recon.view(dtype=np.complex128), axis=-1))
 np.save(output_dir / 'gamma.npy', Gam_recon)
 np.save(output_dir / 'anatomical_prior_image.npy', aimg)
 np.save(output_dir / 'true_na_image.npy', na_image)
 np.save(output_dir / 't1_image.npy', t1_image)
-np.save(output_dir / 'corr_field.npy', corr_field)
 
 ims = 3 * [{
     'cmap': plt.cm.Greys_r,
@@ -494,8 +389,8 @@ ims = 3 * [{
 
 vi4 = pv.ThreeAxisViewer([
     np.flip(abs_recons[-1, ...], (0, 1)),
-    np.flip(np.abs(ifft_echo_1_corr), (0, 1)),
-    np.flip(np.abs(ifft_echo_1_filtered_corr), (0, 1)),
+    np.flip(np.abs(ifft_echo_1), (0, 1)),
+    np.flip(np.abs(ifft_echo_1_filtered), (0, 1)),
     np.flip(Gam_recons[-1, ...], (0, 1))
 ],
                          imshow_kwargs=ims)
