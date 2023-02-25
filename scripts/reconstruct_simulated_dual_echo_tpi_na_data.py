@@ -97,20 +97,26 @@ with open(output_dir / 'config.json', 'w') as f:
 #-------------------------------------------------------------------------
 # restore the saved noise-free nufft data from file
 
+with open('.simulation_config.json', 'r') as f:
+    data_root_dir: str = json.load(f)['data_root_dir']
+
 if gradient_strength == 16:
-    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g16_23Na_v1'
+    gradient_file: str = str(
+        Path(data_root_dir) / 'tpi_gradients/n28p4dt10g16_23Na_v1')
 elif gradient_strength == 24:
-    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g24f23'
+    gradient_file: str = str(
+        Path(data_root_dir) / 'tpi_gradients/n28p4dt10g24f23')
 elif gradient_strength == 32:
-    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g32f23'
+    gradient_file: str = str(
+        Path(data_root_dir) / 'tpi_gradients/n28p4dt10g32f23')
 elif gradient_strength == 48:
-    gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g48f23'
+    gradient_file: str = str(
+        Path(data_root_dir) / 'tpi_gradients/n28p4dt10g48f23')
 else:
     raise ValueError
 
 simulated_data_path = Path(
-    '/data'
-) / 'sodium_mr' / f'{phantom}_{Path(gradient_file).name}{decay_suffix}'
+    data_root_dir) / f'{phantom}_{Path(gradient_file).name}{decay_suffix}'
 
 print(simulated_data_path.name)
 
@@ -254,7 +260,7 @@ readout_inds = []
 for i, _ in enumerate(tr):
     readout_inds.append(np.where(readout_bin_image == i))
 
-#vi2 = pv.ThreeAxisViewer(np.fft.fftshift(readout_bin_image))
+vi2 = pv.ThreeAxisViewer(np.fft.fftshift(readout_bin_image))
 
 #-------------------------------------------------------------------------------
 # setup an initial guess for Gamma (the ratio between the second and first echo)

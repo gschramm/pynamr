@@ -1,6 +1,7 @@
 """script to regrid 3D TPI (twisted projection) k-space data"""
 
 import argparse
+import json
 import numpy as np
 from pathlib import Path
 
@@ -26,22 +27,30 @@ if __name__ == '__main__':
                         default='brainweb')
     args = parser.parse_args()
 
+    # read the data root directory from the config file
+    with open('.simulation_config.json', 'r') as f:
+        data_root_dir: str = json.load(f)['data_root_dir']
+
     gradient_strength = args.gradient_strength
     no_decay = args.no_decay
     phantom = args.phantom
 
     simulation_matrix_size: int = 256
     field_of_view_cm: float = 22.
-    phantom_data_path: Path = Path('/data/sodium_mr/brainweb54')
+    phantom_data_path: Path = Path(data_root_dir) / 'brainweb54'
 
     if gradient_strength == 16:
-        gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g16_23Na_v1'
+        gradient_file: str = str(
+            Path(data_root_dir) / 'tpi_gradients/n28p4dt10g16_23Na_v1')
     elif gradient_strength == 24:
-        gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g24f23'
+        gradient_file: str = str(
+            Path(data_root_dir) / 'tpi_gradients/n28p4dt10g24f23')
     elif gradient_strength == 32:
-        gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g32f23'
+        gradient_file: str = str(
+            Path(data_root_dir) / 'tpi_gradients/n28p4dt10g32f23')
     elif gradient_strength == 48:
-        gradient_file: str = '/data/sodium_mr/tpi_gradients/n28p4dt10g48f23'
+        gradient_file: str = str(
+            Path(data_root_dir) / 'tpi_gradients/n28p4dt10g48f23')
     else:
         raise ValueError
 
@@ -92,8 +101,7 @@ if __name__ == '__main__':
         raise ValueError
 
     output_path = Path(
-        '/data'
-    ) / 'sodium_mr' / f'{phantom}_{Path(gradient_file).name}{decay_suffix}'
+        data_root_dir) / f'{phantom}_{Path(gradient_file).name}{decay_suffix}'
     output_path.mkdir(exist_ok=True)
 
     #---------------------------------------------------------------------
