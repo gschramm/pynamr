@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 import nibabel as nib
 import math
+from typing import Union
 
 from pymirc.image_operations import aff_transform, zoom3d
 
@@ -353,7 +354,7 @@ class TriliniearKSpaceRegridder:
                  ky: npt.NDArray,
                  kz: npt.NDArray,
                  sampling_density: npt.NDArray,
-                 kmax: float | None = None,
+                 kmax: Union[float, None] = None,
                  phase_correct: bool = True,
                  normalize_central_weight=True) -> None:
         self._matrix_size = matrix_size
