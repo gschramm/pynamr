@@ -34,8 +34,12 @@ for i, config_file in enumerate(config_files):
     with open(config_file, 'r') as f:
         config_data = json.load(f)
     tmp = pd.DataFrame(config_data, index=[i])
+    tmp["gradient_strength"] = tmp["gradient_strength"].astype(str)
     run_dir = config_file.parent
     tmp["run_dir"] = run_dir
+    if tmp["no_decay"].values[0]:
+        assert(tmp["gradient_strength"].values[0]=="16")
+        tmp["gradient_strength"]="16nd"
     df = pd.concat([df, tmp])
 
 df.sort_values(
@@ -49,7 +53,7 @@ df[cats] = df[cats].astype('category')
 
 # select a noise level and a noise realization
 noise_level = 2e5
-realiz = 859456 #df.seed[0]
+realiz = df.seed[0] #859456 #df.seed[0]
 
 # select one data from one noise level
 df = df.loc[df.noise_level == noise_level]
@@ -178,8 +182,8 @@ for r in range(df.shape[0]):
 
 ims_na = dict(origin='lower', vmax=2.5, cmap=plt.cm.Greys_r)
 ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.Greys_r)
-ims_na = dict(origin='lower', vmax=3., cmap=plt.cm.Greys_r)
-ims_gam = dict(origin='lower', vmin=0., vmax=1, cmap=plt.cm.Greys_r)
+#ims_na = dict(origin='lower', vmax=3., cmap=plt.cm.Greys_r)
+#ims_gam = dict(origin='lower', vmin=0., vmax=1, cmap=plt.cm.Greys_r)
 sl = 64
 
 # use data for a single realization
