@@ -2,6 +2,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import json
 from scipy.ndimage import binary_dilation
 
@@ -9,166 +10,262 @@ from pymirc.image_operations import zoom3d
 
 import seaborn as sns
 
-noise_level = 2e5
-sim_path: Path = Path('run_10_iter')
-config_files = sorted(list(sim_path.rglob('config.json')))
+import sys
+import os
+
+import pymirc.viewer as pv
+
+#folder = 'abstract_seed1'
+#folder = 'abstract_30seeds_reduced'
+#folder = 'abstract_artefacted_more'
+folder = 'abstract'
+
+
+# base dir
+workdir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/'
+
+recon_path: Path = Path(workdir) / f'run_{folder}'
+phantom_path: Path = Path(workdir) / 'brainweb54'
+
+config_files = sorted(list(recon_path.rglob('config.json')))
 
 df = pd.DataFrame()
-
 for i, config_file in enumerate(config_files):
-    #print(config_file)
-
     with open(config_file, 'r') as f:
         config_data = json.load(f)
-
     tmp = pd.DataFrame(config_data, index=[i])
     run_dir = config_file.parent
     tmp["run_dir"] = run_dir
     df = pd.concat([df, tmp])
 
 df.sort_values(
-    ['noise_level', 'beta_gamma', 'gradient_strength', 'beta_recon'],
+    ['noise_level', 'seed', 'beta_gamma', 'gradient_strength', 'beta_recon'],
     inplace=True)
 df.reset_index(inplace=True, drop=True)
+
+# convert colums to categorical
+cats = ['noise_level', 'gradient_strength', 'beta_gamma', 'beta_recon', 'seed']
+df[cats] = df[cats].astype('category')
+
+# select a noise level and a noise realization
+noise_level = 2e5
+realiz = 859456 #df.seed[0]
 
 # select one data from one noise level
 df = df.loc[df.noise_level == noise_level]
 
-# create an empty column for the GM/WM to
-df['GM'] = 0.
-df['GM conv'] = 0.
-df['WM'] = 0.
-df['WM conv'] = 0.
-df['GM/WM ratio'] = 0.
-df['GM/WM ratio conv'] = 0.
+# select a subset of seeds
+#seeds = df.seed.cat.categories.to_list()
+#seeds = seeds[:2]
+#df = df[df.seed.isin(seeds)]
+#df['seed'].cat.remove_unused_categories(inplace=True)
+#df.reindex()
 
-# convert colums to categorical
-cats = ['noise_level', 'gradient_strength', 'beta_gamma', 'beta_recon']
-df[cats] = df[cats].astype('category')
+# load true simulated na image
+true_na_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1' / 'simulated_nufft_data.npz')['na_image']
+t1_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1' / 'simulated_nufft_data.npz')['t1_image']
+
+
+
+# create an empty column for the GM/WM to
+df['gm_wm_ratio'] = 0.
+df['gm_wm_ratio_conv'] = 0.
+df['gm'] = 0.
+df['wm'] = 0.
+df['gm_conv'] = 0.
+df['wm_conv'] = 0.
+
+
+# number of categories for each param
+nb_grad = len(df.gradient_strength.cat.categories)
+nb_beta_gamma = len(df.beta_gamma.cat.categories)
+nb_beta_recon = len(df.beta_recon.cat.categories)
+nb_realiz = len(df.seed.cat.categories)
+
+print('gradients')
+print(df.gradient_strength.cat.categories.tolist())
+print('beta_gamma')
+print(df.beta_gamma.cat.categories.tolist())
+print('beta_recon')
+print(df.beta_recon.cat.categories.tolist())
+print('seeds')
+print(df.seed.cat.categories.tolist())
+
+# there should be a single entry for each possible combination of categories
+assert(df.shape[0] == nb_grad*nb_beta_gamma*nb_beta_recon*nb_realiz)
 
 # load the 256 GM, WM and cortex mask
-gm_256 = np.load(sim_path / 'gm_256.npy')
-wm_256 = np.load(sim_path / 'wm_256.npy')
-cortex_256 = np.load(sim_path / 'cortex_256.npy')
+gm_256 = np.load(phantom_path / 'gm_256.npy')
+wm_256 = np.load(phantom_path / 'wm_256.npy')
+cortex_256 = np.load(phantom_path / 'cortex_256.npy')
 
 # exclude subcortical region from GM mask
 gm_256[cortex_256 == 0] = 0
 
 gm_256_dilated = binary_dilation(gm_256, iterations=5).astype(int)
-local_wm_256 = np.logical_and((gm_256_dilated - gm_256).astype(int),
+wm_local_256 = np.logical_and((gm_256_dilated - gm_256).astype(int),
                               wm_256.astype(int))
 
+# truth
+true = {}
+true['gm_wm_ratio'] = true_na_image[gm_256].mean() / true_na_image[wm_local_256].mean()
+true['gm'] = true_na_image[gm_256].mean()
+true['wm'] = true_na_image[wm_256].mean()
+true['wm_local'] = true_na_image[wm_local_256].mean()
+
+
+# option for loading images for all the realizations
+load_all_images = True 
+if load_all_images:
+    agr_na_realiz = np.zeros((nb_grad, nb_beta_gamma, nb_beta_recon, nb_realiz, 256, 256, 256), np.float64)
+    gamma_na_realiz = np.zeros((nb_grad, nb_beta_gamma, nb_beta_recon, nb_realiz, 256, 256, 256), np.float64)
+    conv_realiz = np.zeros((nb_grad, nb_realiz, 256, 256, 256), np.float64)
+
+# compute criteria (GM/WM ratios etc) for all the images
+for r in range(df.shape[0]):
+    run_dir = df.iloc[r].run_dir
+    agr_na = np.abs(np.load(run_dir / 'agr_na.npy'))
+    gam_recon = np.load(run_dir / 'gamma.npy')
+    conv = np.abs(np.load(run_dir / 'ifft_echo_1_filtered_corr.npy'))
+
+    # AGR
+    # for the quantification we have to interpolate the reconstructed
+    # image to the 256 grid
+    agr_na_interp = zoom3d(agr_na, 2)
+    # GM/WM ratio
+    gm_wm_ratio = agr_na_interp[gm_256].mean(
+    ) / agr_na_interp[wm_local_256].mean()
+    df.at[df.index[r], 'gm_wm_ratio'] = float(gm_wm_ratio)
+    # GM mean
+    gm = agr_na_interp[gm_256].mean()
+    df.at[df.index[r], 'gm'] = float(gm)
+    # WM mean
+    wm = agr_na_interp[wm_256].mean()
+    df.at[df.index[r], 'wm'] = float(wm)
+    # WM local mean
+    wm_local = agr_na_interp[wm_local_256].mean()
+    df.at[df.index[r], 'wm_local'] = float(wm_local)
+
+    # simple reconstruction, changes with gradient and seed
+    # for the quantification we have to interpolate the reconstructed
+    # image to the 256 grid
+    conv_interp = zoom3d(conv, 2)
+    gamma_na_interp = zoom3d(gam_recon, 2)
+
+    gm_wm_ratio_conv = conv_interp[gm_256].mean(
+    ) / conv_interp[wm_local_256].mean()
+    df.at[df.index[r], 'gm_wm_ratio_conv'] = float(gm_wm_ratio_conv)
+    gm_conv = conv_interp[gm_256].mean()
+    df.at[df.index[r], 'gm_conv'] = float(gm_conv)
+    wm_conv = conv_interp[wm_256].mean()
+    df.at[df.index[r], 'wm_conv'] = float(wm_conv)
+    wm_local_conv = conv_interp[wm_local_256].mean()
+    df.at[df.index[r], 'wm_local_conv'] = float(wm_local_conv)
+
+    # save the image for later analysis
+    if load_all_images:
+        grad_index = df.gradient_strength.cat.categories.to_list().index(
+            df.at[df.index[r], 'gradient_strength'])
+        beta_gamma_index = df.beta_gamma.cat.categories.to_list().index(df.at[df.index[r], 'beta_gamma'])
+        beta_recon_index = df.beta_recon.cat.categories.to_list().index(df.at[df.index[r], 'beta_recon'])
+        realiz_index = df.seed.cat.categories.to_list().index(df.at[df.index[r], 'seed'])
+        agr_na_realiz[grad_index, beta_gamma_index, beta_recon_index, realiz_index] = agr_na_interp
+        gamma_na_realiz[grad_index, beta_gamma_index, beta_recon_index, realiz_index] = gamma_na_interp
+        conv_realiz[grad_index, realiz_index] = conv_interp
+
 #------------------------------------------------------------------------------
-# visualizations
+# vizualize single realization for single noise level
 
 ims_na = dict(origin='lower', vmax=2.5, cmap=plt.cm.Greys_r)
 ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.Greys_r)
+ims_na = dict(origin='lower', vmax=3., cmap=plt.cm.Greys_r)
+ims_gam = dict(origin='lower', vmin=0., vmax=1, cmap=plt.cm.Greys_r)
 sl = 64
 
-na_fig1, na_ax1 = plt.subplots(4, 4, figsize=(9, 9), sharex=True, sharey=True)
-na_fig2, na_ax2 = plt.subplots(4, 4, figsize=(9, 9), sharex=True, sharey=True)
-na_fig3, na_ax3 = plt.subplots(4, 4, figsize=(9, 9), sharex=True, sharey=True)
+# use data for a single realization
+df_viz = df.loc[df.seed == realiz]
 
-na_figs = [na_fig1, na_fig2, na_fig3]
-na_axs = [na_ax1, na_ax2, na_ax3]
+# not great but there are not many figures (gradients)
+na_figs = []
+na_axs = []
+gam_figs = []
+gam_axs = []
+conv_figs = []
+conv_axs = []
+for g in range(nb_grad):
+    temp_fig, temp_ax = plt.subplots(nb_beta_gamma, nb_beta_recon, figsize=(9, 9))
+    na_figs.append(temp_fig)
+    na_axs.append(temp_ax)
 
-gam_fig1, gam_ax1 = plt.subplots(4,
-                                 4,
-                                 figsize=(9, 9),
-                                 sharex=True,
-                                 sharey=True)
-gam_fig2, gam_ax2 = plt.subplots(4,
-                                 4,
-                                 figsize=(9, 9),
-                                 sharex=True,
-                                 sharey=True)
-gam_fig3, gam_ax3 = plt.subplots(4,
-                                 4,
-                                 figsize=(9, 9),
-                                 sharex=True,
-                                 sharey=True)
+    temp_fig, temp_ax = plt.subplots(nb_beta_gamma, nb_beta_recon, figsize=(9, 9))
+    gam_figs.append(temp_fig)
+    gam_axs.append(temp_ax)
 
-gam_figs = [gam_fig1, gam_fig2, gam_fig3]
-gam_axs = [gam_ax1, gam_ax2, gam_ax3]
+    temp_fig, temp_ax = plt.subplots(nb_beta_gamma, nb_beta_recon, figsize=(9, 9))
+    conv_figs.append(temp_fig)
+    conv_axs.append(temp_ax)
 
-conv_fig1, conv_ax1 = plt.subplots(4,
-                                   4,
-                                   figsize=(9, 9),
-                                   sharex=True,
-                                   sharey=True)
-conv_fig2, conv_ax2 = plt.subplots(4,
-                                   4,
-                                   figsize=(9, 9),
-                                   sharex=True,
-                                   sharey=True)
-conv_fig3, conv_ax3 = plt.subplots(4,
-                                   4,
-                                   figsize=(9, 9),
-                                   sharex=True,
-                                   sharey=True)
+# show the truth
+truth_fig, truth_ax = plt.subplots(figsize=(3,3))
+truth_ax.imshow(true_na_image[:,:,true_na_image.shape[2]//2].T, **ims_na)
+truth_fig.suptitle('Truth', fontsize='medium')
+truth_ax.set_title(
+                f"GM/WM {true['gm_wm_ratio']:.2f}",
+                fontsize='small')
+truth_fig.tight_layout()
+truth_ax.axis('off')
+truth_fig.show()
 
-conv_figs = [conv_fig1, conv_fig2, conv_fig3]
-conv_axs = [conv_ax1, conv_ax2, conv_ax3]
-
+# group over grad and beta_gamma, and vary over beta_recon
 for (gradient_strength,
-     beta_gamma), ddf in df.groupby(['gradient_strength', 'beta_gamma']):
+     beta_gamma), ddf in df_viz.groupby(['gradient_strength', 'beta_gamma']):
     print(gradient_strength, beta_gamma)
 
     fig_index = df.gradient_strength.cat.categories.to_list().index(
         gradient_strength)
     row_index = df.beta_gamma.cat.categories.to_list().index(beta_gamma)
 
-    for j in range(ddf.shape[0]):
-        print(fig_index, row_index, j)
-        run_dir = ddf.iloc[j].run_dir
+    # the group should contain all the different beta_recon values, and only once and sorted
+    assert(ddf.shape[0] == nb_beta_recon and np.unique(ddf.beta_recon).size == nb_beta_recon)
+
+    for r in range(ddf.shape[0]):
+        #print(fig_index, row_index, j)
+
+        run_dir = ddf.iloc[r].run_dir
         agr_na = np.abs(np.load(run_dir / 'agr_na.npy'))
+        #agr_na *= 1.5e5 / ((256/64)**3 * np.sqrt(128)**3)
         gam_recon = np.load(run_dir / 'gamma.npy')
         conv = np.abs(np.load(run_dir / 'ifft_echo_1_filtered_corr.npy'))
 
-        # for the quantification we have to interpolate the reconstructed
-        # image to the 256 grid
-        agr_na_interp = zoom3d(agr_na, 2)
-        df['GM'][ddf.index[j]] = agr_na_interp[gm_256].mean()
-        df['WM'][ddf.index[j]] = agr_na_interp[wm_256].mean()
-        gm_wm_ratio = df['GM'][ddf.index[j]] / df['WM'][ddf.index[j]]
-        df['GM/WM ratio'][ddf.index[j]] = gm_wm_ratio
-
-        conv_interp = zoom3d(conv, 2)
-        df['GM conv'][ddf.index[j]] = conv_interp[gm_256].mean()
-        df['WM conv'][ddf.index[j]] = conv_interp[wm_256].mean()
-        gm_wm_ratio_conv = df['GM conv'][ddf.index[j]] / df['WM conv'][
-            ddf.index[j]]
-        df['GM/WM ratio conv'][ddf.index[j]] = gm_wm_ratio_conv
-
-        na_axs[fig_index][row_index, j].imshow(agr_na[..., sl].T, **ims_na)
-        gam_axs[fig_index][row_index, j].imshow(gam_recon[..., sl].T,
+        na_axs[fig_index][row_index, r].imshow(agr_na[..., sl].T, **ims_na)
+        gam_axs[fig_index][row_index, r].imshow(gam_recon[..., sl].T,
                                                 **ims_gam)
-        conv_axs[fig_index][row_index, j].imshow(conv[..., sl].T, **ims_na)
+        conv_axs[fig_index][row_index, r].imshow(conv[..., sl].T, **ims_na)
 
         if row_index == 0:
-            na_axs[fig_index][row_index, j].set_title(
-                f'beta recon {ddf.iloc[j].beta_recon}, GM/WM {gm_wm_ratio:.2f}',
-                fontsize='medium')
-            gam_axs[fig_index][row_index, j].set_title(
-                f'beta recon {ddf.iloc[j].beta_recon}', fontsize='medium')
-            conv_axs[fig_index][row_index, j].set_title(
-                f'beta recon {ddf.iloc[j].beta_recon}, GM/WM {gm_wm_ratio_conv:.2f}',
-                fontsize='medium')
+            na_axs[fig_index][row_index, r].set_title(
+                f'beta recon {ddf.iloc[r].beta_recon} \n GM/WM {ddf.iloc[r].gm_wm_ratio:.2f}',
+                fontsize='small')
+            gam_axs[fig_index][row_index, r].set_title(
+                f'beta recon {ddf.iloc[r].beta_recon}', fontsize='small')
+            conv_axs[fig_index][row_index, r].set_title(
+                f'beta recon {ddf.iloc[r].beta_recon} \n GM/WM {ddf.iloc[r].gm_wm_ratio_conv:.2f}',
+                fontsize='small')
         else:
             na_axs[fig_index][row_index,
-                              j].set_title(f'GM/WM {gm_wm_ratio:.2f}',
-                                           fontsize='medium')
+                              r].set_title(f'GM/WM {ddf.iloc[r].gm_wm_ratio:.2f}',
+                                           fontsize='small')
             conv_axs[fig_index][row_index,
-                                j].set_title(f'GM/WM {gm_wm_ratio_conv:.2f}',
-                                             fontsize='medium')
+                                r].set_title(f'GM/WM {ddf.iloc[r].gm_wm_ratio_conv:.2f}',
+                                             fontsize='small')
 
-        if j == 0:
-            na_axs[fig_index][row_index, j].set_ylabel(
-                f'beta gamma {ddf.iloc[j].beta_gamma}')
-            gam_axs[fig_index][row_index, j].set_ylabel(
-                f'beta gamma {ddf.iloc[j].beta_gamma}')
-            conv_axs[fig_index][row_index, j].set_ylabel(
-                f'beta gamma {ddf.iloc[j].beta_gamma}')
+        if r == 0:
+            na_axs[fig_index][row_index, r].set_ylabel(
+                f'beta gamma {ddf.iloc[r].beta_gamma}')
+            gam_axs[fig_index][row_index, r].set_ylabel(
+                f'beta gamma {ddf.iloc[r].beta_gamma}')
+            conv_axs[fig_index][row_index, r].set_ylabel(
+                f'beta gamma {ddf.iloc[r].beta_gamma}')
 
 for ax in na_axs:
     for axx in ax.ravel():
@@ -209,53 +306,171 @@ for i, fig in enumerate(conv_figs):
     fig.tight_layout()
     fig.show()
 
-# searborn grid plot for GM/WM ratio
+# ----------------------------------------------------------------
+# view quantification criteria for the single realization
 sns.set_context('notebook')
 sns.set(font_scale=1.1)
 sns.set_style('ticks')
-grid = sns.FacetGrid(df,
+
+criteria = ['gm_wm_ratio', 'gm', 'wm', 'wm_local']
+
+for crit in criteria:
+    grid = sns.FacetGrid(df_viz,
                      col='beta_gamma',
                      hue='gradient_strength',
                      legend_out=False)
-grid.map(sns.stripplot, 'beta_recon', 'GM/WM ratio')
-grid.add_legend()
+    grid.map(sns.stripplot, 'beta_recon', crit)
+    grid.add_legend()
 
-for ax in grid.axes.ravel():
-    ax.grid(ls=':')
-    ax.set_ylim(0.95, 1.55)
-    ax.axhline(1.5, color='r', lw=0.5, ls='--')
-    ax.axhline(df['GM/WM ratio conv'].values[0], color='k', lw=0.5, ls='--')
+    min_ratio = 0.9 * min( min(df_viz[crit].min(), true[crit] ), df_viz[crit+'_conv'].min() )
+    max_ratio = 1.05 * max( max(df_viz[crit].min(), true[crit] ), df_viz[crit+'_conv'].max() )
+    for ax in grid.axes.ravel():
+        ax.grid(ls=':')
+        ax.set_ylim(min_ratio, max_ratio)
+        ax.axhline(true[crit], color='r', lw=0.5, ls='--')
+        # conventional recon
+        for grad in df_viz.gradient_strength.cat.categories.to_list():
+            ax.axhline(df_viz[df_viz['gradient_strength']==grad][crit+'_conv'].values[0], color='k', lw=0.5, ls='--')
 
-grid.fig.show()
+    grid.fig.suptitle(crit+' single realization')
+    grid.fig.show()
 
-# searborn grid plot for GM
-grid2 = sns.FacetGrid(df,
-                      col='beta_gamma',
-                      hue='gradient_strength',
-                      legend_out=False)
-grid2.map(sns.stripplot, 'beta_recon', 'GM')
-grid2.add_legend()
+# ----------------------------------------------------------------
+# plot a summary statistic of quantification criteria
+sns.set_context('notebook')
+sns.set(font_scale=1.1)
+sns.set_style('ticks')
 
-for ax in grid2.axes.ravel():
-    ax.grid(ls=':')
-    ax.set_ylim(1.3, 1.65)
-    ax.axhline(1.5, color='r', lw=0.5, ls='--')
-    ax.axhline(df['GM conv'].values[0], color='k', lw=0.5, ls='--')
+# parameters
+params = ['gradient_strength', 'beta_gamma', 'beta_recon']
+# criteria that depend on parameters and realizations
+criteria = ['gm_wm_ratio', 'gm_wm_ratio_conv', 'gm', 'gm_conv', 'wm', 'wm_conv', 'wm_local', 'wm_local_conv']
 
-grid2.fig.show()
+# compute statistics (mean,std) for each parameter value combination, over realizations
+ddf = df.groupby(params)
+ddf_stats = ddf[criteria]
+# the number of rows for each group should be = number of seeds/realizations 
+assert(np.all(ddf_stats.count() == nb_realiz))
+# compute the mean and stddev
+ddf_stats = ddf_stats.agg(['mean','std'])
+# flatten the index multiindex for use with FacetGrid
+ddf_stats = ddf_stats.reset_index()
+# flatten the columns multiindex for use with FacetGrid
+ddf_stats.columns = [' '.join(col).strip() for col in ddf_stats.columns.values]
 
-# searborn grid plot for wM
-grid3 = sns.FacetGrid(df,
-                      col='beta_gamma',
-                      hue='gradient_strength',
-                      legend_out=False)
-grid3.map(sns.stripplot, 'beta_recon', 'WM')
-grid3.add_legend()
+# show criteria statistics one by one
+statistic = 'mean'
+for col in ['gm_wm_ratio', 'gm', 'wm', 'wm_local']:
+    # select the mean over realizations
+    colstat = col + ' ' + statistic
+    current_data = ddf_stats[[*params, colstat]]
+    grid = sns.FacetGrid(current_data,
+                     col='beta_gamma',
+                     hue='gradient_strength',
+                     legend_out=False)
+    grid.fig.suptitle(colstat)
+    grid.map(sns.stripplot, 'beta_recon', colstat)
+    grid.add_legend()
 
-for ax in grid3.axes.ravel():
-    ax.grid(ls=':')
-    ax.set_ylim(0.7, 1.2)
-    ax.axhline(1.0, color='r', lw=0.5, ls='--')
-    ax.axhline(df['WM conv'].values[0], color='k', lw=0.5, ls='--')
+    # add limits, truth, criteria for simple (conventional) recon
+    # conventional recon/criteria depend only on the gradient strength
+    colstat_conv = col + '_conv ' + statistic
+    conv_data = ddf_stats[['gradient_strength', colstat_conv]]
+    min_val = 0.9 * min(min(current_data[colstat].min(), true[col]), conv_data[colstat_conv].min())
+    max_val = 1.05 * max(max(current_data[colstat].max(), true[col]), conv_data[colstat_conv].max())
+    for ax in grid.axes.ravel():
+        ax.grid(ls=':')
+        ax.set_ylim(min_val, max_val)
+        ax.axhline(true[col], color='r', lw=0.5, ls='--')
+        # plot conventional recon criteria for all gradient strengths
+        # TODO plot them with the same color as for AGR recon, also a bit ugly
+        for grad in conv_data.gradient_strength.cat.categories.to_list():
+            conv_crit_value = conv_data[conv_data['gradient_strength']==grad][colstat_conv].values[0]
+            ax.axhline(conv_crit_value, color='k', lw=0.5, ls='--')
 
-grid3.fig.show()
+    grid.fig.show()
+
+# show criteria statistics one by one
+statistic = 'std'
+for col in ['gm_wm_ratio', 'gm', 'wm', 'wm_local']:
+    # select the mean over realizations
+    colstat = col + ' ' + statistic
+    current_data = ddf_stats[[*params, colstat]]
+    grid = sns.FacetGrid(current_data,
+                     col='beta_gamma',
+                     hue='gradient_strength',
+                     legend_out=False)
+    grid.fig.suptitle(colstat)
+    grid.map(sns.stripplot, 'beta_recon', colstat)
+    grid.add_legend()
+
+    # add limits, criteria for simple (conventional) recon
+    # conventional recon/criteria depend only on the gradient strength
+    colstat_conv = col + '_conv ' + statistic
+    conv_data = ddf_stats[['gradient_strength', colstat_conv]]
+    min_val = 0.9 * min(current_data[colstat].min(), conv_data[colstat_conv].min())
+    max_val = 1.05 *max(current_data[colstat].max(), conv_data[colstat_conv].max())
+    for ax in grid.axes.ravel():
+        ax.grid(ls=':')
+        ax.set_ylim(min_val, max_val)
+        # plot conventional recon criteria for all gradient strengths
+        # TODO plot them with the same color as for AGR recon, also a bit ugly
+        for grad in conv_data.gradient_strength.cat.categories.to_list():
+            conv_crit_value = conv_data[conv_data['gradient_strength']==grad][colstat_conv].values[0]
+            ax.axhline(conv_crit_value, color='k', lw=0.5, ls='--')
+
+    grid.fig.show()
+
+
+# ----------------------------------------------------------------
+# plot mean/stddev over realizations for each quantification criterion
+
+sns.set_context('notebook')
+sns.set(font_scale=1.1)
+sns.set_style('ticks')
+
+# parameters
+params = ['gradient_strength', 'beta_gamma', 'beta_recon']
+
+
+# show criteria statistics one by one
+for col in ['gm_wm_ratio', 'gm', 'wm', 'wm_local']:
+    current_data = df[[*params, col]]
+    col_wrap = 2
+    grid = sns.catplot(data=current_data, x="beta_recon", y=col, hue="gradient_strength", col='beta_gamma', kind="point", errorbar='ci', col_wrap=col_wrap, legend_out=False)
+    grid.fig.suptitle(col)
+    grid.add_legend()
+
+    # add limits, truth, criteria for simple (conventional) recon
+    # conventional recon/criteria depend only on the gradient strength
+    col_conv = col+'_conv'
+    conv_data = df[['gradient_strength', col_conv]]
+    min_val = 0.9 * min(min(current_data[col].min(), true[col]), conv_data[col_conv].min())
+    max_val = 1.05 * max(max(current_data[col].max(), true[col]), conv_data[col_conv].max())
+    for ax in grid.axes.ravel():
+        ax.grid(ls=':')
+        ax.set_ylim(min_val, max_val)
+        ax.axhline(true[col], color='r', lw=1, ls='--')
+        # plot conventional recon criteria for all gradient strengths
+        # TODO plot them with the same color as for AGR recon, also a bit ugly
+        for grad in conv_data.gradient_strength.cat.categories.to_list():
+            conv_crit_value = conv_data[conv_data['gradient_strength']==grad][col_conv].values[0]
+            ax.axhline(conv_crit_value, color='k', lw=1, ls='--')
+
+    grid.fig.show()
+
+
+# if loaded all the images, show the mean/stddev over realizations
+if load_all_images:
+    na = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_na_image.max())
+    prot = dict(cmap=plt.cm.gray)
+    ind_grad = df.gradient_strength.cat.categories.to_list().index(24)
+    agr_mean = np.mean(agr_na_realiz[ind_grad,0,0], axis=0)
+    agr_std = np.std(agr_na_realiz[ind_grad,0,0], axis=0)
+    vi = pv.ThreeAxisViewer([agr_mean, true_na_image, t1_image], imshow_kwargs=[na, na, prot])
+    gamma_mean = np.mean(gamma_na_realiz[ind_grad,0,0], axis=0)
+    gamma_std = np.std(gamma_na_realiz[ind_grad,0,0], axis=0)
+    vi1 = pv.ThreeAxisViewer([gamma_mean, gamma_std, true_na_image], imshow_kwargs=[prot, prot, na])
+
+    mpl.rc('image', cmap=plt.cm.viridis)
+

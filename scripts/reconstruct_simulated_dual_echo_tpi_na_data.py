@@ -6,6 +6,7 @@ from pathlib import Path
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import fmin_l_bfgs_b
+from numpy.random import default_rng
 
 from utils import TriliniearKSpaceRegridder, tpi_sampling_density
 from pymirc.image_operations import zoom3d
@@ -43,6 +44,7 @@ parser.add_argument('--phantom',
                     default='brainweb',
                     choices=['brainweb', 'blob'])
 parser.add_argument('--no_decay', action='store_true')
+parser.add_argument('--folder', type=str, default='')
 args = parser.parse_args()
 
 # input parameters
@@ -56,6 +58,7 @@ num_outer: int = args.num_outer
 num_inner: int = args.num_inner
 seed: int = args.seed
 phantom: str = args.phantom
+folder: str = args.folder
 
 if args.no_decay:
     decay_suffix = '_no_decay'
@@ -73,19 +76,20 @@ readout_bin_width_ms: float = 0.5
 interpolation: str = 'trilinear'
 
 #-------------------------------------------------------------------------
-np.random.seed(seed)
+rng = default_rng(seed)
+
+#-------------------------------------------------------------------------
+#-------------------------------------------------------------------------
+with open('.simulation_config.json', 'r') as f:
+    data_root_dir: str = json.load(f)['data_root_dir']
 
 # create the output directory and save the input parameters
 i_out = 0
-output_dir = Path(
-    f'run/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}_{i_out:03}'
-)
+output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}_{i_out:03}'
 
 while output_dir.exists():
     i_out += 1
-    output_dir = Path(
-        f'run/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}_{i_out:03}'
-    )
+    output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}_{i_out:03}'
 
 output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -93,13 +97,7 @@ output_dir.mkdir(exist_ok=True, parents=True)
 with open(output_dir / 'config.json', 'w') as f:
     json.dump(vars(args), f)
 
-#-------------------------------------------------------------------------
-#-------------------------------------------------------------------------
 # restore the saved noise-free nufft data from file
-
-with open('.simulation_config.json', 'r') as f:
-    data_root_dir: str = json.load(f)['data_root_dir']
-
 if gradient_strength == 16:
     gradient_file: str = str(
         Path(data_root_dir) / 'tpi_gradients/n28p4dt10g16_23Na_v1')
@@ -175,14 +173,14 @@ if show_trajectory:
 # add noise to the non-uniform fft data
 data_size = nonuniform_data_long_echo_1.size
 noisy_nonuniform_data_long_echo_1 = nonuniform_data_long_echo_1 + noise_level * (
-    np.random.randn(data_size) + 1j * np.random.randn(data_size))
+    rng.standard_normal(data_size) + 1j * rng.standard_normal(data_size))
 noisy_nonuniform_data_long_echo_2 = nonuniform_data_long_echo_2 + noise_level * (
-    np.random.randn(data_size) + 1j * np.random.randn(data_size))
+    rng.standard_normal(data_size) + 1j * rng.standard_normal(data_size))
 
 noisy_nonuniform_data_short_echo_1 = nonuniform_data_short_echo_1 + noise_level * (
-    np.random.randn(data_size) + 1j * np.random.randn(data_size))
+    rng.standard_normal(data_size) + 1j * rng.standard_normal(data_size))
 noisy_nonuniform_data_short_echo_2 = nonuniform_data_short_echo_2 + noise_level * (
-    np.random.randn(data_size) + 1j * np.random.randn(data_size))
+    rng.standard_normal(data_size) + 1j * rng.standard_normal(data_size))
 
 #-------------------------------------------------------------------------
 
