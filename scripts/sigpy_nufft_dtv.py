@@ -12,15 +12,15 @@ from utils import setup_blob_phantom, setup_brainweb_phantom, read_tpi_gradient_
 #--------------------------------------------------------------------------
 
 ishape = (128, 128, 128)
-noise_level = 3e-5
+noise_level = 0.01
 max_num_iter = 100
 sigma = 1e-1
 
 phantom = 'brainweb'
 
 regularization_operator = 'projected_gradient'  # projected_gradient or gradient
-regularization_norm = 'L2'  # L1 or L2
-beta = 3e-2
+regularization_norm = 'L1'  # L1 or L2
+beta = 1e-2  # ca 1e-2 for L1 and 3e-1 for L2
 
 field_of_view_cm: float = 22.
 no_decay: bool = True
@@ -106,11 +106,6 @@ kx = np.vstack((kx, -kx))
 ky = np.vstack((ky, -ky))
 kz = np.vstack((kz, -kz))
 
-# take only every 4th readout to speed up the simulation
-kx = kx[::4, :]
-ky = ky[::4, :]
-kz = kz[::4, :]
-
 # reshape kx, ky, kz into single coordinate array
 coords = cp.zeros((kx.size, 3))
 coords[:, 0] = cp.asarray(kx.ravel())
@@ -168,7 +163,6 @@ else:
     raise ValueError('unknown regularization norm')
 
 #--------------------------------------------------------------------------
-
 # simulate noise-free data
 y = A.apply(x)
 
@@ -176,9 +170,24 @@ y = A.apply(x)
 y += noise_level * cp.abs(
     y.max()) * (cp.random.randn(*y.shape) + 1j * cp.random.randn(*y.shape))
 
-x0 = A.H(y)
-x0 = x0.max()
+# grid data for reference recon
+y_gridded = sigpy.gridding(y, coords, ishape, kernel='spline', width=1)
+samp_dens = sigpy.gridding(cp.ones_like(y),
+                           coords,
+                           ishape,
+                           kernel='kaiser_bessel')
+ifft_op = sigpy.linop.IFFT(ishape)
 
+y_gridded_corr = y_gridded.copy()
+y_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
+
+# perform IFFT recon (without correction for fall-of due to k-space interpolation)
+ifft = ifft_op(y_gridded_corr)
+ifft *= (x.max() / cp.abs(ifft).max())
+
+#--------------------------------------------------------------------------
+# iterative recon with structural prior
+x0 = ifft.copy()
 alg = sigpy.app.LinearLeastSquares(A,
                                    y,
                                    x=A.H(y),
@@ -192,4 +201,7 @@ print(alg.sigma, alg.tau, alg.sigma * alg.tau)
 x_hat = alg.run()
 
 x_hat_cpu = cp.asnumpy(x_hat)
-vi = pv.ThreeAxisViewer([np.abs(x_hat_cpu), x_hat_cpu.real, x_hat_cpu.imag])
+vi = pv.ThreeAxisViewer([
+    np.abs(cp.asnumpy(ifft)),
+    np.abs(x_hat_cpu), x_hat_cpu.real, x_hat_cpu.imag
+])
