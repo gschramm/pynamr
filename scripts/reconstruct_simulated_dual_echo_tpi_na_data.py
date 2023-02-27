@@ -85,11 +85,11 @@ with open('.simulation_config.json', 'r') as f:
 
 # create the output directory and save the input parameters
 i_out = 0
-output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}_{i_out:03}'
+output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}{decay_suffix}_{i_out:03}'
 
 while output_dir.exists():
     i_out += 1
-    output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}_{i_out:03}'
+    output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}{decay_suffix}_{i_out:03}'
 
 output_dir.mkdir(exist_ok=True, parents=True)
 
