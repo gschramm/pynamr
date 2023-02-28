@@ -21,7 +21,11 @@ from nearest_neighbors import nearest_neighbors, is_nearest_neighbor_of
 
 #-------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
-parser.add_argument('--beta_recon', type=float, default=1.)
+parser.add_argument(
+    '--data_dir',
+    type=str,
+    default='/data/sodium_mr/20230225_MR3_GS_TPI/preprocessed_regridded_data')
+parser.add_argument('--beta_recon', type=float, default=3.)
 parser.add_argument('--beta_gamma', type=float, default=10.)
 parser.add_argument('--num_outer', type=int, default=10)
 parser.add_argument('--num_inner', type=int, default=20)
@@ -32,12 +36,13 @@ beta_recon: float = args.beta_recon
 beta_gamma: float = args.beta_gamma
 num_outer: int = args.num_outer
 num_inner: int = args.num_inner
+data_dir: Path = Path(args.data_dir)
 
 show_trajectory: bool = True
 
-na_echo_1_file: str = '/data/sodium_mr/20230218_MR3_GS_TPI_and_Radial/preprocessed_regridded_data/echo_1.npy'
-na_echo_2_file: str = '/data/sodium_mr/20230218_MR3_GS_TPI_and_Radial/preprocessed_regridded_data/echo_2.npy'
-t1_nifti_file: str = '/data/sodium_mr/20230218_MR3_GS_TPI_and_Radial/preprocessed_regridded_data/t1_aligned.npy'
+na_echo_1_file: Path = data_dir / 'echo_1.npy'
+na_echo_2_file: Path = data_dir / 'echo_2.npy'
+t1_nifti_file: Path = data_dir / 't1_aligned.npy'
 
 #-------------------------------------------------------------------------
 # fixed parameters
@@ -50,6 +55,15 @@ readout_bin_width_ms: float = 0.5
 
 gradient_strength: int = 16
 field_of_view_cm: float = 22.
+
+i_out = 0
+output_dir = data_dir.parent / f'recons/br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_{i_out:03}'
+
+while output_dir.exists():
+    i_out += 1
+    output_dir = data_dir.parent / f'recons/br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_{i_out:03}'
+
+output_dir.mkdir(exist_ok=True, parents=True)
 
 #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
@@ -236,36 +250,34 @@ for i in range(num_outer):
     Gam_recon = res[0].reshape(recon_shape[:-1])
     Gam_recons[i, ...] = Gam_recon
 
-## save the results
-#np.save(output_dir / 'ifft_echo_1_corr.npy', ifft_echo_1_corr)
-#np.save(output_dir / 'ifft_echo_2_corr.npy', ifft_echo_2_corr)
-#np.save(output_dir / 'ifft_echo_1_filtered_corr.npy',
-#        ifft_echo_1_filtered_corr)
-#np.save(output_dir / 'ifft_echo_2_filtered_corr.npy',
-#        ifft_echo_2_filtered_corr)
-#np.save(output_dir / 'agr_na.npy',
-#        np.squeeze(recon.view(dtype=np.complex128), axis=-1))
-#np.save(output_dir / 'gamma.npy', Gam_recon)
-#np.save(output_dir / 'anatomical_prior_image.npy', aimg)
-#np.save(output_dir / 'true_na_image.npy', na_image)
-#np.save(output_dir / 't1_image.npy', t1_image)
-#np.save(output_dir / 'corr_field.npy', corr_field)
+# save the results
+np.save(output_dir / 'ifft_echo_1_corr.npy', ifft_echo_1)
+np.save(output_dir / 'ifft_echo_2_corr.npy', ifft_echo_2)
+np.save(output_dir / 'ifft_echo_1_filtered_corr.npy', ifft_echo_1_filtered)
+np.save(output_dir / 'ifft_echo_2_filtered_corr.npy', ifft_echo_2_filtered)
+np.save(output_dir / 'agr_na.npy',
+        np.squeeze(recon.view(dtype=np.complex128), axis=-1))
+np.save(output_dir / 'gamma.npy', Gam_recon)
+np.save(output_dir / 'anatomical_prior_image.npy', aimg)
 
-ims = 3 * [{
+ims = 6 * [{
     'cmap': plt.cm.Greys_r,
     'vmin': 0,
     'vmax': 2.5
 }] + [{
     'cmap': plt.cm.Greys_r,
-    'vmin': 0.5,
+    'vmin': 0.0,
     'vmax': 1.
 }]
 
 vi4 = pv.ThreeAxisViewer([
     np.flip(abs_recons[-1, ...], (0, 1)),
     np.flip(np.abs(ifft_echo_1), (0, 1)),
+    np.flip(np.abs(ifft_echo_2), (0, 1)),
     np.flip(np.abs(ifft_echo_1_filtered), (0, 1)),
+    np.flip(np.abs(ifft_echo_2_filtered), (0, 1)),
+    np.flip(3 * aimg / aimg.max(), (0, 1)),
     np.flip(Gam_recons[-1, ...], (0, 1))
 ],
                          imshow_kwargs=ims)
-#vi4.fig.savefig(output_dir / '00_screenshot.png')
+vi4.fig.savefig(output_dir / '00_screenshot.png')
