@@ -1,6 +1,7 @@
 """minimal script that shows how to solve L2square data fidelity + anatomical DTV prior"""
 import argparse
 import sigpy
+import math
 import cupy as cp
 import numpy as np
 
@@ -23,6 +24,10 @@ parser.add_argument('--regularization_norm',
                     choices=['L1', 'L2'])
 parser.add_argument('--beta', type=float, default=1e-2)
 parser.add_argument('--max_num_iter', type=int, default=300)
+parser.add_argument('--gradient_strength',
+                    type=int,
+                    default=16,
+                    choices=[16, 24, 32])
 parser.add_argument('--noise_level', type=float, default=1e-2)
 args = parser.parse_args()
 
@@ -31,6 +36,7 @@ regularization_norm = args.regularization_norm
 beta = args.beta
 max_num_iter = args.max_num_iter
 noise_level = args.noise_level
+gradient_strength: int = args.gradient_strength
 
 ishape = (128, 128, 128)
 sigma = 1e-1
@@ -39,7 +45,6 @@ phantom = 'brainweb'
 
 field_of_view_cm: float = 22.
 no_decay: bool = True
-gradient_strength: int = 16
 
 # read the data root directory from the config file
 with open('.simulation_config.json', 'r') as f:
@@ -89,7 +94,7 @@ else:
     raise ValueError
 
 # move image to GPU
-x = cp.asarray(x)
+x = cp.asarray(x.astype(np.complex128))
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
@@ -115,22 +120,42 @@ kmax = 1 / (2 * field_of_view_cm / 64)
 kx, ky, kz, header, n_readouts_per_cone = read_tpi_gradient_files(
     gradient_file)
 
-# the gradient files only contain a half sphere
-# we add the 2nd half where all gradients are reversed
-kx = np.vstack((kx, -kx))
-ky = np.vstack((ky, -ky))
-kz = np.vstack((kz, -kz))
+all_coords = []
 
-# reshape kx, ky, kz into single coordinate array
-coords = cp.zeros((kx.size, 3))
-coords[:, 0] = cp.asarray(kx.ravel())
-coords[:, 1] = cp.asarray(ky.ravel())
-coords[:, 2] = cp.asarray(kz.ravel())
-# sigpy needs unitless k-space points (ranging from -n/2 ... n/2)
-# -> we have to multiply with the field_of_view
-coords *= field_of_view_cm
+# split the acquisition into chunks of 0.5ms = 500us (sampling is on 10us -> 50 elements per chunck)
+time_bins_inds = np.array_split(np.arange(kx.shape[1]),
+                                math.ceil(kx.shape[1] / 50))
 
-A = (0.03) * sigpy.linop.NUFFT(ishape, coords, oversamp=1.25, width=4)
+As = []
+
+for i, time_bin_inds in enumerate(time_bins_inds):
+    k0 = cp.asarray(kx[:, time_bin_inds])
+    k1 = cp.asarray(ky[:, time_bin_inds])
+    k2 = cp.asarray(kz[:, time_bin_inds])
+
+    # the gradient files only contain a half sphere
+    # we add the 2nd half where all gradients are reversed
+    k0 = np.vstack((k0, -k0))
+    k1 = np.vstack((k1, -k1))
+    k2 = np.vstack((k2, -k2))
+
+    # reshape kx, ky, kz into single coordinate array
+    coords = cp.zeros((k0.size, 3))
+    coords[:, 0] = cp.asarray(k0.ravel())
+    coords[:, 1] = cp.asarray(k1.ravel())
+    coords[:, 2] = cp.asarray(k2.ravel())
+    # sigpy needs unitless k-space points (ranging from -n/2 ... n/2)
+    # -> we have to multiply with the field_of_view
+    coords *= field_of_view_cm
+
+    all_coords.append(coords)
+
+    As.append(
+        (0.03) * sigpy.linop.NUFFT(ishape, coords, oversamp=1.25, width=4))
+
+all_coords = cp.vstack(all_coords)
+A = sigpy.linop.Vstack(As)
+
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
 # setup projected gradient operator for DTV
@@ -186,9 +211,9 @@ y += noise_level * cp.abs(
     y.max()) * (cp.random.randn(*y.shape) + 1j * cp.random.randn(*y.shape))
 
 # grid data for reference recon
-y_gridded = sigpy.gridding(y, coords, ishape, kernel='spline', width=1)
+y_gridded = sigpy.gridding(y, all_coords, ishape, kernel='spline', width=1)
 samp_dens = sigpy.gridding(cp.ones_like(y),
-                           coords,
+                           all_coords,
                            ishape,
                            kernel='kaiser_bessel')
 ifft_op = sigpy.linop.IFFT(ishape)
@@ -200,31 +225,34 @@ y_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
 ifft = ifft_op(y_gridded_corr)
 ifft *= (x.max() / cp.abs(ifft).max())
 
-#--------------------------------------------------------------------------
-# iterative recon with structural prior
-x0 = ifft.copy()
-alg = sigpy.app.LinearLeastSquares(A,
-                                   y,
-                                   x=A.H(y),
-                                   G=R,
-                                   proxg=proxg,
-                                   sigma=sigma,
-                                   max_iter=max_num_iter,
-                                   max_power_iter=10)
+vi = pv.ThreeAxisViewer(np.abs(cp.asnumpy(ifft)))
 
-print(alg.sigma, alg.tau, alg.sigma * alg.tau)
-
-x_hat = alg.run()
-
-x_hat_cpu = cp.asnumpy(x_hat)
-
-np.save(
-    Path('run') /
-    f'{regularization_operator}_{regularization_norm}_{beta:.2e}_{max_num_iter:04}.npy',
-    x_hat_cpu,
-)
-
-vi = pv.ThreeAxisViewer([
-    np.abs(cp.asnumpy(ifft)),
-    np.abs(x_hat_cpu), x_hat_cpu.real, x_hat_cpu.imag
-])
+##--------------------------------------------------------------------------
+## iterative recon with structural prior
+#x0 = ifft.copy()
+#alg = sigpy.app.LinearLeastSquares(A,
+#                                   y,
+#                                   x=A.H(y),
+#                                   G=R,
+#                                   proxg=proxg,
+#                                   sigma=sigma,
+#                                   max_iter=max_num_iter,
+#                                   max_power_iter=10)
+#
+#print(alg.sigma, alg.tau, alg.sigma * alg.tau)
+#
+#x_hat = alg.run()
+#
+#x_hat_cpu = cp.asnumpy(x_hat)
+#
+#np.save(
+#    Path('run') /
+#    f'{regularization_operator}_{regularization_norm}_{beta:.2e}_{max_num_iter:04}.npy',
+#    x_hat_cpu,
+#)
+#
+#vi = pv.ThreeAxisViewer([
+#    np.abs(cp.asnumpy(ifft)),
+#    np.abs(x_hat_cpu), x_hat_cpu.real, x_hat_cpu.imag
+#])
+#
