@@ -204,7 +204,7 @@ ims_na = dict(origin='lower', vmax=2.5, cmap=plt.cm.Greys_r)
 ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.Greys_r)
 #ims_na = dict(origin='lower', vmax=3., cmap=plt.cm.Greys_r)
 #ims_gam = dict(origin='lower', vmin=0., vmax=1, cmap=plt.cm.Greys_r)
-sl = 64
+sl = 128 
 
 # use data for a single realization
 df_viz = df.loc[df.seed == realiz]
@@ -241,6 +241,7 @@ truth_ax.axis('off')
 truth_fig.show()
 
 # group over grad and beta_gamma, and vary over beta_recon
+realiz_index = df.seed.cat.categories.to_list().index(realiz)
 for (gradient_strength,
      beta_gamma), ddf in df_viz.groupby(['gradient_strength', 'beta_gamma']):
     print(gradient_strength, beta_gamma)
@@ -255,16 +256,15 @@ for (gradient_strength,
     for r in range(ddf.shape[0]):
         #print(fig_index, row_index, j)
 
-        run_dir = ddf.iloc[r].run_dir
-        agr_na = np.abs(np.load(run_dir / 'agr_na.npy'))
-        #agr_na *= 1.5e5 / ((256/64)**3 * np.sqrt(128)**3)
-        gam_recon = np.load(run_dir / 'gamma.npy')
-        conv = np.abs(np.load(run_dir / 'ifft_echo_1_filtered_corr.npy'))
+        #run_dir = ddf.iloc[r].run_dir
+        #agr_na = np.abs(np.load(run_dir / 'agr_na.npy'))
+        #gam_recon = np.load(run_dir / 'gamma.npy')
+        #conv = np.abs(np.load(run_dir / 'ifft_echo_1_filtered_corr.npy'))
 
-        na_axs[fig_index][row_index, r].imshow(agr_na[..., sl].T, **ims_na)
-        gam_axs[fig_index][row_index, r].imshow(gam_recon[..., sl].T,
+        na_axs[fig_index][row_index, r].imshow(agr_na_realiz[fig_index, r, row_index, realiz_index, ..., sl].T, **ims_na)
+        gam_axs[fig_index][row_index, r].imshow(gamma_na_realiz[fig_index, r, row_index, realiz_index, ..., sl].T,
                                                 **ims_gam)
-        conv_axs[fig_index][row_index, r].imshow(conv[..., sl].T, **ims_na)
+        conv_axs[fig_index][row_index, r].imshow(conv_realiz[fig_index, realiz_index, ..., sl].T, **ims_na)
 
         if row_index == 0:
             na_axs[fig_index][row_index, r].set_title(
@@ -460,8 +460,7 @@ for col in ['gm_wm_ratio', 'gm', 'wm', 'csf', 'wm_local']:
 
 
 # if loaded all the images, show the mean/stddev over realizations
-showMeanStd = False
-if load_all_images and showMeanStd:
+if load_all_images:
     na = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_na_image.max())
     prot = dict(cmap=plt.cm.gray)
     ind_grad = df.gradient_strength.cat.categories.to_list().index("24")
@@ -476,7 +475,7 @@ if load_all_images and showMeanStd:
     mask = gm_256 + wm_256 + csf_256
     r = df.seed.cat.categories.to_list().index(realiz)
     m_true = np.mean(true_na_image[mask])
-    for g in range(len(df.seed.cat.categories.to_list())):
+    for g in range(len(df.gradient_strength.cat.categories.to_list())):
         mi_agr = np.mean(agr_na_realiz[g, -1, -1, r][mask])
         m_conv = np.mean(conv_realiz[g, r][mask])
         print(f'{df.gradient_strength.cat.categories.to_list()[g]} example mean over brain: truth={m_true:.2g} agr={mi_agr:.2g} conv={m_conv:.2g}')
