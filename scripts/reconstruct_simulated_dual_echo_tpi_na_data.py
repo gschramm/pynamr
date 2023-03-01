@@ -44,6 +44,7 @@ parser.add_argument('--phantom',
                     default='brainweb',
                     choices=['brainweb', 'blob'])
 parser.add_argument('--no_decay', action='store_true')
+parser.add_argument('--jitter_suffix', type=str, default='')
 parser.add_argument('--folder', type=str, default='')
 args = parser.parse_args()
 
@@ -59,6 +60,7 @@ num_inner: int = args.num_inner
 seed: int = args.seed
 phantom: str = args.phantom
 folder: str = args.folder
+jitter_suffix = args.jitter_suffix
 
 if args.no_decay:
     decay_suffix = '_no_decay'
@@ -85,11 +87,11 @@ with open('.simulation_config.json', 'r') as f:
 
 # create the output directory and save the input parameters
 i_out = 0
-output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}{decay_suffix}_{i_out:03}'
+output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}{decay_suffix}{jitter_suffix}_{i_out:03}'
 
 while output_dir.exists():
     i_out += 1
-    output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}{decay_suffix}_{i_out:03}'
+    output_dir = Path(data_root_dir) / f'run_{folder}/g_{gradient_strength}_br_{beta_recon:.2e}_bg_{beta_gamma:.2e}_n_{noise_level:.2e}_s_{seed}{decay_suffix}{jitter_suffix}_{i_out:03}'
 
 output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -114,7 +116,7 @@ else:
     raise ValueError
 
 simulated_data_path = Path(
-    data_root_dir) / f'{phantom}_{Path(gradient_file).name}{decay_suffix}'
+    data_root_dir) / f'{phantom}_{Path(gradient_file).name}{decay_suffix}{jitter_suffix}'
 
 print(simulated_data_path.name)
 
