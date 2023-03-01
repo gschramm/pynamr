@@ -1,4 +1,5 @@
 """minimal script that shows how to solve L2square data fidelity + anatomical DTV prior"""
+import argparse
 import sigpy
 import cupy as cp
 import numpy as np
@@ -11,16 +12,30 @@ from utils import setup_blob_phantom, setup_brainweb_phantom, read_tpi_gradient_
 
 #--------------------------------------------------------------------------
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--regularization_operator',
+                    type=str,
+                    default='projected_gradient',
+                    choices=['projected_gradient', 'gradient'])
+parser.add_argument('--regularization_norm',
+                    type=str,
+                    default='L1',
+                    choices=['L1', 'L2'])
+parser.add_argument('--beta', type=float, default=1e-2)
+parser.add_argument('--max_num_iter', type=int, default=300)
+parser.add_argument('--noise_level', type=float, default=1e-2)
+args = parser.parse_args()
+
+regularization_operator = args.regularization_operator
+regularization_norm = args.regularization_norm
+beta = args.beta
+max_num_iter = args.max_num_iter
+noise_level = args.noise_level
+
 ishape = (128, 128, 128)
-noise_level = 0.01
-max_num_iter = 100
 sigma = 1e-1
 
 phantom = 'brainweb'
-
-regularization_operator = 'projected_gradient'  # projected_gradient or gradient
-regularization_norm = 'L1'  # L1 or L2
-beta = 1e-2  # ca 1e-2 for L1 and 3e-1 for L2
 
 field_of_view_cm: float = 22.
 no_decay: bool = True
@@ -194,13 +209,21 @@ alg = sigpy.app.LinearLeastSquares(A,
                                    G=R,
                                    proxg=proxg,
                                    sigma=sigma,
-                                   max_iter=max_num_iter)
+                                   max_iter=max_num_iter,
+                                   max_power_iter=10)
 
 print(alg.sigma, alg.tau, alg.sigma * alg.tau)
 
 x_hat = alg.run()
 
 x_hat_cpu = cp.asnumpy(x_hat)
+
+np.save(
+    Path('run') /
+    f'{regularization_operator}_{regularization_norm}_{beta:.2e}_{max_num_iter:04}.npy',
+    x_hat_cpu,
+)
+
 vi = pv.ThreeAxisViewer([
     np.abs(cp.asnumpy(ifft)),
     np.abs(x_hat_cpu), x_hat_cpu.real, x_hat_cpu.imag
