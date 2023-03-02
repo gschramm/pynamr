@@ -13,6 +13,8 @@ from utils import setup_blob_phantom, setup_brainweb_phantom, read_tpi_gradient_
 
 import cupyx.scipy.ndimage as ndimage
 
+from utils_sigpy import nufft_t2star_operator
+
 #--------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser()
@@ -31,6 +33,11 @@ parser.add_argument('--gradient_strength',
                     default=16,
                     choices=[16, 24, 32])
 parser.add_argument('--noise_level', type=float, default=1e-2)
+parser.add_argument('--phantom',
+                    type=str,
+                    default='brainweb',
+                    choices=['brainweb', 'blob'])
+parser.add_argument('--no_decay', action='store_true')
 args = parser.parse_args()
 
 regularization_operator = args.regularization_operator
@@ -39,20 +46,26 @@ beta = args.beta
 max_num_iter = args.max_num_iter
 noise_level = args.noise_level
 gradient_strength: int = args.gradient_strength
+phantom = args.phantom
+no_decay: bool = args.no_decay
 
 ishape = (128, 128, 128)
 sigma = 1e-1
-phantom = 'brainweb'
 
 field_of_view_cm: float = 22.
-no_decay: bool = False
 
 # 10us sampling time
-sampling_time_ms: float = 0.01
+acq_sampling_time_ms: float = 0.01
 
 # echo times in ms
 echo_time_1_ms = 0.5
 echo_time_2_ms = 5.
+
+# scaling factor for nufft operators such that their norm is approx. equal to gradient op.
+scale = 0.03
+
+# signal fraction decaying with short T2* time
+short_fraction = 0.6
 
 # read the data root directory from the config file
 with open('.simulation_config.json', 'r') as f:
@@ -106,7 +119,13 @@ x = cp.asarray(x.astype(np.complex128))
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
-# setup nufft operator
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+# data simulation block
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
 
 if gradient_strength == 16:
     gradient_file: str = str(
@@ -128,57 +147,111 @@ kmax = 1 / (2 * field_of_view_cm / 64)
 kx, ky, kz, header, n_readouts_per_cone = read_tpi_gradient_files(
     gradient_file)
 
-all_coords = []
+true_ratio_image_short = cp.array(
+    np.exp(-(echo_time_2_ms - echo_time_1_ms) / T2short_ms))
+true_ratio_image_long = cp.array(
+    np.exp(-(echo_time_2_ms - echo_time_1_ms) / T2long_ms))
 
-# split the acquisition into chunks of 0.25ms
-time_bins_inds = np.array_split(
-    np.arange(kx.shape[1]), math.ceil(kx.shape[1] / (0.25 / sampling_time_ms)))
+# setup the data operators for the 1/2 echo using the short T2* time
+data_operator_1_short, data_operator_2_short = nufft_t2star_operator(
+    ishape,
+    kx,
+    ky,
+    kz,
+    field_of_view_cm=field_of_view_cm,
+    acq_sampling_time_ms=acq_sampling_time_ms,
+    time_bin_width_ms=0.25,
+    scale=scale,
+    add_mirrored_coordinates=True,
+    echo_time_1_ms=echo_time_1_ms,
+    echo_time_2_ms=echo_time_2_ms,
+    ratio_image=true_ratio_image_short)
 
-A1s = []
-A2s = []
+# setup the data operators for the 1/2 echo using the long T2* time
+data_operator_1_long, data_operator_2_long = nufft_t2star_operator(
+    ishape,
+    kx,
+    ky,
+    kz,
+    field_of_view_cm=field_of_view_cm,
+    acq_sampling_time_ms=acq_sampling_time_ms,
+    time_bin_width_ms=0.25,
+    scale=scale,
+    add_mirrored_coordinates=True,
+    echo_time_1_ms=echo_time_1_ms,
+    echo_time_2_ms=echo_time_2_ms,
+    ratio_image=true_ratio_image_long)
 
-for i, time_bin_inds in enumerate(time_bins_inds):
+#--------------------------------------------------------------------------
+# simulate noise-free data
+data_echo_1 = short_fraction * data_operator_1_short(x) + (
+    1 - short_fraction) * data_operator_1_long(x)
+data_echo_2 = short_fraction * data_operator_2_short(x) + (
+    1 - short_fraction) * data_operator_2_long(x)
 
-    #setup the decay image
-    readout_time_1_ms = echo_time_1_ms + time_bin_inds.mean() * sampling_time_ms
-    readout_time_2_ms = echo_time_2_ms + time_bin_inds.mean() * sampling_time_ms
-    decay_image_1 = cp.asarray(np.exp(-readout_time_1_ms / T2short_ms))
-    decay_image_2 = cp.asarray(np.exp(-readout_time_2_ms / T2short_ms))
+# add noise to the data
+nl = noise_level * cp.abs(data_echo_1.max())
+data_echo_1 += nl * (cp.random.randn(*data_echo_1.shape) +
+                     1j * cp.random.randn(*data_echo_1.shape))
+data_echo_2 += nl * (cp.random.randn(*data_echo_2.shape) +
+                     1j * cp.random.randn(*data_echo_2.shape))
 
-    k0 = cp.asarray(kx[:, time_bin_inds])
-    k1 = cp.asarray(ky[:, time_bin_inds])
-    k2 = cp.asarray(kz[:, time_bin_inds])
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+# recon block
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
 
-    # the gradient files only contain a half sphere
-    # we add the 2nd half where all gradients are reversed
-    k0 = np.vstack((k0, -k0))
-    k1 = np.vstack((k1, -k1))
-    k2 = np.vstack((k2, -k2))
+recon_operator = nufft_t2star_operator(
+    ishape,
+    kx,
+    ky,
+    kz,
+    field_of_view_cm=field_of_view_cm,
+    acq_sampling_time_ms=acq_sampling_time_ms,
+    time_bin_width_ms=0.25,
+    scale=scale,
+    add_mirrored_coordinates=True,
+    echo_time_1_ms=echo_time_1_ms,
+    echo_time_2_ms=echo_time_2_ms)
 
-    # reshape kx, ky, kz into single coordinate array
-    coords = cp.zeros((k0.size, 3))
-    coords[:, 0] = cp.asarray(k0.ravel())
-    coords[:, 1] = cp.asarray(k1.ravel())
-    coords[:, 2] = cp.asarray(k2.ravel())
-    # sigpy needs unitless k-space points (ranging from -n/2 ... n/2)
-    # -> we have to multiply with the field_of_view
-    coords *= field_of_view_cm
+# grid data for conventional IFFT recon
+data_echo_1_gridded = sigpy.gridding(data_echo_1,
+                                     recon_operator.linops[1].coord,
+                                     ishape,
+                                     kernel='spline',
+                                     width=1)
+data_echo_2_gridded = sigpy.gridding(data_echo_2,
+                                     recon_operator.linops[1].coord,
+                                     ishape,
+                                     kernel='spline',
+                                     width=1)
+samp_dens = sigpy.gridding(cp.ones_like(data_echo_1),
+                           recon_operator.linops[1].coord,
+                           ishape,
+                           kernel='kaiser_bessel')
+ifft_op = sigpy.linop.IFFT(ishape)
 
-    all_coords.append(coords)
+data_echo_1_gridded_corr = data_echo_1_gridded.copy()
+data_echo_1_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
+data_echo_2_gridded_corr = data_echo_2_gridded.copy()
+data_echo_2_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
 
-    A1s.append(
-        (0.03) * sigpy.linop.NUFFT(ishape, coords, oversamp=1.25, width=4) *
-        sigpy.linop.Multiply(ishape, decay_image_1))
+# perform IFFT recon (without correction for fall-of due to k-space interpolation)
+ifft_scale = 1648.5
+ifft1 = ifft_scale * ifft_op(data_echo_1_gridded_corr)
+ifft2 = ifft_scale * ifft_op(data_echo_2_gridded_corr)
 
-    A2s.append(
-        (0.03) * sigpy.linop.NUFFT(ishape, coords, oversamp=1.25, width=4) *
-        sigpy.linop.Multiply(ishape, decay_image_2))
+#vi = pv.ThreeAxisViewer([np.abs(cp.asnumpy(ifft1)), np.abs(cp.asnumpy(ifft2))])
 
-all_coords = cp.vstack(all_coords)
-
-# operator including T2* decay for first echo
-A1 = sigpy.linop.Vstack(A1s)
-A2 = sigpy.linop.Vstack(A2s)
+del data_operator_1_short
+del data_operator_1_long
+del data_operator_2_short
+del data_operator_2_long
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
@@ -227,206 +300,136 @@ else:
     raise ValueError('unknown regularization norm')
 
 #--------------------------------------------------------------------------
-# simulate noise-free data
-y1 = A1.apply(x)
-y2 = A2.apply(x)
-
-# add noise to the data
-nl = noise_level * cp.abs(y1.max())
-y1 += nl * (cp.random.randn(*y1.shape) + 1j * cp.random.randn(*y1.shape))
-y2 += nl * (cp.random.randn(*y2.shape) + 1j * cp.random.randn(*y2.shape))
-
-# grid data for reference recon
-y1_gridded = sigpy.gridding(y1, all_coords, ishape, kernel='spline', width=1)
-y2_gridded = sigpy.gridding(y2, all_coords, ishape, kernel='spline', width=1)
-samp_dens = sigpy.gridding(cp.ones_like(y1),
-                           all_coords,
-                           ishape,
-                           kernel='kaiser_bessel')
-ifft_op = sigpy.linop.IFFT(ishape)
-
-y1_gridded_corr = y1_gridded.copy()
-y1_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
-
-y2_gridded_corr = y2_gridded.copy()
-y2_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
-
-# perform IFFT recon (without correction for fall-of due to k-space interpolation)
-ifft1 = ifft_op(y1_gridded_corr)
-ifft1 *= (x.max() / cp.abs(ifft1).max())
-
-ifft2 = ifft_op(y2_gridded_corr)
-ifft2 *= (x.max() / cp.abs(ifft2).max())
-
-vi = pv.ThreeAxisViewer([np.abs(cp.asnumpy(ifft1)), np.abs(cp.asnumpy(ifft2))])
-
-##--------------------------------------------------------------------------
-## iterative recon with structural prior
-#x0 = ifft.copy()
-#alg = sigpy.app.LinearLeastSquares(A,
-#                                   y,
-#                                   x=x0,
-#                                   G=R,
-#                                   proxg=proxg,
-#                                   sigma=sigma,
-#                                   max_iter=max_num_iter,
-#                                   max_power_iter=10)
-#print(alg.sigma, alg.tau, alg.sigma * alg.tau)
-#
-#x_hat = alg.run()
-#
-#x_hat_cpu = cp.asnumpy(x_hat)
-#
-#np.save(
-#    Path('run') /
-#    f'{regularization_operator}_{regularization_norm}_{beta:.2e}_{max_num_iter:04}.npy',
-#    x_hat_cpu,
-#)
-#
-##vi = pv.ThreeAxisViewer([
-##    np.abs(cp.asnumpy(ifft)),
-##    np.abs(x_hat_cpu), x_hat_cpu.real, x_hat_cpu.imag
-##])
-#
-#-----------------------------------------------------------------------------------------
-# run recons without T2* decay modeling
-
-B = (0.03) * sigpy.linop.NUFFT(ishape, all_coords, oversamp=1.25, width=4)
-
-# recon of 1st echo
+# run iterative recon of first echo with prior but without T2* decay modeling
 x0 = ifft1.copy()
-reconstructor_echo1_no_decay = sigpy.app.LinearLeastSquares(
-    B,
-    y1,
-    x=x0,
-    G=R,
-    proxg=proxg,
-    sigma=sigma,
-    max_iter=max_num_iter,
-    max_power_iter=10)
+alg1 = sigpy.app.LinearLeastSquares(recon_operator,
+                                    data_echo_1,
+                                    x=x0,
+                                    G=R,
+                                    proxg=proxg,
+                                    sigma=sigma,
+                                    max_iter=max_num_iter,
+                                    max_power_iter=10)
 
-recon_echo_1_no_decay = reconstructor_echo1_no_decay.run()
+recon_echo_1_wo_decay_model = alg1.run()
+r1 = np.abs(cp.asnumpy(recon_echo_1_wo_decay_model))
 
-e1 = cp.asnumpy(recon_echo_1_no_decay)
-
-# recon of 2nd echo
 x0 = ifft2.copy()
-reconstructor_echo2_no_decay = sigpy.app.LinearLeastSquares(
-    B,
-    y2,
-    x=x0,
-    G=R,
-    proxg=proxg,
-    sigma=sigma,
-    max_iter=max_num_iter,
-    max_power_iter=10)
+alg2 = sigpy.app.LinearLeastSquares(recon_operator,
+                                    data_echo_2,
+                                    x=x0,
+                                    G=R,
+                                    proxg=proxg,
+                                    sigma=sigma,
+                                    max_iter=max_num_iter,
+                                    max_power_iter=10)
 
-recon_echo_2_no_decay = reconstructor_echo2_no_decay.run()
+recon_echo_2_wo_decay_model = alg2.run()
+r2 = np.abs(cp.asnumpy(recon_echo_2_wo_decay_model))
 
-e2 = cp.asnumpy(recon_echo_2_no_decay)
-
-#-------------------------------------------------------------------------
-# calculate the ratio between the two recons without T2* decay modeling
-# to estimate a monoexponential T2*
-
-ratio = cp.clip(
-    cp.abs(recon_echo_2_no_decay) / cp.abs(recon_echo_1_no_decay), 0, 1)
-# set ratio to one in voxels where there is low signal in the first echo
-mask = 1 - (cp.abs(recon_echo_1_no_decay) <
-            0.05 * cp.abs(recon_echo_1_no_decay).max())
-
-label, num_label = ndimage.label(mask == 1)
-size = np.bincount(label.ravel())
-biggest_label = size[1:].argmax() + 1
-clump_mask = label == biggest_label
-
-ratio[clump_mask == 0] = 1
-
-#-------------------------------------------------------------------------
-# setup operators including the estimated T2* decay modeling
-C1s = []
-C2s = []
-
-for i, time_bin_inds in enumerate(time_bins_inds):
-
-    #setup the decay image
-    readout_time_1_ms = echo_time_1_ms + time_bin_inds.mean() * sampling_time_ms
-    readout_time_2_ms = echo_time_2_ms + time_bin_inds.mean() * sampling_time_ms
-    decay_image_1 = ratio**((readout_time_1_ms) /
-                            (echo_time_2_ms - echo_time_1_ms))
-    decay_image_2 = ratio**((readout_time_2_ms) /
-                            (echo_time_2_ms - echo_time_1_ms))
-
-    k0 = cp.asarray(kx[:, time_bin_inds])
-    k1 = cp.asarray(ky[:, time_bin_inds])
-    k2 = cp.asarray(kz[:, time_bin_inds])
-
-    # the gradient files only contain a half sphere
-    # we add the 2nd half where all gradients are reversed
-    k0 = np.vstack((k0, -k0))
-    k1 = np.vstack((k1, -k1))
-    k2 = np.vstack((k2, -k2))
-
-    # reshape kx, ky, kz into single coordinate array
-    coords = cp.zeros((k0.size, 3))
-    coords[:, 0] = cp.asarray(k0.ravel())
-    coords[:, 1] = cp.asarray(k1.ravel())
-    coords[:, 2] = cp.asarray(k2.ravel())
-    # sigpy needs unitless k-space points (ranging from -n/2 ... n/2)
-    # -> we have to multiply with the field_of_view
-    coords *= field_of_view_cm
-
-    C1s.append(
-        (0.03) * sigpy.linop.NUFFT(ishape, coords, oversamp=1.25, width=4) *
-        sigpy.linop.Multiply(ishape, decay_image_1))
-
-    C2s.append(
-        (0.03) * sigpy.linop.NUFFT(ishape, coords, oversamp=1.25, width=4) *
-        sigpy.linop.Multiply(ishape, decay_image_2))
-
-# operator including T2* decay for first echo
-C1 = sigpy.linop.Vstack(C1s)
-C2 = sigpy.linop.Vstack(C2s)
-
-#-------------------------------------------------------------------------
-# run a recon with T2* decay modeling
-# recon of 1st echo
-x0 = recon_echo_1_no_decay.copy()
-reconstructor_echo1 = sigpy.app.LinearLeastSquares(C1,
-                                                   y1,
-                                                   x=x0,
-                                                   G=R,
-                                                   proxg=proxg,
-                                                   sigma=sigma,
-                                                   max_iter=max_num_iter,
-                                                   max_power_iter=10)
-
-recon_echo_1 = reconstructor_echo1.run()
-
-f1 = cp.asnumpy(recon_echo_1)
-
-#-------------------------------------------------------------------------
-# run a recon with T2* decay modeling using both echos
-# recon of 1st echo
-
-D = sigpy.linop.Vstack([C1, C2])
-
-x0 = recon_echo_1_no_decay.copy()
-reconstructor_both_echos = sigpy.app.LinearLeastSquares(D,
-                                                        cp.concatenate(
-                                                            (y1, y2)),
-                                                        x=x0,
-                                                        G=R,
-                                                        proxg=proxg,
-                                                        sigma=sigma,
-                                                        max_iter=max_num_iter,
-                                                        max_power_iter=10)
-
-recon_both_echos = reconstructor_both_echos.run()
-
-g = cp.asnumpy(recon_both_echos)
-
-ims = 2 * [dict(vmin=0, vmax=3.5)] + [dict(vmin=0, vmax=1.)]
-
-vi = pv.ThreeAxisViewer(
-    [np.abs(e1), np.abs(g), np.abs(cp.asnumpy(ratio))], imshow_kwargs=ims)
+##-------------------------------------------------------------------------
+## calculate the ratio between the two recons without T2* decay modeling
+## to estimate a monoexponential T2*
+#
+#ratio = cp.clip(
+#    cp.abs(recon_echo_2_no_decay) / cp.abs(recon_echo_1_no_decay), 0, 1)
+## set ratio to one in voxels where there is low signal in the first echo
+#mask = 1 - (cp.abs(recon_echo_1_no_decay) <
+#            0.05 * cp.abs(recon_echo_1_no_decay).max())
+#
+#label, num_label = ndimage.label(mask == 1)
+#size = np.bincount(label.ravel())
+#biggest_label = size[1:].argmax() + 1
+#clump_mask = label == biggest_label
+#
+#ratio[clump_mask == 0] = 1
+#
+##-------------------------------------------------------------------------
+## setup operators including the estimated T2* decay modeling
+#C1s = []
+#C2s = []
+#
+#for i, time_bin_inds in enumerate(time_bins_inds):
+#
+#    #setup the decay image
+#    readout_time_1_ms = echo_time_1_ms + time_bin_inds.mean() * sampling_time_ms
+#    readout_time_2_ms = echo_time_2_ms + time_bin_inds.mean() * sampling_time_ms
+#    decay_image_1 = ratio**((readout_time_1_ms) /
+#                            (echo_time_2_ms - echo_time_1_ms))
+#    decay_image_2 = ratio**((readout_time_2_ms) /
+#                            (echo_time_2_ms - echo_time_1_ms))
+#
+#    k0 = cp.asarray(kx[:, time_bin_inds])
+#    k1 = cp.asarray(ky[:, time_bin_inds])
+#    k2 = cp.asarray(kz[:, time_bin_inds])
+#
+#    # the gradient files only contain a half sphere
+#    # we add the 2nd half where all gradients are reversed
+#    k0 = np.vstack((k0, -k0))
+#    k1 = np.vstack((k1, -k1))
+#    k2 = np.vstack((k2, -k2))
+#
+#    # reshape kx, ky, kz into single coordinate array
+#    coords = cp.zeros((k0.size, 3))
+#    coords[:, 0] = cp.asarray(k0.ravel())
+#    coords[:, 1] = cp.asarray(k1.ravel())
+#    coords[:, 2] = cp.asarray(k2.ravel())
+#    # sigpy needs unitless k-space points (ranging from -n/2 ... n/2)
+#    # -> we have to multiply with the field_of_view
+#    coords *= field_of_view_cm
+#
+#    C1s.append(
+#        (0.03) * sigpy.linop.NUFFT(ishape, coords, oversamp=1.25, width=4) *
+#        sigpy.linop.Multiply(ishape, decay_image_1))
+#
+#    C2s.append(
+#        (0.03) * sigpy.linop.NUFFT(ishape, coords, oversamp=1.25, width=4) *
+#        sigpy.linop.Multiply(ishape, decay_image_2))
+#
+## operator including T2* decay for first echo
+#C1 = sigpy.linop.Vstack(C1s)
+#C2 = sigpy.linop.Vstack(C2s)
+#
+##-------------------------------------------------------------------------
+## run a recon with T2* decay modeling
+## recon of 1st echo
+#x0 = recon_echo_1_no_decay.copy()
+#reconstructor_echo1 = sigpy.app.LinearLeastSquares(C1,
+#                                                   y1,
+#                                                   x=x0,
+#                                                   G=R,
+#                                                   proxg=proxg,
+#                                                   sigma=sigma,
+#                                                   max_iter=max_num_iter,
+#                                                   max_power_iter=10)
+#
+#recon_echo_1 = reconstructor_echo1.run()
+#
+#f1 = cp.asnumpy(recon_echo_1)
+#
+##-------------------------------------------------------------------------
+## run a recon with T2* decay modeling using both echos
+## recon of 1st echo
+#
+#D = sigpy.linop.Vstack([C1, C2])
+#
+#x0 = recon_echo_1_no_decay.copy()
+#reconstructor_both_echos = sigpy.app.LinearLeastSquares(D,
+#                                                        cp.concatenate(
+#                                                            (y1, y2)),
+#                                                        x=x0,
+#                                                        G=R,
+#                                                        proxg=proxg,
+#                                                        sigma=sigma,
+#                                                        max_iter=max_num_iter,
+#                                                        max_power_iter=10)
+#
+#recon_both_echos = reconstructor_both_echos.run()
+#
+#g = cp.asnumpy(recon_both_echos)
+#
+#ims = 2 * [dict(vmin=0, vmax=3.5)] + [dict(vmin=0, vmax=1.)]
+#
+#vi = pv.ThreeAxisViewer(
+#    [np.abs(e1), np.abs(g), np.abs(cp.asnumpy(ratio))], imshow_kwargs=ims)
+#
