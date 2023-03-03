@@ -63,7 +63,7 @@ echo_time_2_ms = 5.
 
 # scaling factor for nufft operators such that their norm is approx. equal to gradient op.
 # has to be small enough
-scale = 0.02
+scale = 0.015
 
 # signal fraction decaying with short T2* time
 short_fraction = 0.6
@@ -310,7 +310,7 @@ alg1 = sigpy.app.LinearLeastSquares(recon_operator,
                                     proxg=proxg,
                                     sigma=sigma,
                                     max_iter=max_num_iter,
-                                    max_power_iter=10)
+                                    max_power_iter=30)
 
 recon_echo_1_wo_decay_model = alg1.run()
 
@@ -322,7 +322,7 @@ alg2 = sigpy.app.LinearLeastSquares(recon_operator,
                                     proxg=proxg,
                                     sigma=sigma,
                                     max_iter=max_num_iter,
-                                    max_power_iter=10)
+                                    max_power_iter=30)
 
 recon_echo_2_wo_decay_model = alg2.run()
 
@@ -374,7 +374,7 @@ reconstructor_both_echos = sigpy.app.LinearLeastSquares(
     proxg=proxg,
     sigma=sigma,
     max_iter=max_num_iter,
-    max_power_iter=10)
+    max_power_iter=30)
 
 recon_both_echos = reconstructor_both_echos.run()
 
