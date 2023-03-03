@@ -422,18 +422,13 @@ recon_operator_1, recon_operator_2 = nufft_t2star_operator(
     kx,
     ky,
     kz,
-    field_of_view_cm=field_of_view_cm,r1 = np.abs(cp.asnumpy(recon_echo_1_wo_decay_model))
-r2 = np.abs(cp.asnumpy(recon_echo_2_wo_decay_model))
-g = cp.asnumpy(recon_both_echos)
-
-ims = 3 * [dict(vmin=0, vmax=3.5)] + [dict(vmin=0, vmax=1.)]
-
-vi = pv.ThreeAxisViewer(
-    [np.abs(r1),
-     np.abs(r2),
-     np.abs(g),
-     np.abs(cp.asnumpy(est_ratio_2))],
-    imshow_kwargs=ims)
+    field_of_view_cm=field_of_view_cm,
+    acq_sampling_time_ms=acq_sampling_time_ms,
+    time_bin_width_ms=time_bin_width_ms,
+    scale=scale,
+    add_mirrored_coordinates=True,
+    echo_time_1_ms=echo_time_1_ms,
+    echo_time_2_ms=echo_time_2_ms,
     ratio_image=est_ratio_2)
 
 dual_echo_recon_operator_w_decay_model = sigpy.linop.Vstack(
@@ -466,8 +461,7 @@ cp.savez(
     ifft1=ifft1,
     ifft2=ifft2,
     ground_truth=x,
-    prior_image=prior_image
-)
+    prior_image=prior_image)
 
 #---------------------------------------------------------------------------
 
