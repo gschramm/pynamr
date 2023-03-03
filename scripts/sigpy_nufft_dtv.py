@@ -68,6 +68,8 @@ scale = 0.015
 # signal fraction decaying with short T2* time
 short_fraction = 0.6
 
+time_bin_width_ms: float = 0.25
+
 # read the data root directory from the config file
 with open('.simulation_config.json', 'r') as f:
     data_root_dir: str = json.load(f)['data_root_dir']
@@ -161,7 +163,7 @@ data_operator_1_short, data_operator_2_short = nufft_t2star_operator(
     kz,
     field_of_view_cm=field_of_view_cm,
     acq_sampling_time_ms=acq_sampling_time_ms,
-    time_bin_width_ms=0.25,
+    time_bin_width_ms=time_bin_width_ms,
     scale=scale,
     add_mirrored_coordinates=True,
     echo_time_1_ms=echo_time_1_ms,
@@ -176,7 +178,7 @@ data_operator_1_long, data_operator_2_long = nufft_t2star_operator(
     kz,
     field_of_view_cm=field_of_view_cm,
     acq_sampling_time_ms=acq_sampling_time_ms,
-    time_bin_width_ms=0.25,
+    time_bin_width_ms=time_bin_width_ms,
     scale=scale,
     add_mirrored_coordinates=True,
     echo_time_1_ms=echo_time_1_ms,
@@ -214,7 +216,7 @@ recon_operator = nufft_t2star_operator(
     kz,
     field_of_view_cm=field_of_view_cm,
     acq_sampling_time_ms=acq_sampling_time_ms,
-    time_bin_width_ms=0.25,
+    time_bin_width_ms=time_bin_width_ms,
     scale=scale,
     add_mirrored_coordinates=True,
     echo_time_1_ms=echo_time_1_ms,
@@ -340,7 +342,7 @@ mask = 1 - (cp.abs(recon_echo_1_wo_decay_model) <
 label, num_label = ndimage.label(mask == 1)
 size = np.bincount(label.ravel())
 biggest_label = size[1:].argmax() + 1
-clump_mask = label == biggest_label
+clump_mask = (label == biggest_label)
 
 est_ratio[clump_mask == 0] = 1
 
@@ -355,19 +357,91 @@ recon_operator_1, recon_operator_2 = nufft_t2star_operator(
     kz,
     field_of_view_cm=field_of_view_cm,
     acq_sampling_time_ms=acq_sampling_time_ms,
-    time_bin_width_ms=0.25,
+    time_bin_width_ms=time_bin_width_ms,
     scale=scale,
     add_mirrored_coordinates=True,
     echo_time_1_ms=echo_time_1_ms,
     echo_time_2_ms=echo_time_2_ms,
     ratio_image=est_ratio)
 
-recon_operator_with_decay_model = sigpy.linop.Vstack(
-    [recon_operator_1, recon_operator_2])
+#-------------------------------------------------------------------------
+# redo the independent recons with updated operators including T2* modeling
 
 x0 = recon_echo_1_wo_decay_model.copy()
+alg3 = sigpy.app.LinearLeastSquares(recon_operator_1,
+                                    data_echo_1,
+                                    x=x0,
+                                    G=R,
+                                    proxg=proxg,
+                                    sigma=sigma,
+                                    max_iter=max_num_iter,
+                                    max_power_iter=30)
+
+recon_echo_1_w_decay_model = alg3.run()
+
+# remember that for the independent recons, we also use the 1st recon operator
+# to reconstruct the 2nd echo data
+x0 = recon_echo_2_wo_decay_model.copy()
+alg4 = sigpy.app.LinearLeastSquares(recon_operator_1,
+                                    data_echo_2,
+                                    x=x0,
+                                    G=R,
+                                    proxg=proxg,
+                                    sigma=sigma,
+                                    max_iter=max_num_iter,
+                                    max_power_iter=30)
+
+recon_echo_2_w_decay_model = alg4.run()
+
+#-------------------------------------------------------------------------
+# calculate the ratio between the two recons without T2* decay modeling
+# to estimate a monoexponential T2*
+
+est_ratio_2 = cp.clip(
+    cp.abs(recon_echo_2_w_decay_model) / cp.abs(recon_echo_1_w_decay_model), 0,
+    1)
+# set ratio to one in voxels where there is low signal in the first echo
+mask = 1 - (cp.abs(recon_echo_1_w_decay_model) <
+            0.05 * cp.abs(recon_echo_1_w_decay_model).max())
+
+label, num_label = ndimage.label(mask == 1)
+size = np.bincount(label.ravel())
+biggest_label = size[1:].argmax() + 1
+clump_mask = (label == biggest_label)
+
+est_ratio_2[clump_mask == 0] = 1
+
+#-------------------------------------------------------------------------
+# setup the recon operators for the 1/2 echo using the estimated short T2* time (ratio)
+
+del recon_operator_1
+del recon_operator_2
+
+recon_operator_1, recon_operator_2 = nufft_t2star_operator(
+    ishape,
+    kx,
+    ky,
+    kz,
+    field_of_view_cm=field_of_view_cm,r1 = np.abs(cp.asnumpy(recon_echo_1_wo_decay_model))
+r2 = np.abs(cp.asnumpy(recon_echo_2_wo_decay_model))
+g = cp.asnumpy(recon_both_echos)
+
+ims = 3 * [dict(vmin=0, vmax=3.5)] + [dict(vmin=0, vmax=1.)]
+
+vi = pv.ThreeAxisViewer(
+    [np.abs(r1),
+     np.abs(r2),
+     np.abs(g),
+     np.abs(cp.asnumpy(est_ratio_2))],
+    imshow_kwargs=ims)
+    ratio_image=est_ratio_2)
+
+dual_echo_recon_operator_w_decay_model = sigpy.linop.Vstack(
+    [recon_operator_1, recon_operator_2])
+
+x0 = recon_echo_1_w_decay_model.copy()
 reconstructor_both_echos = sigpy.app.LinearLeastSquares(
-    recon_operator_with_decay_model,
+    dual_echo_recon_operator_w_decay_model,
     cp.concatenate((data_echo_1, data_echo_2)),
     x=x0,
     G=R,
@@ -384,8 +458,15 @@ cp.savez(
     f'{regularization_operator}_{regularization_norm}_{beta:.2e}_{max_num_iter:04}_{noise_level:.2e}.npz',
     recon_echo_1_wo_decay_model=recon_echo_1_wo_decay_model,
     recon_echo_2_wo_decay_model=recon_echo_2_wo_decay_model,
+    recon_echo_1_w_decay_model=recon_echo_1_w_decay_model,
+    recon_echo_2_w_decay_model=recon_echo_2_w_decay_model,
     est_ratio=est_ratio,
+    est_ratio_2=est_ratio_2,
+    recon_both_echos=recon_both_echos,
+    ifft1=ifft1,
+    ifft2=ifft2,
     ground_truth=x,
+    prior_image=prior_image
 )
 
 #---------------------------------------------------------------------------
@@ -394,8 +475,11 @@ r1 = np.abs(cp.asnumpy(recon_echo_1_wo_decay_model))
 r2 = np.abs(cp.asnumpy(recon_echo_2_wo_decay_model))
 g = cp.asnumpy(recon_both_echos)
 
-ims = 2 * [dict(vmin=0, vmax=3.5)] + [dict(vmin=0, vmax=1.)]
+ims = 3 * [dict(vmin=0, vmax=3.5)] + [dict(vmin=0, vmax=1.)]
 
 vi = pv.ThreeAxisViewer(
-    [np.abs(r1), np.abs(g),
-     np.abs(cp.asnumpy(est_ratio))], imshow_kwargs=ims)
+    [np.abs(r1),
+     np.abs(r2),
+     np.abs(g),
+     np.abs(cp.asnumpy(est_ratio_2))],
+    imshow_kwargs=ims)
