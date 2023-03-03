@@ -1,18 +1,16 @@
 """minimal script that shows how to solve L2square data fidelity + anatomical DTV prior"""
 import argparse
-import sigpy
-import math
-import cupy as cp
+import json
+from pathlib import Path
+from copy import deepcopy
 import numpy as np
+import cupy as cp
+import cupyx.scipy.ndimage as ndimage
+import sigpy
 
 import pymirc.viewer as pv
 
-import json
-from pathlib import Path
 from utils import setup_blob_phantom, setup_brainweb_phantom, read_tpi_gradient_files
-
-import cupyx.scipy.ndimage as ndimage
-
 from utils_sigpy import nufft_t2star_operator
 
 #--------------------------------------------------------------------------
@@ -116,6 +114,14 @@ elif phantom == 'blob':
         simulation_matrix_size)
 else:
     raise ValueError
+
+# multiply the T2* times with a correction factor that varies across the FH direction
+tmp = np.linspace(-1, 1, ishape[0])
+X, Y, Z = np.meshgrid(tmp, tmp, tmp)
+corr_field = (2 / np.pi) * np.arctan(20 * (Z + 0.3)) / 2.5 + (1.5 / 2.5)
+
+T2short_ms *= corr_field
+T2long_ms *= corr_field
 
 # move image to GPU
 x = cp.asarray(x.astype(np.complex128))
@@ -304,7 +310,7 @@ else:
 
 #--------------------------------------------------------------------------
 # run iterative recon of first echo with prior but without T2* decay modeling
-x0 = ifft1.copy()
+x0 = deepcopy(ifft1)
 alg1 = sigpy.app.LinearLeastSquares(recon_operator,
                                     data_echo_1,
                                     x=x0,
@@ -316,7 +322,7 @@ alg1 = sigpy.app.LinearLeastSquares(recon_operator,
 
 recon_echo_1_wo_decay_model = alg1.run()
 
-x0 = ifft2.copy()
+x0 = deepcopy(ifft2)
 alg2 = sigpy.app.LinearLeastSquares(recon_operator,
                                     data_echo_2,
                                     x=x0,
@@ -348,6 +354,13 @@ est_ratio[clump_mask == 0] = 1
 
 del recon_operator
 
+#vi = pv.ThreeAxisViewer([
+#    np.abs(cp.asnumpy(est_ratio)),
+#    np.exp(-4.5 / T2short_ms),
+#    np.exp(-4.5 / T2long_ms)
+#],
+#                        imshow_kwargs=dict(vmin=0, vmax=1))
+
 #-------------------------------------------------------------------------
 # setup the recon operators for the 1/2 echo using the estimated short T2* time (ratio)
 recon_operator_1, recon_operator_2 = nufft_t2star_operator(
@@ -367,7 +380,7 @@ recon_operator_1, recon_operator_2 = nufft_t2star_operator(
 #-------------------------------------------------------------------------
 # redo the independent recons with updated operators including T2* modeling
 
-x0 = recon_echo_1_wo_decay_model.copy()
+x0 = deepcopy(recon_echo_1_wo_decay_model)
 alg3 = sigpy.app.LinearLeastSquares(recon_operator_1,
                                     data_echo_1,
                                     x=x0,
@@ -381,7 +394,7 @@ recon_echo_1_w_decay_model = alg3.run()
 
 # remember that for the independent recons, we also use the 1st recon operator
 # to reconstruct the 2nd echo data
-x0 = recon_echo_2_wo_decay_model.copy()
+x0 = deepcopy(recon_echo_2_wo_decay_model)
 alg4 = sigpy.app.LinearLeastSquares(recon_operator_1,
                                     data_echo_2,
                                     x=x0,
@@ -434,7 +447,7 @@ recon_operator_1, recon_operator_2 = nufft_t2star_operator(
 dual_echo_recon_operator_w_decay_model = sigpy.linop.Vstack(
     [recon_operator_1, recon_operator_2])
 
-x0 = recon_echo_1_w_decay_model.copy()
+x0 = deepcopy(recon_echo_1_w_decay_model)
 reconstructor_both_echos = sigpy.app.LinearLeastSquares(
     dual_echo_recon_operator_w_decay_model,
     cp.concatenate((data_echo_1, data_echo_2)),
