@@ -29,7 +29,7 @@ parser.add_argument('--regularization_norm',
                     type=str,
                     default='L1',
                     choices=['L1', 'L2'])
-parser.add_argument('--beta', type=float, default=1e-2)
+parser.add_argument('--beta', type=float, default=3e-2)
 parser.add_argument('--max_num_iter', type=int, default=300)
 parser.add_argument('--gradient_strength',
                     type=int,
@@ -41,7 +41,8 @@ parser.add_argument('--phantom',
                     default='brainweb',
                     choices=['brainweb', 'blob'])
 parser.add_argument('--no_decay', action='store_true')
-parser.add_argument('--sigma', type=float, default=0.01)
+parser.add_argument('--sigma', type=float, default=0.1)
+parser.add_argument('--seed', type=int, default=1)
 args = parser.parse_args()
 
 regularization_operator = args.regularization_operator
@@ -53,6 +54,10 @@ gradient_strength: int = args.gradient_strength
 phantom = args.phantom
 no_decay = args.no_decay
 sigma = args.sigma
+seed = args.seed
+
+#---------------------------------------------------------------
+# fixed parameters
 
 simshape = (160, 160, 160)
 ishape = (128, 128, 128)
@@ -78,6 +83,14 @@ time_bin_width_ms: float = 0.25
 # read the data root directory from the config file
 with open('.simulation_config.json', 'r') as f:
     data_root_dir: str = json.load(f)['data_root_dir']
+
+odir = Path(
+    'run'
+) / f'ro_{regularization_operator}_rn_{regularization_norm}_b_{beta:.1E}_i_{max_num_iter:04}_nl_{noise_level:.1E}_g_{gradient_strength}'
+odir.mkdir(exist_ok=True, parents=True)
+
+with open(odir / 'config.json', 'w') as f:
+    json.dump(vars(args), f, indent=4)
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
@@ -165,6 +178,11 @@ true_ratio_image_short = cp.array(
     np.exp(-(echo_time_2_ms - echo_time_1_ms) / T2short_ms))
 true_ratio_image_long = cp.array(
     np.exp(-(echo_time_2_ms - echo_time_1_ms) / T2long_ms))
+
+cp.save(odir / 'na_gt.npy', x)
+cp.save(odir / 't1.npy', t1_image)
+cp.save(odir / 'true_ratio_short.npy', true_ratio_image_short)
+cp.save(odir / 'true_ratio_long.npy', true_ratio_image_long)
 
 # setup the data operators for the 1/2 echo using the short T2* time
 data_operator_1_short, data_operator_2_short = nufft_t2star_operator(
@@ -272,6 +290,8 @@ del data_operator_1_long
 del data_operator_2_short
 del data_operator_2_long
 
+cp.save(odir / 'ifft1.npy', ifft1)
+cp.save(odir / 'ifft2.npy', ifft2)
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
 # setup projected gradient operator for DTV
@@ -320,190 +340,236 @@ else:
 
 #--------------------------------------------------------------------------
 # run iterative recon of first echo with prior but without T2* decay modeling
-x0 = deepcopy(ifft1)
-alg1 = sigpy.app.LinearLeastSquares(recon_operator,
-                                    data_echo_1,
-                                    x=x0,
-                                    G=R,
-                                    proxg=proxg,
-                                    max_iter=max_num_iter,
-                                    sigma=sigma,
-                                    tau=1. / sigma)
+A = sigpy.linop.Vstack([recon_operator, R])
 
-recon_echo_1_wo_decay_model = alg1.run()
-r1 = np.abs(cp.asnumpy(recon_echo_1_wo_decay_model))
+#------------------------------------------------------
+# reconstruct the first echo without T2* decay modeling
 
-vi = pv.ThreeAxisViewer(r1)
+proxfc1 = sigpy.prox.Stack([
+    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
+    sigpy.prox.Conj(proxg)
+])
+u1 = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
-#x0 = deepcopy(ifft2)
-#alg2 = sigpy.app.LinearLeastSquares(recon_operator,
-#                                    data_echo_2,
-#                                    x=x0,
-#                                    G=R,
-#                                    proxg=proxg,
-#                                    max_iter=max_num_iter,
-#                                    sigma=sigma,
-#                                    tau=1. / sigma)
-#
-#recon_echo_2_wo_decay_model = alg2.run()
-#
-#r1 = np.abs(cp.asnumpy(recon_echo_1_wo_decay_model))
-#r2 = np.abs(cp.asnumpy(recon_echo_2_wo_decay_model))
-#vi2 = pv.ThreeAxisViewer([r1, r2], imshow_kwargs=dict(vmin=0, vmax=3.5))
-##-------------------------------------------------------------------------
-## calculate the ratio between the two recons without T2* decay modeling
-## to estimate a monoexponential T2*
-#
-#est_ratio = cp.clip(
-#    cp.abs(recon_echo_2_wo_decay_model) / cp.abs(recon_echo_1_wo_decay_model),
-#    0, 1)
-## set ratio to one in voxels where there is low signal in the first echo
-#mask = 1 - (cp.abs(recon_echo_1_wo_decay_model) <
-#            0.05 * cp.abs(recon_echo_1_wo_decay_model).max())
-#
-#label, num_label = ndimage.label(mask == 1)
-#size = np.bincount(label.ravel())
-#biggest_label = size[1:].argmax() + 1
-#clump_mask = (label == biggest_label)
-#
-#est_ratio[clump_mask == 0] = 1
-#
-#del recon_operator
-#
-#vi = pv.ThreeAxisViewer([
-#    np.abs(cp.asnumpy(est_ratio)),
-#    np.exp(-4.5 / T2short_ms),
-#    np.exp(-4.5 / T2long_ms)
-#],
-#                        imshow_kwargs=dict(vmin=0, vmax=1))
+alg1 = sigpy.alg.PrimalDualHybridGradient(proxfc=proxfc1,
+                                          proxg=sigpy.prox.NoOp(A.ishape),
+                                          A=A,
+                                          AH=A.H,
+                                          x=deepcopy(ifft1),
+                                          u=u1,
+                                          tau=1. / sigma,
+                                          sigma=sigma,
+                                          max_iter=max_num_iter)
 
-##-------------------------------------------------------------------------
-## setup the recon operators for the 1/2 echo using the estimated short T2* time (ratio)
-#recon_operator_1, recon_operator_2 = nufft_t2star_operator(
-#    ishape,
-#    kx,
-#    ky,
-#    kz,
-#    field_of_view_cm=field_of_view_cm,
-#    acq_sampling_time_ms=acq_sampling_time_ms,
-#    time_bin_width_ms=time_bin_width_ms,
-#    scale=scale,
-#    add_mirrored_coordinates=True,
-#    echo_time_1_ms=echo_time_1_ms,
-#    echo_time_2_ms=echo_time_2_ms,
-#    ratio_image=est_ratio)
-#
-##-------------------------------------------------------------------------
-## redo the independent recons with updated operators including T2* modeling
-#
-#x0 = deepcopy(recon_echo_1_wo_decay_model)
-#alg3 = sigpy.app.LinearLeastSquares(recon_operator_1,
-#                                    data_echo_1,
-#                                    x=x0,
-#                                    G=R,
-#                                    proxg=proxg,
-#                                    max_iter=max_num_iter,
-#                                    sigma=sigma,
-#                                    tau=1./sigma)
-#
-#recon_echo_1_w_decay_model = alg3.run()
-#
-## remember that for the independent recons, we also use the 1st recon operator
-## to reconstruct the 2nd echo data
-#x0 = deepcopy(recon_echo_2_wo_decay_model)
-#alg4 = sigpy.app.LinearLeastSquares(recon_operator_1,
-#                                    data_echo_2,
-#                                    x=x0,
-#                                    G=R,
-#                                    proxg=proxg,
-#                                    max_iter=max_num_iter,
-#                                    sigma=sigma,
-#                                    tau=1./sigma)
-#
-#recon_echo_2_w_decay_model = alg4.run()
-#
-##-------------------------------------------------------------------------
-## calculate the ratio between the two recons without T2* decay modeling
-## to estimate a monoexponential T2*
-#
-#est_ratio_2 = cp.clip(
-#    cp.abs(recon_echo_2_w_decay_model) / cp.abs(recon_echo_1_w_decay_model), 0,
-#    1)
-## set ratio to one in voxels where there is low signal in the first echo
-#mask = 1 - (cp.abs(recon_echo_1_w_decay_model) <
-#            0.05 * cp.abs(recon_echo_1_w_decay_model).max())
-#
-#label, num_label = ndimage.label(mask == 1)
-#size = np.bincount(label.ravel())
-#biggest_label = size[1:].argmax() + 1
-#clump_mask = (label == biggest_label)
-#
-#est_ratio_2[clump_mask == 0] = 1
-#
-##-------------------------------------------------------------------------
-## setup the recon operators for the 1/2 echo using the estimated short T2* time (ratio)
-#
-#del recon_operator_1
-#del recon_operator_2
-#
-#recon_operator_1, recon_operator_2 = nufft_t2star_operator(
-#    ishape,
-#    kx,
-#    ky,
-#    kz,
-#    field_of_view_cm=field_of_view_cm,
-#    acq_sampling_time_ms=acq_sampling_time_ms,
-#    time_bin_width_ms=time_bin_width_ms,
-#    scale=scale,
-#    add_mirrored_coordinates=True,
-#    echo_time_1_ms=echo_time_1_ms,
-#    echo_time_2_ms=echo_time_2_ms,
-#    ratio_image=est_ratio_2)
-#
-#dual_echo_recon_operator_w_decay_model = sigpy.linop.Vstack(
-#    [recon_operator_1, recon_operator_2])
-#
-#x0 = deepcopy(recon_echo_1_w_decay_model)
-#reconstructor_both_echos = sigpy.app.LinearLeastSquares(
-#    dual_echo_recon_operator_w_decay_model,
-#    cp.concatenate((data_echo_1, data_echo_2)),
-#    x=x0,
-#    G=R,
-#    proxg=proxg,
-#    max_iter=max_num_iter,
-#    sigma=sigma,
-#    tau=1./sigma)
-#
-#recon_both_echos = reconstructor_both_echos.run()
-#
-## save the results
-#cp.savez(
-#    Path('run') /
-#    f'{regularization_operator}_{regularization_norm}_{beta:.2e}_{max_num_iter:04}_{noise_level:.2e}.npz',
-#    recon_echo_1_wo_decay_model=recon_echo_1_wo_decay_model,
-#    recon_echo_2_wo_decay_model=recon_echo_2_wo_decay_model,
-#    recon_echo_1_w_decay_model=recon_echo_1_w_decay_model,
-#    recon_echo_2_w_decay_model=recon_echo_2_w_decay_model,
-#    est_ratio=est_ratio,
-#    est_ratio_2=est_ratio_2,
-#    recon_both_echos=recon_both_echos,
-#    ifft1=ifft1,
-#    ifft2=ifft2,
-#    ground_truth=x,
-#    prior_image=prior_image)
-#
-##---------------------------------------------------------------------------
-#
-#r1 = np.abs(cp.asnumpy(recon_echo_1_wo_decay_model))
-#r2 = np.abs(cp.asnumpy(recon_echo_2_wo_decay_model))
-#g = cp.asnumpy(recon_both_echos)
-#
-#ims = 3 * [dict(vmin=0, vmax=3.5)] + [dict(vmin=0, vmax=1.)]
-#
-#vi = pv.ThreeAxisViewer(
-#    [np.abs(r1),
-#     np.abs(r2),
-#     np.abs(g),
-#     np.abs(cp.asnumpy(est_ratio_2))],
-#    imshow_kwargs=ims)
-#
+print('recon echo 1 - no T2* modeling')
+for i in range(max_num_iter):
+    print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+    alg1.update()
+print('')
+
+recon_echo_1_wo_decay_model = alg1.x
+
+#-----------------------------------------------------
+
+proxfc2 = sigpy.prox.Stack([
+    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_2),
+    sigpy.prox.Conj(proxg)
+])
+u2 = cp.zeros(A.oshape, dtype=data_echo_2.dtype)
+
+alg2 = sigpy.alg.PrimalDualHybridGradient(proxfc=proxfc2,
+                                          proxg=sigpy.prox.NoOp(A.ishape),
+                                          A=A,
+                                          AH=A.H,
+                                          x=deepcopy(ifft2),
+                                          u=u2,
+                                          tau=1. / sigma,
+                                          sigma=sigma,
+                                          max_iter=max_num_iter)
+
+print('recon echo 2 - no T2* modeling')
+for i in range(max_num_iter):
+    print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+    alg2.update()
+print('')
+
+recon_echo_2_wo_decay_model = alg2.x
+
+del A
+del recon_operator
+
+cp.save(odir / 'recon_echo_1_wo_decay_model.npy', recon_echo_1_wo_decay_model)
+cp.save(odir / 'recon_echo_2_wo_decay_model.npy', recon_echo_2_wo_decay_model)
+
+#-------------------------------------------------------------------------
+# calculate the ratio between the two recons without T2* decay modeling
+# to estimate a monoexponential T2*
+
+est_ratio = cp.clip(
+    cp.abs(recon_echo_2_wo_decay_model) / cp.abs(recon_echo_1_wo_decay_model),
+    0, 1)
+# set ratio to one in voxels where there is low signal in the first echo
+mask = 1 - (cp.abs(recon_echo_1_wo_decay_model) <
+            0.05 * cp.abs(recon_echo_1_wo_decay_model).max())
+
+label, num_label = ndimage.label(mask == 1)
+size = np.bincount(label.ravel())
+biggest_label = size[1:].argmax() + 1
+clump_mask = (label == biggest_label)
+
+est_ratio[clump_mask == 0] = 1
+
+cp.save(odir / 'est_ratio.npy', est_ratio)
+#-------------------------------------------------------------------------
+# setup the recon operators for the 1/2 echo using the estimated short T2* time (ratio)
+recon_operator_1, recon_operator_2 = nufft_t2star_operator(
+    ishape,
+    kx,
+    ky,
+    kz,
+    field_of_view_cm=field_of_view_cm,
+    acq_sampling_time_ms=acq_sampling_time_ms,
+    time_bin_width_ms=time_bin_width_ms,
+    scale=scale,
+    add_mirrored_coordinates=True,
+    echo_time_1_ms=echo_time_1_ms,
+    echo_time_2_ms=echo_time_2_ms,
+    ratio_image=est_ratio)
+
+#-------------------------------------------------------------------------
+# redo the independent recons with updated operators including T2* modeling
+
+A1 = sigpy.linop.Vstack([recon_operator_1, R])
+
+alg11 = sigpy.alg.PrimalDualHybridGradient(
+    proxfc=proxfc1,
+    proxg=sigpy.prox.NoOp(A1.ishape),
+    A=A1,
+    AH=A1.H,
+    x=deepcopy(recon_echo_1_wo_decay_model),
+    u=u1,
+    tau=1. / sigma,
+    sigma=sigma,
+    max_iter=max_num_iter)
+
+print('recon echo 1 - with T2* modeling')
+for i in range(max_num_iter):
+    print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+    alg11.update()
+print('')
+
+recon_echo_1_w_decay_model = alg11.x
+
+# remember that for the independent recons, we also use the 1st recon operator
+alg12 = sigpy.alg.PrimalDualHybridGradient(
+    proxfc=proxfc2,
+    proxg=sigpy.prox.NoOp(A1.ishape),
+    A=A1,
+    AH=A1.H,
+    x=deepcopy(recon_echo_2_wo_decay_model),
+    u=u2,
+    tau=1. / sigma,
+    sigma=sigma,
+    max_iter=max_num_iter)
+
+print('recon echo 2- with T2* modeling')
+for i in range(max_num_iter):
+    print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+    alg12.update()
+print('')
+
+recon_echo_2_w_decay_model = alg12.x
+
+del A1
+del recon_operator_1
+del recon_operator_2
+
+cp.save(odir / 'recon_echo_1_w_decay_model.npy', recon_echo_1_w_decay_model)
+cp.save(odir / 'recon_echo_2_w_decay_model.npy', recon_echo_2_w_decay_model)
+#-------------------------------------------------------------------------
+# calculate the ratio between the two recons without T2* decay modeling
+# to estimate a monoexponential T2*
+
+est_ratio_2 = cp.clip(
+    cp.abs(recon_echo_2_w_decay_model) / cp.abs(recon_echo_1_w_decay_model), 0,
+    1)
+# set ratio to one in voxels where there is low signal in the first echo
+mask = 1 - (cp.abs(recon_echo_1_w_decay_model) <
+            0.05 * cp.abs(recon_echo_1_w_decay_model).max())
+
+label, num_label = ndimage.label(mask == 1)
+size = np.bincount(label.ravel())
+biggest_label = size[1:].argmax() + 1
+clump_mask = (label == biggest_label)
+
+est_ratio_2[clump_mask == 0] = 1
+
+cp.save(odir / 'est_ratio_2.npy', est_ratio_2)
+#-------------------------------------------------------------------------
+# setup the recon operators for the 1/2 echo using the estimated short T2* time (ratio)
+
+recon_operator_1, recon_operator_2 = nufft_t2star_operator(
+    ishape,
+    kx,
+    ky,
+    kz,
+    field_of_view_cm=field_of_view_cm,
+    acq_sampling_time_ms=acq_sampling_time_ms,
+    time_bin_width_ms=time_bin_width_ms,
+    scale=scale,
+    add_mirrored_coordinates=True,
+    echo_time_1_ms=echo_time_1_ms,
+    echo_time_2_ms=echo_time_2_ms,
+    ratio_image=est_ratio_2)
+
+A = sigpy.linop.Vstack([recon_operator_1, recon_operator_2, R])
+
+proxfc = sigpy.prox.Stack([
+    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
+    sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
+    sigpy.prox.Conj(proxg)
+])
+
+# setup the dual variable for both data forward models and the reg. operator
+u3 = cp.concatenate(
+    [u1[:data_echo_1.size], u2[:data_echo_2.size], u1[data_echo_1.size:]])
+
+# norm of the two echo operator is slighly bigger -> smaller tau needed
+alg3 = sigpy.alg.PrimalDualHybridGradient(
+    proxfc=proxfc,
+    proxg=sigpy.prox.NoOp(A.ishape),
+    A=A,
+    AH=A.H,
+    x=deepcopy(recon_echo_1_w_decay_model),
+    u=u3,
+    tau=0.7 / sigma,
+    sigma=sigma,
+    max_iter=max_num_iter)
+
+print('recon from both echos with T2* modeling')
+for i in range(max_num_iter):
+    print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+    alg3.update()
+print('')
+
+recon_both_echos = alg3.x
+
+cp.save(odir / 'recon_both_echos.npy', recon_both_echos)
+
+#---------------------------------------------------------------------------
+
+r1 = np.abs(cp.asnumpy(recon_echo_1_w_decay_model))
+r2 = np.abs(cp.asnumpy(recon_echo_2_w_decay_model))
+rb = cp.asnumpy(recon_both_echos)
+
+ims = 3 * [dict(vmin=0, vmax=3.5)] + [dict(vmin=0, vmax=1.)]
+
+vi = pv.ThreeAxisViewer([
+    np.flip(x, (0, 1)) for x in
+    [np.abs(r1),
+     np.abs(r2),
+     np.abs(rb),
+     np.abs(cp.asnumpy(est_ratio_2))]
+],
+                        imshow_kwargs=ims)
+vi.fig.savefig(odir / 'recons.png', dpi=300)
