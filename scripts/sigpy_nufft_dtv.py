@@ -29,13 +29,13 @@ parser.add_argument('--regularization_norm',
                     type=str,
                     default='L1',
                     choices=['L1', 'L2'])
-parser.add_argument('--beta', type=float, default=3e-2)
+parser.add_argument('--beta', type=float, default=3e-3)
 parser.add_argument('--max_num_iter', type=int, default=300)
 parser.add_argument('--gradient_strength',
                     type=int,
                     default=16,
                     choices=[16, 24, 32])
-parser.add_argument('--noise_level', type=float, default=1e-2)
+parser.add_argument('--noise_level', type=float, default=3e-2)
 parser.add_argument('--phantom',
                     type=str,
                     default='brainweb',
