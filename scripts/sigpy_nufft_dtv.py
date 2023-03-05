@@ -133,6 +133,15 @@ elif phantom == 'blob':
 else:
     raise ValueError
 
+# add mismatching structures
+tmp = np.linspace(0, 1, x.shape[0])
+X, Y, Z = np.meshgrid(tmp, tmp, tmp)
+R = np.sqrt((X - 0.681)**2 + (Y - 0.612)**2 + (Z - 0.5)**2)
+x[R < 0.02] = 1.5
+
+R2 = np.sqrt((X - 0.7)**2 + (Y - 0.394)**2 + (Z - 0.5)**2)
+t1_image[R2 < 0.02] = 0
+
 # multiply the T2* times with a correction factor that varies across the FH direction
 tmp = np.linspace(-1, 1, simshape[0])
 X, Y, Z = np.meshgrid(tmp, tmp, tmp)
