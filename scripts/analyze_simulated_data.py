@@ -24,9 +24,12 @@ start_time = time.time()
 #folder = 'abstract_30seeds_reduced'
 #folder = 'abstract_artefacted_more'
 folder = 'abstract'
+jitter_suffix = ''
 #folder = 'nodecay'
+#folder = 'jitter'
+#jitter_suffix = '_jit1'
 
-load_nodecay = True 
+load_nodecay = False #True
 
 # base dir
 workdir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/'
@@ -67,17 +70,26 @@ realiz = df.seed[0] #859456 #df.seed[0]
 
 # select one data from one noise level
 df = df.loc[df.noise_level == noise_level]
+# TODO to be tested
+df['noise_level'] = df['noise_level'].cat.remove_unused_categories()
 
 # select a subset of seeds
-#seeds = df.seed.cat.categories.to_list()
-#seeds = seeds[:2]
-#df = df[df.seed.isin(seeds)]
-#df['seed'].cat.remove_unused_categories(inplace=True)
-#df.reindex()
+#entire_seeds = [892509, 6545715, 7739560]
+##df = df[df.seed.isin([realiz])]
+#df = df[df.seed.isin(entire_seeds)]
+#df['seed'] = df['seed'].cat.remove_unused_categories()
+
+# select a subset of beta values
+#beta_recon_chosen = [0.3, 1.]
+#beta_gamma_chosen = [10., 30.]
+#df = df[df.beta_recon.isin(beta_recon_chosen)]
+#df = df[df.beta_gamma.isin(beta_gamma_chosen)]
+#df['beta_recon'] = df['beta_recon'].cat.remove_unused_categories()
+#df['beta_gamma'] = df['beta_gamma'].cat.remove_unused_categories()
 
 # load true simulated na image
-true_na_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1' / 'simulated_nufft_data.npz')['na_image']
-t1_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1' / 'simulated_nufft_data.npz')['t1_image']
+true_na_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1{jitter_suffix}' / 'simulated_nufft_data.npz')['na_image']
+t1_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1{jitter_suffix}' / 'simulated_nufft_data.npz')['t1_image']
 
 
 
@@ -133,11 +145,13 @@ true['wm_local'] = true_na_image[wm_local_256].mean()
 
 
 # option for loading images for all the realizations
-load_all_images = True 
-if load_all_images:
-    agr_na_realiz = np.zeros((nb_grad, nb_beta_gamma, nb_beta_recon, nb_realiz, 256, 256, 256), np.float64)
-    gamma_na_realiz = np.zeros((nb_grad, nb_beta_gamma, nb_beta_recon, nb_realiz, 256, 256, 256), np.float64)
-    conv_realiz = np.zeros((nb_grad, nb_realiz, 256, 256, 256), np.float64)
+#load_all_images = False 
+#if load_all_images:
+agr_na_realiz = np.zeros((nb_grad, nb_beta_gamma, nb_beta_recon, 256, 256, 256), np.float64)
+gamma_na_realiz = np.zeros((nb_grad, nb_beta_gamma, nb_beta_recon, 256, 256, 256), np.float64)
+conv_realiz = np.zeros((nb_grad, 256, 256, 256), np.float64)
+agr_na_realiz_mean = np.zeros((nb_grad, nb_beta_gamma, nb_beta_recon, 256, 256, 256), np.float64)
+#agr_na_realiz_std = np.zeros((nb_grad, nb_beta_gamma, nb_beta_recon, 256, 256, 256), np.float64)
 
 # compute criteria (GM/WM ratios etc) for all the images
 for r in range(df.shape[0]):
@@ -186,19 +200,21 @@ for r in range(df.shape[0]):
     df.at[df.index[r], 'csf_conv'] = float(csf_conv)
 
     # save the image for later analysis
-    if load_all_images:
+#    if load_all_images:
+    if df.at[df.index[r], 'seed'] == realiz:
         grad_index = df.gradient_strength.cat.categories.to_list().index(
                 df.at[df.index[r], 'gradient_strength'])
         beta_gamma_index = df.beta_gamma.cat.categories.to_list().index(df.at[df.index[r], 'beta_gamma'])
         beta_recon_index = df.beta_recon.cat.categories.to_list().index(df.at[df.index[r], 'beta_recon'])
-        realiz_index = df.seed.cat.categories.to_list().index(df.at[df.index[r], 'seed'])
-        agr_na_realiz[grad_index, beta_gamma_index, beta_recon_index, realiz_index] = agr_na_interp
-        gamma_na_realiz[grad_index, beta_gamma_index, beta_recon_index, realiz_index] = gamma_na_interp
-        conv_realiz[grad_index, realiz_index] = conv_interp
+#        realiz_index = df.seed.cat.categories.to_list().index(df.at[df.index[r], 'seed'])
+        agr_na_realiz[grad_index, beta_gamma_index, beta_recon_index] = agr_na_interp
+        gamma_na_realiz[grad_index, beta_gamma_index, beta_recon_index] = gamma_na_interp
+        conv_realiz[grad_index] = conv_interp
 
+    agr_na_realiz_mean += agr_na_interp
 
 #------------------------------------------------------------------------------
-# vizualize single realization for single noise level
+# visualize single realization for single noise level
 
 ims_na = dict(origin='lower', vmax=2.5, cmap=plt.cm.Greys_r)
 ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.Greys_r)
@@ -241,7 +257,7 @@ truth_ax.axis('off')
 truth_fig.show()
 
 # group over grad and beta_gamma, and vary over beta_recon
-realiz_index = df.seed.cat.categories.to_list().index(realiz)
+#realiz_index = df.seed.cat.categories.to_list().index(realiz)
 for (gradient_strength,
      beta_gamma), ddf in df_viz.groupby(['gradient_strength', 'beta_gamma']):
     print(gradient_strength, beta_gamma)
@@ -261,10 +277,10 @@ for (gradient_strength,
         #gam_recon = np.load(run_dir / 'gamma.npy')
         #conv = np.abs(np.load(run_dir / 'ifft_echo_1_filtered_corr.npy'))
 
-        na_axs[fig_index][row_index, r].imshow(agr_na_realiz[fig_index, r, row_index, realiz_index, ..., sl].T, **ims_na)
-        gam_axs[fig_index][row_index, r].imshow(gamma_na_realiz[fig_index, r, row_index, realiz_index, ..., sl].T,
+        na_axs[fig_index][row_index, r].imshow(agr_na_realiz[fig_index, r, row_index, ..., sl].T, **ims_na)
+        gam_axs[fig_index][row_index, r].imshow(gamma_na_realiz[fig_index, r, row_index, ..., sl].T,
                                                 **ims_gam)
-        conv_axs[fig_index][row_index, r].imshow(conv_realiz[fig_index, realiz_index, ..., sl].T, **ims_na)
+        conv_axs[fig_index][row_index, r].imshow(conv_realiz[fig_index, ..., sl].T, **ims_na)
 
         if row_index == 0:
             na_axs[fig_index][row_index, r].set_title(
@@ -336,10 +352,9 @@ sns.set_context('notebook')
 sns.set(font_scale=1.1)
 sns.set_style('ticks')
 
-criteria = ['gm_wm_ratio', 'gm', 'wm', 'csf'] #, 'wm_local']
+def plot_crit_1realiz():
+    criteria = ['gm_wm_ratio', 'gm', 'wm', 'csf'] #, 'wm_local']
 
-view_single_realiz = False
-if view_single_realiz:
     for crit in criteria:
         grid = sns.FacetGrid(df_viz,
                      col='beta_gamma',
@@ -363,12 +378,7 @@ if view_single_realiz:
 
 # ----------------------------------------------------------------
 # plot a summary statistic of quantification criteria
-sns.set_context('notebook')
-sns.set(font_scale=1.1)
-sns.set_style('ticks')
-
-use_old_code = False
-if use_old_code:
+def plot_crit_summary():
     # parameters
     params = ['gradient_strength', 'beta_gamma', 'beta_recon']
     # criteria that depend on parameters and realizations
@@ -414,7 +424,7 @@ if use_old_code:
                 # plot conventional recon criteria for all gradient strengths
                 # TODO plot them with the same color as for AGR recon, also a bit ugly
                 for grad in conv_data.gradient_strength.cat.categories.to_list():
-                    conv_crit_value = conv_data[conv_data['gradient_strength']==grad][colstat_conv].values[0]
+                    conv_crit_value = conv_data[conv_data['gradient_strength']==grad][colstat_conv].agg(statistics) #.values[0]
                     ls = ('-.' if grad=="16nd" else '--')
                     ax.axhline(conv_crit_value, color='k', lw=0.5, ls=ls, label='conv '+grad)
 
@@ -422,66 +432,122 @@ if use_old_code:
 
 # ----------------------------------------------------------------
 # plot mean/stddev over realizations for each quantification criterion
+def plot_crit_mean_stddev(df: pd.DataFrame):
+    # parameters
+    params = ['gradient_strength', 'beta_gamma', 'beta_recon']
 
-sns.set_context('notebook')
-sns.set(font_scale=1.1)
-sns.set_style('ticks')
+    # show criteria statistics one by one
+    for col in ['gm_wm_ratio', 'gm', 'wm', 'csf', 'wm_local']:
+        current_data = df[[*params, col]]
+        if '16nd' in current_data['gradient_strength'].cat.categories:
+            current_data['gradient_strength'] = current_data['gradient_strength'].cat.reorder_categories(['16','24','32','16nd'])
+        col_wrap = 4
+        grid = sns.catplot(data=current_data, x="beta_recon", y=col, hue="gradient_strength", col='beta_gamma', kind="point", col_wrap=col_wrap, legend_out=False)
+        grid.add_legend()
 
-# parameters
-params = ['gradient_strength', 'beta_gamma', 'beta_recon']
+        # add limits, truth, criteria for simple (conventional) recon
+        # conventional recon/criteria depend only on the gradient strength
+        col_conv = col+'_conv'
+        conv_data = df[['gradient_strength', col_conv]]
+        min_val = min(min(current_data[col].min(), true[col]), conv_data[col_conv].min())
+        max_val = max(max(current_data[col].max(), true[col]), conv_data[col_conv].max())
+        min_val = min_val - 0.05 * np.abs(min_val)
+        max_val = max_val + 0.05 * np.abs(max_val)
+        legend_once = True
+        for ax in grid.axes.ravel():
+            ax.grid(ls=':')
+            ax.set_ylim(min_val, max_val)
+            ax.axhline(true[col], color='k', lw=2, ls='--', label='true')
+            # plot conventional recon criteria for all gradient strengths
+            # TODO plot them with the same color as for AGR recon, also a bit ugly
+            for grad in conv_data.gradient_strength.cat.categories.to_list():
+                conv_crit_value = conv_data[conv_data['gradient_strength']==grad][col_conv].mean() #.values[0]
+                ls = ('-.' if grad=="16nd" else '--')
+                label_conv = 'conv' if grad=='16' else ''
+                label = ('conv nd' if grad=='16nd' else label_conv)
+                ax.axhline(conv_crit_value, color='tab:gray', lw=1, ls=ls, label=label)
+                if grad=='16nd' and legend_once:
+                    ax.legend()
+                    legend_once = False
+
+        grid.fig.show()
+        grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds.pdf')
+
+# show % criteria difference wrt the truth one by one
+def plot_crit_mean_stddev_perc(df: pd.DataFrame):
+
+    # parameters
+    params = ['gradient_strength', 'beta_gamma', 'beta_recon']
+
+    for col in ['gm_wm_ratio', 'gm', 'wm', 'csf', 'wm_local']:
+        current_data = df[[*params, col]].copy()
+        if '16nd' in current_data['gradient_strength'].cat.categories:
+            current_data['gradient_strength'] = current_data['gradient_strength'].cat.reorder_categories(['16','24','32','16nd'])
+        current_data[col] = 100 * (current_data[col].values - true[col]) / true[col]
+        current_true = 0.
+        col_wrap = 4
+        grid = sns.catplot(data=current_data, x="beta_recon", y=col, hue="gradient_strength", col='beta_gamma', kind="point", col_wrap=col_wrap, legend_out=False)
+        grid.add_legend()
+
+        # add limits, truth, criteria for simple (conventional) recon
+        # conventional recon/criteria depend only on the gradient strength
+        col_conv = col+'_conv'
+        conv_data = df[['gradient_strength', col_conv]].copy()
+        conv_data[col_conv] = 100 * (conv_data[col_conv].values - true[col]) / true[col]
+        min_val = min(min(current_data[col].min(), current_true), conv_data[col_conv].min())
+        max_val = max(max(current_data[col].max(), current_true), conv_data[col_conv].max())
+        min_val = min_val - 5 
+        max_val = max_val + 5
+        legend_once = True
+        for ax in grid.axes.ravel():
+            ax.grid(ls=':')
+            ax.set_ylim(min_val, max_val)
+            ax.axhline(current_true, color='k', lw=2, ls='--', label='true')
+            # plot conventional recon criteria for all gradient strengths
+            # TODO plot them with the same color as for AGR recon, also a bit ugly
+            for grad in conv_data.gradient_strength.cat.categories.to_list():
+                conv_crit_value = conv_data[conv_data['gradient_strength']==grad][col_conv].mean() #.values[0]
+                ls = ('-.' if grad=="16nd" else '--')
+                label_conv = 'conv' if grad=='16' else ''
+                label = ('conv nd' if grad=='16nd' else label_conv)
+                ax.axhline(conv_crit_value, color='tab:gray', lw=1, ls=ls, label=label)
+                if (grad=='16nd' or jitter_suffix) and legend_once:
+                    ax.legend()
+                    legend_once = False
+
+        grid.fig.show()
+        grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_perc.pdf')
 
 
-# show criteria statistics one by one
-for col in ['gm_wm_ratio', 'gm', 'wm', 'csf', 'wm_local']:
-    current_data = df[[*params, col]]
-    col_wrap = 4
-    grid = sns.catplot(data=current_data, x="beta_recon", y=col, hue="gradient_strength", col='beta_gamma', kind="point", errorbar='ci', col_wrap=col_wrap, legend_out=False)
-    grid.fig.suptitle(col)
-    grid.add_legend()
-
-    # add limits, truth, criteria for simple (conventional) recon
-    # conventional recon/criteria depend only on the gradient strength
-    col_conv = col+'_conv'
-    conv_data = df[['gradient_strength', col_conv]]
-    min_val = 0.95 * min(min(current_data[col].min(), true[col]), conv_data[col_conv].min())
-    max_val = 1.05 * max(max(current_data[col].max(), true[col]), conv_data[col_conv].max())
-    for ax in grid.axes.ravel():
-        ax.grid(ls=':')
-        ax.set_ylim(min_val, max_val)
-        ax.axhline(true[col], color='r', lw=1, ls='--')
-        # plot conventional recon criteria for all gradient strengths
-        # TODO plot them with the same color as for AGR recon, also a bit ugly
-        for grad in conv_data.gradient_strength.cat.categories.to_list():
-            conv_crit_value = conv_data[conv_data['gradient_strength']==grad][col_conv].values[0]
-            ls = ('-.' if grad=="16nd" else '--')
-            ax.axhline(conv_crit_value, color='k', lw=1, ls=ls)
-
-    grid.fig.show()
+# call visualizations methods
+plot_crit_mean_stddev(df)
+plot_crit_mean_stddev_perc(df)
 
 
-# if loaded all the images, show the mean/stddev over realizations
-if load_all_images:
-    na = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_na_image.max())
-    prot = dict(cmap=plt.cm.gray)
-    ind_grad = df.gradient_strength.cat.categories.to_list().index("24")
-    agr_mean = np.mean(agr_na_realiz[ind_grad,0,0], axis=0)
-    agr_std = np.std(agr_na_realiz[ind_grad,0,0], axis=0)
-    vi = pv.ThreeAxisViewer([agr_mean, true_na_image, t1_image], imshow_kwargs=[na, na, prot])
-    gamma_mean = np.mean(gamma_na_realiz[ind_grad,0,0], axis=0)
-    gamma_std = np.std(gamma_na_realiz[ind_grad,0,0], axis=0)
-    vi1 = pv.ThreeAxisViewer([gamma_mean, gamma_std, true_na_image], imshow_kwargs=[prot, prot, na])
+# if loaded all the images, show the images of mean/stddev over realizations
+#if load_all_images:
+#    na = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_na_image.max())
+#    prot = dict(cmap=plt.cm.gray)
+#    ind_grad = df.gradient_strength.cat.categories.to_list().index("24")
+#    agr_mean = np.mean(agr_na_realiz[ind_grad,0,0], axis=0)
+#    agr_std = np.std(agr_na_realiz[ind_grad,0,0], axis=0)
+#    vi = pv.ThreeAxisViewer([agr_mean, true_na_image, t1_image], imshow_kwargs=[na, na, prot])
+#    gamma_mean = np.mean(gamma_na_realiz[ind_grad,0,0], axis=0)
+#    gamma_std = np.std(gamma_na_realiz[ind_grad,0,0], axis=0)
+#    vi1 = pv.ThreeAxisViewer([gamma_mean, gamma_std, true_na_image], imshow_kwargs=[prot, prot, na])
 
-    # mean comparison
-    mask = gm_256 + wm_256 + csf_256
-    r = df.seed.cat.categories.to_list().index(realiz)
-    m_true = np.mean(true_na_image[mask])
-    for g in range(len(df.gradient_strength.cat.categories.to_list())):
-        mi_agr = np.mean(agr_na_realiz[g, -1, -1, r][mask])
-        m_conv = np.mean(conv_realiz[g, r][mask])
-        print(f'{df.gradient_strength.cat.categories.to_list()[g]} example mean over brain: truth={m_true:.2g} agr={mi_agr:.2g} conv={m_conv:.2g}')
+# mean comparison for checking
+mask = gm_256 + wm_256 + csf_256
+m_true = np.mean(true_na_image[mask])
+for g in range(len(df.gradient_strength.cat.categories.to_list())):
+    mi_agr = np.mean(agr_na_realiz[g, -1, -1][mask])
+    m_conv = np.mean(conv_realiz[g][mask])
+    print(f'{df.gradient_strength.cat.categories.to_list()[g]} example mean over brain: truth={m_true:.2g} agr={mi_agr:.2g} conv={m_conv:.2g}')
 
-    mpl.rc('image', cmap=plt.cm.viridis)
+# mean over realiz
+agr_na_realiz /= nb_realiz
 
 
+# script duration
 duration = time.time() - start_time
 print(f'took {duration}s')
