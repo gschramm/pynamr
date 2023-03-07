@@ -279,7 +279,7 @@ data_echo_2_gridded = sigpy.gridding(data_echo_2,
 samp_dens = sigpy.gridding(cp.ones_like(data_echo_1),
                            recon_operator.linops[1].coord,
                            ishape,
-                           kernel='kaiser_bessel')
+                           kernel='spline')
 ifft_op = sigpy.linop.IFFT(ishape)
 
 data_echo_1_gridded_corr = data_echo_1_gridded.copy()
