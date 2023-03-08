@@ -74,8 +74,8 @@ df = df.loc[df.noise_level == noise_level]
 df['noise_level'] = df['noise_level'].cat.remove_unused_categories()
 
 # select a subset of seeds
-#entire_seeds = [892509, 6545715, 7739560]
-##df = df[df.seed.isin([realiz])]
+#entire_seeds = [realiz, 6545715]
+#df = df[df.seed.isin([realiz])]
 #df = df[df.seed.isin(entire_seeds)]
 #df['seed'] = df['seed'].cat.remove_unused_categories()
 
@@ -91,18 +91,16 @@ df['noise_level'] = df['noise_level'].cat.remove_unused_categories()
 true_na_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1{jitter_suffix}' / 'simulated_nufft_data.npz')['na_image']
 t1_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1{jitter_suffix}' / 'simulated_nufft_data.npz')['t1_image']
 
+# main parameters for reconstructions
+params = ['gradient_strength', 'beta_gamma', 'beta_recon']
 
-
-# create an empty column for the GM/WM to
-df['gm_wm_ratio'] = 0.
-df['gm_wm_ratio_conv'] = 0.
-df['gm'] = 0.
-df['wm'] = 0.
-df['csf'] = 0.
-df['gm_conv'] = 0.
-df['wm_conv'] = 0.
-df['csf_conv'] = 0.
-
+# criteria for evaluation
+criteria = ['gm_wm_ratio', 'gm', 'wm', 'csf', 'wm_local']
+# add columns for criteria
+for c in criteria:
+    df[c] = 0.
+    df[c+'_conv_nofilt'] = 0.
+    df[c+'_conv'] = 0.
 
 # number of categories for each param
 nb_grad = len(df.gradient_strength.cat.categories)
@@ -135,6 +133,14 @@ gm_256_dilated = binary_dilation(gm_256, iterations=5).astype(int)
 wm_local_256 = np.logical_and((gm_256_dilated - gm_256).astype(int),
                               wm_256.astype(int))
 
+# reduce huge ROIs to small 2D ROIs
+#reduction_mask = np.zeros(gm_256.shape, np.bool_)
+#reduction_mask[128:,128:,128] = True
+#gm_256 *= reduction_mask
+#wm_256 *= reduction_mask
+#wm_local_256 *= reduction_mask
+#csf_256 *= reduction_mask
+
 # truth
 true = {}
 true['gm_wm_ratio'] = true_na_image[gm_256].mean() / true_na_image[wm_local_256].mean()
@@ -158,6 +164,7 @@ for r in range(df.shape[0]):
     run_dir = df.iloc[r].run_dir
     agr_na = np.abs(np.load(run_dir / 'agr_na.npy'))
     gam_recon = np.load(run_dir / 'gamma.npy')
+    conv_nofilt = np.abs(np.load(run_dir / 'ifft_echo_1_corr.npy'))
     conv = np.abs(np.load(run_dir / 'ifft_echo_1_filtered_corr.npy'))
 
     # AGR
@@ -199,6 +206,23 @@ for r in range(df.shape[0]):
     csf_conv = conv_interp[csf_256].mean()
     df.at[df.index[r], 'csf_conv'] = float(csf_conv)
 
+    # simple reconstruction, changes with gradient and seed
+    # for the quantification we have to interpolate the reconstructed
+    # image to the 256 grid
+    conv_interp = zoom3d(conv_nofilt, 2)
+
+    gm_wm_ratio_conv = conv_interp[gm_256].mean(
+        ) / conv_interp[wm_local_256].mean()
+    df.at[df.index[r], 'gm_wm_ratio_conv_nofilt'] = float(gm_wm_ratio_conv)
+    gm_conv = conv_interp[gm_256].mean()
+    df.at[df.index[r], 'gm_conv_nofilt'] = float(gm_conv)
+    wm_conv = conv_interp[wm_256].mean()
+    df.at[df.index[r], 'wm_conv_nofilt'] = float(wm_conv)
+    wm_local_conv = conv_interp[wm_local_256].mean()
+    df.at[df.index[r], 'wm_local_conv_nofilt'] = float(wm_local_conv)
+    csf_conv = conv_interp[csf_256].mean()
+    df.at[df.index[r], 'csf_conv_nofilt'] = float(csf_conv)
+
     # save the image for later analysis
 #    if load_all_images:
     if df.at[df.index[r], 'seed'] == realiz:
@@ -206,7 +230,7 @@ for r in range(df.shape[0]):
                 df.at[df.index[r], 'gradient_strength'])
         beta_gamma_index = df.beta_gamma.cat.categories.to_list().index(df.at[df.index[r], 'beta_gamma'])
         beta_recon_index = df.beta_recon.cat.categories.to_list().index(df.at[df.index[r], 'beta_recon'])
-#        realiz_index = df.seed.cat.categories.to_list().index(df.at[df.index[r], 'seed'])
+        realiz_index = df.seed.cat.categories.to_list().index(df.at[df.index[r], 'seed'])
         agr_na_realiz[grad_index, beta_gamma_index, beta_recon_index] = agr_na_interp
         gamma_na_realiz[grad_index, beta_gamma_index, beta_recon_index] = gamma_na_interp
         conv_realiz[grad_index] = conv_interp
@@ -353,8 +377,6 @@ sns.set(font_scale=1.5)
 sns.set_style('ticks')
 
 def plot_crit_1realiz():
-    criteria = ['gm_wm_ratio', 'gm', 'wm', 'csf'] #, 'wm_local']
-
     for crit in criteria:
         grid = sns.FacetGrid(df_viz,
                      col='beta_gamma',
@@ -379,11 +401,6 @@ def plot_crit_1realiz():
 # ----------------------------------------------------------------
 # plot a summary statistic of quantification criteria
 def plot_crit_summary():
-    # parameters
-    params = ['gradient_strength', 'beta_gamma', 'beta_recon']
-    # criteria that depend on parameters and realizations
-    criteria = ['gm_wm_ratio', 'gm_wm_ratio_conv', 'gm', 'gm_conv', 'wm', 'wm_conv', 'csf', 'csf_conv'] #, 'wm_local', 'wm_local_conv']
-
     # compute statistics (mean,std) for each parameter value combination, over realizations
     ddf = df.groupby(params)
     ddf_stats = ddf[criteria]
@@ -433,11 +450,8 @@ def plot_crit_summary():
 # ----------------------------------------------------------------
 # plot mean/stddev over realizations for each quantification criterion
 def plot_crit_mean_stddev(df: pd.DataFrame):
-    # parameters
-    params = ['gradient_strength', 'beta_gamma', 'beta_recon']
-
     # show criteria statistics one by one
-    for col in ['gm_wm_ratio', 'gm', 'wm', 'csf', 'wm_local']:
+    for col in criteria:
         current_data = df[[*params, col]]
         if '16nd' in current_data['gradient_strength'].cat.categories:
             current_data['gradient_strength'] = current_data['gradient_strength'].cat.reorder_categories(['16','24','32','16nd'])
@@ -473,13 +487,10 @@ def plot_crit_mean_stddev(df: pd.DataFrame):
         grid.fig.show()
         grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds.pdf')
 
-# show % criteria difference wrt the truth one by one
+# show  criteria difference wrt the truth one by one
 def plot_crit_mean_stddev_perc(df: pd.DataFrame):
 
-    # parameters
-    params = ['gradient_strength', 'beta_gamma', 'beta_recon']
-
-    for col in ['gm_wm_ratio', 'gm', 'wm', 'csf', 'wm_local']:
+    for col in criteria:
         current_data = df[[*params, col]].copy()
         if '16nd' in current_data['gradient_strength'].cat.categories:
             current_data['gradient_strength'] = current_data['gradient_strength'].cat.reorder_categories(['16','24','32','16nd'])
@@ -519,9 +530,64 @@ def plot_crit_mean_stddev_perc(df: pd.DataFrame):
         grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_perc.pdf')
 
 
+
+# = percentage bias/std 
+def plot_crit_bias_std_perc(df: pd.DataFrame):
+    # compute statistics (mean,std) for each parameter value combination, over realizations
+    df_stats = df[params + criteria + [c+'_conv' for c in criteria] + [c+'_conv_nofilt' for c in criteria]].copy()
+#    for i,c in enumerate(criteria):
+#        df_stats[c] =  100 * (df_stats[c].values - true[c]) / true[c]
+#        df_stats[c+'_conv'] =  100 * (df_stats[c+'_conv'].values - true[c]) / true[c]
+#        df_stats[c+'_conv_filt'] =  100 * (df_stats[c+'_conv_filt'].values - true[c]) / true[c]
+    # the number of rows for each group should be = number of seeds/realizations 
+    ddf = df_stats.groupby(params)
+    assert(np.all(ddf.count() == nb_realiz))
+    # compute the mean and stddev
+    df_stats = ddf.agg(['mean','std'])
+    # flatten the index multiindex for use with FacetGrid
+    df_stats = df_stats.reset_index()
+    # flatten the columns multiindex for use with FacetGrid
+    df_stats.columns = [' '.join(col).strip() for col in df_stats.columns.values]
+
+    for i,c in enumerate(criteria):
+        df_stats[c+' mean'] =  100 * (df_stats[c+' mean'].values - true[c]) / true[c]
+        df_stats[c+'_conv mean'] =  100 * (df_stats[c+'_conv mean'].values - true[c]) / true[c]
+        df_stats[c+'_conv_nofilt mean'] =  100 * (df_stats[c+'_conv_nofilt mean'].values - true[c]) / true[c]
+        df_stats[c+' std'] =  100 * df_stats[c+' std'].values / true[c]
+        df_stats[c+'_conv std'] =  100 * df_stats[c+'_conv std'].values / true[c]
+        df_stats[c+'_conv_nofilt std'] =  100 * df_stats[c+'_conv_nofilt std'].values / true[c]
+        df_stats = df_stats.rename(columns={c+' mean':c+' bias', c+'_conv mean':c+'_conv bias', c+'_conv_nofilt mean':c+'_conv_nofilt bias'})
+        df_stats = df_stats.rename(columns={c+' std':c+' std', c+'_conv std':c+'_conv std', c+'_conv_nofilt std':c+'_conv_nofilt std'})
+
+
+    for col in criteria:
+        #current_data = ddf_stats_agr[params + [col+' mean', col+' std', col+'_conv mean', col+'_conv std', col+' _conv_filt mean', col+'_conv_filt std' ]]
+        grid = sns.relplot(
+            data=df_stats, kind="line",
+            x=col+' bias', y=col+' std', hue="beta_recon",
+            col="gradient_strength", marker='.', markersize=10, legend='brief')
+
+        # conv
+        legend_once = True
+        for i,ax in enumerate(grid.axes.ravel()):
+            #ax.grid(ls=':')
+            ax.set_ylim(min(df_stats[col+' std'].min(), df_stats[col+'_conv_nofilt std'].min())-1, max(df_stats[col+' std'].max(), df_stats[col+'_conv_nofilt std'].max())+1)
+            ax.set_xlim(min(df_stats[col+' bias'].min(), df_stats[col+'_conv bias'].min())-1, max(df_stats[col+' bias'].max(), df_stats[col+'_conv bias'].max())+1)
+            df_stats_conv_curr = df_stats[df_stats['gradient_strength']==df_stats['gradient_strength'].cat.categories.to_list()[i]]
+
+            ax.plot(df_stats_conv_curr[col + '_conv bias'], df_stats_conv_curr[col + '_conv std'], color='k', markersize=10, marker='.', label='conv')
+            ax.plot(df_stats_conv_curr[col + '_conv_nofilt bias'], df_stats_conv_curr[col + '_conv_nofilt std'], color='k', markersize=10, marker='*', label='conv nofilt')
+            if legend_once:
+                legend_once = False
+                ax.legend()
+
+        grid.fig.show()
+        grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_biasstd_perc.pdf')
+
 # call visualizations methods
 plot_crit_mean_stddev(df)
 plot_crit_mean_stddev_perc(df)
+plot_crit_bias_std_perc(df)
 
 
 # if loaded all the images, show the images of mean/stddev over realizations
