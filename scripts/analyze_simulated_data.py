@@ -349,7 +349,7 @@ for i, fig in enumerate(conv_figs):
 # ----------------------------------------------------------------
 # view quantification criteria for the single realization
 sns.set_context('notebook')
-sns.set(font_scale=1.1)
+sns.set(font_scale=1.5)
 sns.set_style('ticks')
 
 def plot_crit_1realiz():
@@ -465,10 +465,10 @@ def plot_crit_mean_stddev(df: pd.DataFrame):
                 ls = ('-.' if grad=="16nd" else '--')
                 label_conv = 'conv' if grad=='16' else ''
                 label = ('conv nd' if grad=='16nd' else label_conv)
-                ax.axhline(conv_crit_value, color='tab:gray', lw=1, ls=ls, label=label)
-                if grad=='16nd' and legend_once:
-                    ax.legend()
-                    legend_once = False
+                ax.axhline(conv_crit_value, color='tab:gray', lw=2, ls=ls, label=label)
+            if legend_once:
+               ax.legend()
+               legend_once = False
 
         grid.fig.show()
         grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds.pdf')
@@ -510,10 +510,10 @@ def plot_crit_mean_stddev_perc(df: pd.DataFrame):
                 ls = ('-.' if grad=="16nd" else '--')
                 label_conv = 'conv' if grad=='16' else ''
                 label = ('conv nd' if grad=='16nd' else label_conv)
-                ax.axhline(conv_crit_value, color='tab:gray', lw=1, ls=ls, label=label)
-                if (grad=='16nd' or jitter_suffix) and legend_once:
-                    ax.legend()
-                    legend_once = False
+                ax.axhline(conv_crit_value, color='tab:gray', lw=2, ls=ls, label=label)
+            if legend_once:
+               ax.legend()
+               legend_once = False
 
         grid.fig.show()
         grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_perc.pdf')
