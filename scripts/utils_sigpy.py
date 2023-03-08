@@ -8,10 +8,8 @@ from typing import Union
 
 def nufft_t2star_operator(
     ishape: tuple[int, int, int],
-    kx: np.ndarray,
-    ky: np.ndarray,
-    kz: np.ndarray,
-    field_of_view_cm: float = 220.,
+    k: np.ndarray,
+    field_of_view_cm: float = 22.,
     acq_sampling_time_ms: float = 0.01,
     time_bin_width_ms: float = 0.25,
     scale: float = 0.03,
@@ -26,8 +24,9 @@ def nufft_t2star_operator(
     ----------
     ishape : tuple[int, int, int]
         shape of the input image
-    kx, ky, kz : np.ndarray
-        input kx, ky, kz coordinates - shape: (num_readouts, num_samples)
+    k : np.ndarray
+        input kx, ky, kz coordinates - shape: (num_samples, num_readouts, 3)
+        units 1/cm
     field_of_view_cm : float, optional
         field of view in cm, by default 220.
     acq_sampling_time_ms : float, optional
@@ -53,32 +52,22 @@ def nufft_t2star_operator(
         two sigpy linear operators if ratio image is not None
     """
     time_bins_inds = np.array_split(
-        np.arange(kx.shape[1]),
-        math.ceil(kx.shape[1] / (time_bin_width_ms / acq_sampling_time_ms)))
+        np.arange(k.shape[0]),
+        math.ceil(k.shape[0] / (time_bin_width_ms / acq_sampling_time_ms)))
 
     # split the k-space coordinates into time bins
     all_coords = []
 
     for _, time_bin_inds in enumerate(time_bins_inds):
-        k0 = cp.asarray(kx[:, time_bin_inds])
-        k1 = cp.asarray(ky[:, time_bin_inds])
-        k2 = cp.asarray(kz[:, time_bin_inds])
+        chunk_coords_1_cm = k[time_bin_inds, :, :].reshape(-1, 3)
 
         # the gradient files only contain a half sphere
         # we add the 2nd half where all gradients are reversed
         if add_mirrored_coordinates:
-            k0 = cp.vstack((k0, -k0))
-            k1 = cp.vstack((k1, -k1))
-            k2 = cp.vstack((k2, -k2))
+            chunk_coords_1_cm = cp.vstack(
+                (chunk_coords_1_cm, -chunk_coords_1_cm))
 
-        # reshape kx, ky, kz into single coordinate array
-        coords = cp.zeros((k0.size, 3))
-        coords[:, 0] = cp.asarray(k0.ravel())
-        coords[:, 1] = cp.asarray(k1.ravel())
-        coords[:, 2] = cp.asarray(k2.ravel())
-        # sigpy needs unitless k-space points (ranging from -n/2 ... n/2)
-        # -> we have to multiply with the field_of_view
-        all_coords.append(coords * field_of_view_cm)
+        all_coords.append(chunk_coords_1_cm * field_of_view_cm)
 
     if ratio_image is None:
         operator1 = scale * sigpy.linop.NUFFT(
