@@ -1,3 +1,5 @@
+#TODO ignore first time points + adjust echo times
+
 import h5py
 import numpy as np
 import cupy as cp
@@ -32,7 +34,7 @@ regularization_norm_anatomical = 'L1'
 beta_anatomical = 1e-2  # ca 1e-2 for L1
 
 sigma = 0.1
-max_num_iter = 100
+max_num_iter = 500
 
 data_scale = 1e-8
 nufft_scale = 0.00884
@@ -496,16 +498,70 @@ else:
     agr_echo_2_w_decay_model = d2['x']
     u2 = d2['u']
 
+#-------------------------------------------------------------------------
+# do recon based on data from both echos
+
+B = sigpy.linop.Vstack([recon_operator_1, recon_operator_2])
+
+A = sigpy.linop.Vstack([B, PG])
+
+proxfc = sigpy.prox.Stack([
+    sigpy.prox.L2Reg(B.oshape,
+                     1,
+                     y=-cp.concatenate([data_echo_1, data_echo_2])),
+    sigpy.prox.Conj(proxg)
+])
+
+# setup the dual variable for both data forward models and the reg. operator
+#u3 = cp.concatenate(
+#    [u1[:data_echo_1.size], u2[:data_echo_2.size], u1[data_echo_1.size:]])
+
+u3 = cp.zeros(A.oshape, dtype=cp.complex128)
+
+outfile3 = odir / f'agr_both_echos_with_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}.npz'
+
+if not outfile3.exists():
+    # norm of the two echo operator is slighly bigger -> smaller tau needed
+    alg3 = sigpy.alg.PrimalDualHybridGradient(
+        proxfc=proxfc,
+        proxg=sigpy.prox.NoOp(A.ishape),
+        A=A,
+        AH=A.H,
+        x=deepcopy(agr_echo_1_wo_decay_model),
+        u=u3,
+        tau=0.55 / sigma,
+        sigma=sigma,
+        max_iter=max_num_iter)
+
+    tmp = []
+    print('agr both echos with T2* modeling')
+    for i in range(max_num_iter):
+        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+        alg3.update()
+
+        if i % 5 == 0:
+            tmp.append(np.abs(cp.asnumpy(alg3.x)))
+    print('')
+    tmp = np.array(tmp)
+
+    #cp.savez(outfile3, x=alg3.x, u=alg3.u)
+    agr_both_echos_w_decay_model = alg3.x
+else:
+    d3 = cp.load(outfile3)
+    agr_both_echos_w_decay_model = d3['x']
+    u3 = d3['u']
 #-----------------------------------------------------------------------------
 
-ims = 4 * [dict(vmin=0, vmax=4., cmap='Greys_r')] + [dict(
+ims = 3 * [dict(vmin=0, vmax=4., cmap='Greys_r')] + [dict(
     cmap='Greys_r')] + [dict(cmap='Greys_r')]
-vi = pv.ThreeAxisViewer([
-    np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)),
-    np.abs(cp.asnumpy(agr_echo_1_wo_decay_model)),
-    np.abs(cp.asnumpy(agr_echo_1_w_decay_model)),
-    np.abs(cp.asnumpy(agr_echo_2_w_decay_model)),
-    cp.asnumpy(t1_aligned),
-    cp.asnumpy(est_ratio)
-],
-                        imshow_kwargs=ims)
+vi = pv.ThreeAxisViewer(
+    [
+        #np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)),
+        np.abs(cp.asnumpy(agr_echo_1_wo_decay_model)),
+        np.abs(cp.asnumpy(agr_echo_1_w_decay_model)),
+        np.abs(cp.asnumpy(agr_both_echos_w_decay_model)),
+        #np.abs(cp.asnumpy(agr_echo_2_w_decay_model)),
+        cp.asnumpy(t1_aligned),
+        cp.asnumpy(est_ratio)
+    ],
+    imshow_kwargs=ims)
