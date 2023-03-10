@@ -33,6 +33,7 @@ load_nodecay = False #True
 
 # base dir
 workdir = '/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/'
+analysis_results_dir = Path(workdir) / 'analysis_results'
 
 recon_path: Path = Path(workdir) / f'run_{folder}'
 phantom_path: Path = Path(workdir) / 'brainweb54'
@@ -485,7 +486,7 @@ def plot_crit_mean_stddev(df: pd.DataFrame):
                legend_once = False
 
         grid.fig.show()
-        grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds.pdf')
+        grid.fig.savefig(Path(analysis_results_dir) / f'{folder}_{col}{jitter_suffix}_{nb_realiz}seeds.pdf')
 
 # show  criteria difference wrt the truth one by one
 def plot_crit_mean_stddev_perc(df: pd.DataFrame):
@@ -527,7 +528,7 @@ def plot_crit_mean_stddev_perc(df: pd.DataFrame):
                legend_once = False
 
         grid.fig.show()
-        grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_perc.pdf')
+        grid.fig.savefig(Path(analysis_results_dir) / f'{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_perc.pdf')
 
 
 
@@ -556,33 +557,33 @@ def plot_crit_bias_std_perc(df: pd.DataFrame):
         df_stats[c+' std'] =  100 * df_stats[c+' std'].values / true[c]
         df_stats[c+'_conv std'] =  100 * df_stats[c+'_conv std'].values / true[c]
         df_stats[c+'_conv_nofilt std'] =  100 * df_stats[c+'_conv_nofilt std'].values / true[c]
-        df_stats = df_stats.rename(columns={c+' mean':c+' bias', c+'_conv mean':c+'_conv bias', c+'_conv_nofilt mean':c+'_conv_nofilt bias'})
-        df_stats = df_stats.rename(columns={c+' std':c+' std', c+'_conv std':c+'_conv std', c+'_conv_nofilt std':c+'_conv_nofilt std'})
+        df_stats = df_stats.rename(columns={c+' mean':c+' bias[%]', c+'_conv mean':c+'_conv bias[%]', c+'_conv_nofilt mean':c+'_conv_nofilt bias[%]'})
+        df_stats = df_stats.rename(columns={c+' std':c+' std[%]', c+'_conv std':c+'_conv std[%]', c+'_conv_nofilt std':c+'_conv_nofilt std[%]'})
 
 
     for col in criteria:
         #current_data = ddf_stats_agr[params + [col+' mean', col+' std', col+'_conv mean', col+'_conv std', col+' _conv_filt mean', col+'_conv_filt std' ]]
         grid = sns.relplot(
             data=df_stats, kind="line",
-            x=col+' bias', y=col+' std', hue="beta_recon",
+            x=col+' bias[%]', y=col+' std[%]', hue="beta_recon",
             col="gradient_strength", marker='.', markersize=10, legend='brief')
 
         # conv
         legend_once = True
         for i,ax in enumerate(grid.axes.ravel()):
             #ax.grid(ls=':')
-            ax.set_ylim(min(df_stats[col+' std'].min(), df_stats[col+'_conv_nofilt std'].min())-1, max(df_stats[col+' std'].max(), df_stats[col+'_conv_nofilt std'].max())+1)
-            ax.set_xlim(min(df_stats[col+' bias'].min(), df_stats[col+'_conv bias'].min())-1, max(df_stats[col+' bias'].max(), df_stats[col+'_conv bias'].max())+1)
+            ax.set_ylim(0., max(df_stats[col+' std[%]'].max(), df_stats[col+'_conv_nofilt std[%]'].max())+1)
+            ax.set_xlim(min(df_stats[col+' bias[%]'].min(), df_stats[col+'_conv bias[%]'].min())-1, max(df_stats[col+' bias[%]'].max(), df_stats[col+'_conv bias[%]'].max())+1)
             df_stats_conv_curr = df_stats[df_stats['gradient_strength']==df_stats['gradient_strength'].cat.categories.to_list()[i]]
 
-            ax.plot(df_stats_conv_curr[col + '_conv bias'], df_stats_conv_curr[col + '_conv std'], color='k', markersize=10, marker='.', label='conv')
-            ax.plot(df_stats_conv_curr[col + '_conv_nofilt bias'], df_stats_conv_curr[col + '_conv_nofilt std'], color='k', markersize=10, marker='*', label='conv nofilt')
+            ax.plot(df_stats_conv_curr[col + '_conv bias[%]'], df_stats_conv_curr[col + '_conv std[%]'], color='k', markersize=10, marker='.', label='conv')
+            ax.plot(df_stats_conv_curr[col + '_conv_nofilt bias[%]'], df_stats_conv_curr[col + '_conv_nofilt std[%]'], color='k', markersize=10, marker='*', label='conv nofilt')
             if legend_once:
                 legend_once = False
                 ax.legend()
 
         grid.fig.show()
-        grid.fig.savefig(f'/uz/data/Admin/ngeworkingresearch/MarinaFilipovic/BrainWeb_DiffGrad_Sim/analysis_results/{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_biasstd_perc.pdf')
+        grid.fig.savefig(Path(analysis_results_dir) / f'{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_biasstd_perc.pdf')
 
 # call visualizations methods
 plot_crit_mean_stddev(df)
