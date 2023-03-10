@@ -14,6 +14,13 @@ from pymirc.image_operations import aff_transform, zoom3d
 
 import SimpleITK as sitk
 
+def hann(k: np.ndarray, k0: float):
+    res = np.zeros_like(k)
+    inds = np.where(k <= k0)
+    res[inds] = 0.5 * (1 + np.cos(np.pi * k[inds] / k0))
+
+    return res
+    
 
 def read_single_tpi_gradient_file(gradient_file: str,
                                   gamma_by_2pi: float = 1126.2,
