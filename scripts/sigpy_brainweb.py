@@ -19,10 +19,6 @@ from utils_sigpy import nufft_t2star_operator
 #--------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--regularization_operator',
-                    type=str,
-                    default='projected_gradient',
-                    choices=['projected_gradient', 'gradient'])
 parser.add_argument('--regularization_norm',
                     type=str,
                     default='L1',
@@ -39,7 +35,6 @@ parser.add_argument('--sigma', type=float, default=0.1)
 parser.add_argument('--seed', type=int, default=1)
 args = parser.parse_args()
 
-regularization_operator = args.regularization_operator
 regularization_norm = args.regularization_norm
 beta = args.beta
 max_num_iter = args.max_num_iter
@@ -53,6 +48,8 @@ add_mismatches = True
 
 regularization_norm_non_anatomical = 'L2'
 beta_non_anatomical = 2e-1
+
+cp.random.seed(seed)
 
 #---------------------------------------------------------------
 # fixed parameters
@@ -82,7 +79,7 @@ time_bin_width_ms: float = 0.25
 with open('.simulation_config.json', 'r') as f:
     data_root_dir: str = json.load(f)['data_root_dir']
 
-odir = Path('run') / f'i_{max_num_iter:04}_nl_{noise_level:.1E}'
+odir = Path('run') / f'i_{max_num_iter:04}_nl_{noise_level:.1E}_s_{seed:03}'
 odir.mkdir(exist_ok=True, parents=True)
 
 with open(odir / 'config.json', 'w') as f:
