@@ -142,7 +142,7 @@ if add_mismatches:
     # multiply the T2* times with a correction factor that varies across the FH direction
     tmp = np.linspace(-1, 1, simshape[0])
     X, Y, Z = np.meshgrid(tmp, tmp, tmp)
-    corr_field = (2 / np.pi) * np.arctan(20 * (Z + 0.3)) / 2.5 + (1.5 / 2.5)
+    corr_field = (2 / np.pi) * np.arctan(20 * (Z + 0.25)) / 2.5 + (1.5 / 2.5)
 
     T2short_ms *= corr_field
     T2long_ms *= corr_field
