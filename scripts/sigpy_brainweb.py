@@ -765,6 +765,53 @@ else:
     agr_echo_2_est_decay_model = d8['x']
     u8 = d8['u']
 
+del A
+
+#---------------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------
+# recons with "estimated" decay model and anatomical prior using data from both echos
+#---------------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------
+
+A = sigpy.linop.Vstack([recon_operator_1e, recon_operator_2e, PG])
+
+# recon of first echo
+proxfcb = sigpy.prox.Stack([
+    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
+    sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
+    sigpy.prox.Conj(prox_reg)
+])
+
+ub = cp.concatenate(
+    [u7[:data_echo_1.size], u8[:data_echo_2.size], u7[data_echo_1.size:]])
+
+outfileb = odir / f'agr_both_echo_est_decay_model_{regularization_norm}_{beta:.1E}.npz'
+
+if not outfileb.exists():
+    algb = sigpy.alg.PrimalDualHybridGradient(
+        proxfc=proxfcb,
+        proxg=sigpy.prox.NoOp(A.ishape),
+        A=A,
+        AH=A.H,
+        x=deepcopy(agr_echo_1_est_decay_model),
+        u=ub,
+        tau=0.5 / sigma,
+        sigma=sigma,
+        max_iter=max_num_iter)
+
+    print('AGR echo 2 - "estimated" T2* modeling')
+    for i in range(max_num_iter):
+        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+        algb.update()
+    print('')
+
+    cp.savez(outfileb, x=algb.x, u=ub)
+    agr_both_echo_est_decay_model = algb.x
+else:
+    db = cp.load(outfileb)
+    agr_both_echo_est_decay_model = db['x']
+    ub = db['u']
+
 #-----------------------------------------------------------------------------
 
 ims = 4 * [dict(vmin=0, vmax=3.5, cmap='Greys_r')]
@@ -784,6 +831,7 @@ vi2 = pv.ThreeAxisViewer([
         np.abs(cp.asnumpy(agr_echo_1_wo_decay_model)),
         np.abs(cp.asnumpy(agr_echo_1_true_decay_model)),
         np.abs(cp.asnumpy(agr_echo_1_est_decay_model)),
+        np.abs(cp.asnumpy(agr_both_echo_est_decay_model)),
     ]
 ],
                          imshow_kwargs=ims)
