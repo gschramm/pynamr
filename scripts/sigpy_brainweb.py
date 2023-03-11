@@ -419,6 +419,94 @@ del A
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
+# recons "true" decay model and non-anatomical prior
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+
+# approximate "true" monoexp. ratio
+true_ratio = short_fraction * true_ratio_image_short + (
+    1 - short_fraction) * true_ratio_image_long
+
+# extrapolate true_ratio to recon shape
+true_ratio = cp.asarray(
+    zoom3d(cp.asnumpy(true_ratio), ishape[0] / true_ratio.shape[0]))
+
+recon_operator_1t, recon_operator_2t = nufft_t2star_operator(
+    ishape,
+    k_1_cm,
+    field_of_view_cm=field_of_view_cm,
+    acq_sampling_time_ms=acq_sampling_time_ms,
+    time_bin_width_ms=time_bin_width_ms,
+    scale=nufft_scale,
+    add_mirrored_coordinates=False,
+    echo_time_1_ms=echo_time_1_ms,
+    echo_time_2_ms=echo_time_2_ms,
+    ratio_image=true_ratio)
+
+A = sigpy.linop.Vstack([recon_operator_1t, G])
+
+# reconstruct 1st echo
+u1t = deepcopy(u1)
+
+outfile1t = odir / f'recon_echo_1_true_decay_model_{regularization_norm_non_anatomical}_{beta_non_anatomical:.1E}.npz'
+
+if not outfile1t.exists():
+    alg1t = sigpy.alg.PrimalDualHybridGradient(
+        proxfc=proxfc1,
+        proxg=sigpy.prox.NoOp(A.ishape),
+        A=A,
+        AH=A.H,
+        x=deepcopy(recon_echo_1_wo_decay_model),
+        u=u1t,
+        tau=1. / sigma,
+        sigma=sigma,
+        max_iter=max_num_iter)
+
+    print('recon echo 1 - true T2* modeling')
+    for i in range(max_num_iter):
+        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+        alg1t.update()
+    print('')
+
+    cp.savez(outfile1t, x=alg1t.x, u=u1t)
+    recon_echo_1_true_decay_model = alg1t.x
+else:
+    d1t = cp.load(outfile1t)
+    recon_echo_1_true_decay_model = d1t['x']
+    u1t = d1t['u']
+
+# reconstruct 2nd echo
+u2t = deepcopy(u2)
+
+outfile2t = odir / f'recon_echo_2_true_decay_model_{regularization_norm_non_anatomical}_{beta_non_anatomical:.1E}.npz'
+
+if not outfile2t.exists():
+    alg2t = sigpy.alg.PrimalDualHybridGradient(
+        proxfc=proxfc2,
+        proxg=sigpy.prox.NoOp(A.ishape),
+        A=A,
+        AH=A.H,
+        x=deepcopy(recon_echo_2_wo_decay_model),
+        u=u2t,
+        tau=1. / sigma,
+        sigma=sigma,
+        max_iter=max_num_iter)
+
+    print('recon echo 2 - true T2* modeling')
+    for i in range(max_num_iter):
+        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+        alg2t.update()
+    print('')
+
+    cp.savez(outfile2t, x=alg2t.x, u=u2t)
+    recon_echo_2_true_decay_model = alg2t.x
+else:
+    d2t = cp.load(outfile2t)
+    recon_echo_2_true_decay_model = d2t['x']
+    u1t = d2t['u']
+
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
 # recons without decay model and anatomical prior
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
@@ -512,26 +600,6 @@ del recon_operator
 # recons "true" decay model and anatomical prior
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
-
-# approximate "true" monoexp. ratio
-true_ratio = short_fraction * true_ratio_image_short + (
-    1 - short_fraction) * true_ratio_image_long
-
-# extrapolate true_ratio to recon shape
-true_ratio = cp.asarray(
-    zoom3d(cp.asnumpy(true_ratio), ishape[0] / true_ratio.shape[0]))
-
-recon_operator_1t, recon_operator_2t = nufft_t2star_operator(
-    ishape,
-    k_1_cm,
-    field_of_view_cm=field_of_view_cm,
-    acq_sampling_time_ms=acq_sampling_time_ms,
-    time_bin_width_ms=time_bin_width_ms,
-    scale=nufft_scale,
-    add_mirrored_coordinates=False,
-    echo_time_1_ms=echo_time_1_ms,
-    echo_time_2_ms=echo_time_2_ms,
-    ratio_image=true_ratio)
 
 A = sigpy.linop.Vstack([recon_operator_1t, PG])
 
@@ -699,13 +767,14 @@ else:
 
 #-----------------------------------------------------------------------------
 
-ims = 3 * [dict(vmin=0, vmax=3.5, cmap='Greys_r')]
+ims = 4 * [dict(vmin=0, vmax=3.5, cmap='Greys_r')]
 
 vi1 = pv.ThreeAxisViewer([
     np.flip(x, (0, 1)) for x in [
         np.abs(cp.asnumpy(ifft1)),
         np.abs(cp.asnumpy(ifft1_filt)),
         np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)),
+        np.abs(cp.asnumpy(recon_echo_1_true_decay_model)),
     ]
 ],
                          imshow_kwargs=ims)
@@ -724,6 +793,7 @@ vi3 = pv.ThreeAxisViewer([
         np.abs(cp.asnumpy(ifft2)),
         np.abs(cp.asnumpy(ifft2_filt)),
         np.abs(cp.asnumpy(recon_echo_2_wo_decay_model)),
+        np.abs(cp.asnumpy(recon_echo_2_true_decay_model)),
     ]
 ],
                          imshow_kwargs=ims)

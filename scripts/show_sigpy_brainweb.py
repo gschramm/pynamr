@@ -11,7 +11,7 @@ parser.add_argument('--regularization_norm',
                     default='L1',
                     choices=['L1', 'L2'])
 parser.add_argument('--beta', type=float, default=2e-2)
-parser.add_argument('--max_num_iter', type=int, default=300)
+parser.add_argument('--max_num_iter', type=int, default=1000)
 parser.add_argument('--noise_level', type=float, default=3e-2)
 parser.add_argument('--seed', type=int, default=1)
 args = parser.parse_args()
@@ -58,6 +58,14 @@ outfile2 = odir / f'recon_echo_2_no_decay_model_{regularization_norm_non_anatomi
 d2 = np.load(outfile2)
 recon_echo_2_wo_decay_model = zoom3d(np.abs(d2['x']), zoomfac)
 
+outfile1t = odir / f'recon_echo_1_true_decay_model_{regularization_norm_non_anatomical}_{beta_non_anatomical:.1E}.npz'
+d1t = np.load(outfile1t)
+recon_echo_1_true_decay_model = zoom3d(np.abs(d1t['x']), zoomfac)
+
+outfile2t = odir / f'recon_echo_2_true_decay_model_{regularization_norm_non_anatomical}_{beta_non_anatomical:.1E}.npz'
+d2t = np.load(outfile2t)
+recon_echo_2_true_decay_model = zoom3d(np.abs(d2t['x']), zoomfac)
+
 outfile3 = odir / f'agr_echo_1_no_decay_model_{regularization_norm}_{beta:.1E}.npz'
 d3 = np.load(outfile3)
 agr_echo_1_wo_decay_model = zoom3d(np.abs(d3['x']), zoomfac)
@@ -96,6 +104,9 @@ gm_inds = np.where(gm)
 gmwm_ratio_non_anatomical = recon_echo_1_wo_decay_model[gm_inds].mean(
 ) / recon_echo_1_wo_decay_model[wm_inds].mean()
 
+gmwm_ratio_non_anatomical_true_decay_model = recon_echo_1_true_decay_model[
+    gm_inds].mean() / recon_echo_1_true_decay_model[wm_inds].mean()
+
 gmwm_ratio_anatomical_wo_decay_model = agr_echo_1_wo_decay_model[gm_inds].mean(
 ) / agr_echo_1_wo_decay_model[wm_inds].mean()
 
@@ -112,7 +123,7 @@ gmwm_ratio_true = x[gm_inds].mean() / x[wm_inds].mean()
 true_ratio = short_fraction * true_ratio_image_short + (
     1 - short_fraction) * true_ratio_image_long
 
-ims = 3 * [dict(vmin=0, vmax=3.5, cmap='Greys_r')]
+ims = 4 * [dict(vmin=0, vmax=3.5, cmap='Greys_r')]
 kwargs = dict(sl_z=127)
 
 vi1 = pv.ThreeAxisViewer(
@@ -121,10 +132,14 @@ vi1 = pv.ThreeAxisViewer(
             np.abs(ifft1),
             np.abs(ifft1_filt),
             np.abs(recon_echo_1_wo_decay_model),
+            np.abs(recon_echo_1_true_decay_model),
         ]
     ],
     imshow_kwargs=ims,
-    rowlabels=['', '', f'GM/WM = {gmwm_ratio_non_anatomical:.2f}'],
+    rowlabels=[
+        '', '', f'GM/WM = {gmwm_ratio_non_anatomical:.2f}',
+        f'GM/WM = {gmwm_ratio_non_anatomical_true_decay_model:.2f}'
+    ],
     **kwargs)
 
 vi2 = pv.ThreeAxisViewer(
@@ -148,6 +163,7 @@ vi3 = pv.ThreeAxisViewer([
         np.abs(ifft2),
         np.abs(ifft2_filt),
         np.abs(recon_echo_2_wo_decay_model),
+        np.abs(recon_echo_2_true_decay_model),
     ]
 ],
                          imshow_kwargs=ims,
