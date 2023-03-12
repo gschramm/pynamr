@@ -15,8 +15,20 @@ from pathlib import Path
 from utils import align_images
 from utils_sigpy import nufft_t2star_operator
 
-# input parameters
+import argparse
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--beta_anatomical', type=float, default=1e-2)
+parser.add_argument('--beta_non_anatomical', type=float, default=3e-1)
+args = parser.parse_args()
+
+#--------------------------------------------------------------------
+# input parameters
+beta_anatomical = args.beta_anatomical
+beta_non_anatomical = args.beta_non_anatomical
+
+#--------------------------------------------------------------------
+# fixed parameters
 gradient_file: str = '/data/sodium_mr/tpi_gradients/ak_grad56.h5'
 echo_1_data_file: str = '/data/sodium_mr/20230225_MR3_GS_TPI/pfiles/P51200.7.h5'
 echo_2_data_file: str = '/data/sodium_mr/20230225_MR3_GS_TPI/pfiles/P52224.7.h5'
@@ -27,11 +39,9 @@ ishape = (128, 128, 128)
 
 # regularization parameters for non-anatomy-guided recons
 regularization_norm_non_anatomical = 'L2'
-beta_non_anatomical = 5e-2  # ca 1e-3 for L1, 5e-2 for L2
 
 # regularization parameters for anatomy-guided recons
 regularization_norm_anatomical = 'L1'
-beta_anatomical = 1e-2  # ca 1e-2 for L1
 
 sigma = 0.1
 max_num_iter = 500
@@ -235,6 +245,24 @@ else:
     d2 = cp.load(outfile2)
     recon_echo_2_wo_decay_model = d2['x']
     u2 = d2['u']
+
+#-------------------------------------------------------------------------
+# calculate the ratio between the two recons without T2* decay modeling
+# to estimate a monoexponential T2*
+
+ratio = cp.clip(
+    cp.abs(recon_echo_2_wo_decay_model) / cp.abs(recon_echo_1_wo_decay_model),
+    0, 1)
+# set ratio to one in voxels where there is low signal in the first echo
+mask = 1 - (cp.abs(recon_echo_1_wo_decay_model) <
+            0.05 * cp.abs(recon_echo_1_wo_decay_model).max())
+
+label, num_label = ndimage.label(mask == 1)
+size = np.bincount(label.ravel())
+biggest_label = size[1:].argmax() + 1
+clump_mask = (label == biggest_label)
+
+ratio[clump_mask == 0] = 1
 
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
@@ -498,70 +526,71 @@ else:
     agr_echo_2_w_decay_model = d2['x']
     u2 = d2['u']
 
-#-------------------------------------------------------------------------
-# do recon based on data from both echos
+del A
 
-B = sigpy.linop.Vstack([recon_operator_1, recon_operator_2])
+#---------------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------
+# recons with "estimated" decay model and anatomical prior using data from both echos
+#---------------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------
 
-A = sigpy.linop.Vstack([B, PG])
+# the two echos usually have different phases
+# we correct for this by multiplying by the negative estimated phases
+phase_fac_1 = cp.exp(1j * cp.angle(agr_echo_1_w_decay_model))
+phase_fac_2 = cp.exp(1j * cp.angle(agr_echo_2_w_decay_model))
 
-proxfc = sigpy.prox.Stack([
-    sigpy.prox.L2Reg(B.oshape,
-                     1,
-                     y=-cp.concatenate([data_echo_1, data_echo_2])),
+A = sigpy.linop.Vstack([
+    recon_operator_1 * sigpy.linop.Multiply(ishape, phase_fac_1),
+    recon_operator_2 * sigpy.linop.Multiply(ishape, phase_fac_2), PG
+])
+
+proxfcb = sigpy.prox.Stack([
+    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
+    sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
     sigpy.prox.Conj(proxg)
 ])
 
-# setup the dual variable for both data forward models and the reg. operator
-#u3 = cp.concatenate(
-#    [u1[:data_echo_1.size], u2[:data_echo_2.size], u1[data_echo_1.size:]])
+ub = cp.zeros(A.oshape, dtype=cp.complex128)
 
-u3 = cp.zeros(A.oshape, dtype=cp.complex128)
+outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}.npz'
 
-outfile3 = odir / f'agr_both_echos_with_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}.npz'
-
-if not outfile3.exists():
-    # norm of the two echo operator is slighly bigger -> smaller tau needed
-    alg3 = sigpy.alg.PrimalDualHybridGradient(
-        proxfc=proxfc,
+if not outfileb.exists():
+    algb = sigpy.alg.PrimalDualHybridGradient(
+        proxfc=proxfcb,
         proxg=sigpy.prox.NoOp(A.ishape),
         A=A,
         AH=A.H,
-        x=deepcopy(agr_echo_1_wo_decay_model),
-        u=u3,
-        tau=0.55 / sigma,
+        x=deepcopy(agr_echo_1_w_decay_model),
+        u=ub,
+        tau=0.5 / sigma,
         sigma=sigma,
         max_iter=max_num_iter)
 
-    tmp = []
-    print('agr both echos with T2* modeling')
+    print('AGR both echos - "estimated" T2* modeling')
     for i in range(max_num_iter):
         print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
-        alg3.update()
-
-        if i % 5 == 0:
-            tmp.append(np.abs(cp.asnumpy(alg3.x)))
+        algb.update()
     print('')
-    tmp = np.array(tmp)
 
-    #cp.savez(outfile3, x=alg3.x, u=alg3.u)
-    agr_both_echos_w_decay_model = alg3.x
+    cp.savez(outfileb, x=algb.x, u=ub)
+    agr_both_echos_w_decay_model = algb.x
 else:
-    d3 = cp.load(outfile3)
-    agr_both_echos_w_decay_model = d3['x']
-    u3 = d3['u']
+    db = cp.load(outfileb)
+    agr_both_echos_w_decay_model = db['x']
+    ub = db['u']
+
+del A
+del recon_operator_1
+del recon_operator_2
+
 #-----------------------------------------------------------------------------
 
-ims = 3 * [dict(vmin=0, vmax=4., cmap='Greys_r')] + [dict(
-    cmap='Greys_r')] + [dict(cmap='Greys_r')]
-vi = pv.ThreeAxisViewer(
-    [
-        #np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)),
-        np.abs(cp.asnumpy(agr_echo_1_wo_decay_model)),
-        np.abs(cp.asnumpy(agr_echo_1_w_decay_model)),
-        np.abs(cp.asnumpy(agr_both_echos_w_decay_model)),
-        #np.abs(cp.asnumpy(agr_echo_2_w_decay_model)),
-        cp.asnumpy(t1_aligned),
-        cp.asnumpy(est_ratio)
-    ],
-    imshow_kwargs=ims)
+ims = 4 * [dict(vmin=0, vmax=4., cmap='Greys_r')] + [dict(cmap='Greys_r')]
+vi = pv.ThreeAxisViewer([
+    np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)),
+    np.abs(cp.asnumpy(agr_echo_1_wo_decay_model)),
+    np.abs(cp.asnumpy(agr_echo_1_w_decay_model)),
+    np.abs(cp.asnumpy(agr_both_echos_w_decay_model)),
+    cp.asnumpy(est_ratio)
+],
+                        imshow_kwargs=ims)

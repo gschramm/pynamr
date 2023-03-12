@@ -799,7 +799,7 @@ if not outfileb.exists():
         sigma=sigma,
         max_iter=max_num_iter)
 
-    print('AGR echo 2 - "estimated" T2* modeling')
+    print('AGR both echos - "estimated" T2* modeling')
     for i in range(max_num_iter):
         print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
         algb.update()
