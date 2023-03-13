@@ -281,6 +281,10 @@ t1_origin = t1_affine[:-1, -1]
 na_voxsize = 10 * field_of_view_cm / np.array(ishape)
 na_origin = t1_origin.copy()
 
+# save the Na origin such that we can later transform the
+# Na recons back to other grids
+np.savetxt(odir / 'na_origin.txt', na_origin)
+
 t1_aligned_file = odir / 't1_aligned.npy'
 
 if not t1_aligned_file.exists():
