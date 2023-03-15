@@ -14,13 +14,43 @@ from pymirc.image_operations import aff_transform, zoom3d
 
 import SimpleITK as sitk
 
+
+def kb_rolloff(x: np.ndarray, beta: float):
+    """roll-off due to Kaiser-Bessel window
+       see Jackson et al IEEE TMI 1991 Selection of a Conv. Func for Fourier Inverse Regridding  Eq.15
+
+       Parameters
+       ----------
+
+       x: np.ndarray
+          normalized spatial coordinates (x*W in Jackson paper)
+          for a window width of 2*delta_k and delta_k = 1/FOV, x should be in the range [-1, 1]
+       beta: float
+          beta parameter of Kaiser-Bessel window
+    """
+    y = (np.pi**2) * (x**2) - beta**2
+
+    i0 = np.where(y > 0)
+    i1 = np.where(y < 0)
+
+    z0 = np.sqrt(y[i0])
+    z1 = np.sqrt(-y[i1])
+
+    res = np.ones_like(x)
+
+    res[i0] = np.sin(z0) / z0
+    res[i1] = np.sinh(z1) / z1
+
+    return res
+
+
 def hann(k: np.ndarray, k0: float):
     res = np.zeros_like(k)
     inds = np.where(k <= k0)
     res[inds] = 0.5 * (1 + np.cos(np.pi * k[inds] / k0))
 
     return res
-    
+
 
 def read_single_tpi_gradient_file(gradient_file: str,
                                   gamma_by_2pi: float = 1126.2,
@@ -264,7 +294,7 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     return img_extrapolated, t1_extrapolated, T2short_ms_extrapolated, T2long_ms_extrapolated
 
 
-def setup_blob_phantom(simulation_matrix_size: int):
+def setup_blob_phantom(simulation_matrix_size: int, radius: float = 0.25):
     """simple central blob phantom to test normalization factor between nufft data and IFFT"""
 
     img_shape = 3 * (simulation_matrix_size, )
@@ -275,7 +305,7 @@ def setup_blob_phantom(simulation_matrix_size: int):
 
     # create a central blob with sum() = 1
     img = np.zeros(img_shape)
-    img[R < 0.25] = 1
+    img[R < radius] = 1
 
     img = gaussian_filter(img, 2)
 
