@@ -10,10 +10,12 @@ import cupy as cp
 import sigpy
 
 import pymirc.viewer as pv
+import matplotlib.pyplot as plt
 
 from utils import setup_blob_phantom, setup_brainweb_phantom, kb_rolloff
 from utils_sigpy import nufft_t2star_operator
 
+from scipy.ndimage import binary_erosion
 #--------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser()
@@ -342,19 +344,38 @@ else:
 # show results
 from scipy.ndimage import zoom
 
-a = zoom(cp.asnumpy(cp.flip(cp.abs(ifft1), (0, 1))), simshape[0] / ishape[0])
-b = zoom(cp.asnumpy(cp.flip(cp.abs(it_recon), (0, 1))),
-         simshape[0] / ishape[0])
-c = cp.asnumpy(cp.flip(cp.abs(x), (0, 1)))
+a = zoom(cp.asnumpy(cp.flip(cp.abs(ifft1), (0, 1))), 256 / ishape[0])
+b = zoom(cp.asnumpy(cp.flip(cp.abs(it_recon), (0, 1))), 256 / ishape[0])
+c = zoom(cp.asnumpy(cp.flip(cp.abs(x), (0, 1))), 256 / simshape[0])
 
+if phantom == 'brainweb':
+    gm = np.flip(np.load(odir.parent / 'gm_256.npy'), (0, 1))
+    wm = binary_erosion(np.flip(np.load(odir.parent / 'wm_256.npy'), (0, 1)),
+                        iterations=3)
+
+    IFFT_gm = a[gm == 1].mean()
+    IFFT_wm = a[wm == 1].mean()
+
+    iter_gm = b[gm == 1].mean()
+    iter_wm = b[wm == 1].mean()
+
+    true_gm = c[gm == 1].mean()
+    true_wm = c[wm == 1].mean()
+
+    rowlabels = [
+        f'IFFT GM {IFFT_gm:.2f} WM {IFFT_wm:.2f} GM/WM {(IFFT_gm/IFFT_wm):.2f}',
+        f'iter GM {iter_gm:.2f} WM {iter_wm:.2f} GM/WM {(iter_gm/iter_wm):.2f}',
+        f'true GM {true_gm:.2f} WM {true_wm:.2f} GM/WM {(true_gm/true_wm):.2f}',
+    ]
+else:
+    rowlabels = None
+
+plt.rcParams.update({'font.size': 8})
 vi = pv.ThreeAxisViewer([a, b, c],
-                        sl_z=73,
-                        sl_x=73,
+                        sl_z=112,
+                        sl_x=112,
                         ls='',
-                        rowlabels=[
-                            'IFFT gridded data', 'iterative non-uniform data',
-                            'ground truth'
-                        ],
+                        rowlabels=rowlabels,
                         imshow_kwargs=dict(vmin=0,
                                            vmax=1.1 * float(x.real.max()),
                                            cmap='Greys_r'))
