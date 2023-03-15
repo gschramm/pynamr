@@ -248,9 +248,9 @@ data_echo_2_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
 
 # perform IFFT recon (without correction for fall-of due to k-space interpolation)
 if phantom == 'brainweb':
-    ifft_scale = 50 / 0.8
+    ifft_scale = 62.5
 elif phantom == 'blob':
-    ifft_scale = 120.12 * 0.43 / 0.755
+    ifft_scale = 80.5
 else:
     raise ValueError
 
@@ -338,6 +338,23 @@ else:
     it_recon = d1['x']
     u1 = d1['u']
 
-vi = pv.ThreeAxisViewer(
-    [cp.asnumpy(cp.flip(cp.abs(x), (0, 1))) for x in [ifft1, it_recon]],
-    imshow_kwargs=dict(vmin=0, vmax=1.2 * float(x.real.max()), cmap='Greys_r'))
+#-------------------------------------------------------------------------------
+# show results
+from scipy.ndimage import zoom
+
+a = zoom(cp.asnumpy(cp.flip(cp.abs(ifft1), (0, 1))), simshape[0] / ishape[0])
+b = zoom(cp.asnumpy(cp.flip(cp.abs(it_recon), (0, 1))),
+         simshape[0] / ishape[0])
+c = cp.asnumpy(cp.flip(cp.abs(x), (0, 1)))
+
+vi = pv.ThreeAxisViewer([a, b, c],
+                        sl_z=73,
+                        sl_x=73,
+                        ls='',
+                        rowlabels=[
+                            'IFFT gridded data', 'iterative non-uniform data',
+                            'ground truth'
+                        ],
+                        imshow_kwargs=dict(vmin=0,
+                                           vmax=1.1 * float(x.real.max()),
+                                           cmap='Greys_r'))
