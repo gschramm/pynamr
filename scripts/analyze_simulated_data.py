@@ -27,7 +27,7 @@ jitter_suffix = ''
 #folder = 'jitter'
 #jitter_suffix = '_jit1'
 
-load_nodecay = False #True
+load_nodecay = False
 smallROI = False
 
 # base dir
@@ -264,15 +264,27 @@ df[cats] = df[cats].astype('category')
 #------------------------------------------------------------------------------
 # visualize single realization for single noise level
 
-ims_na = dict(origin='lower', vmax=2.5, cmap=plt.cm.Greys_r)
-ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.Greys_r)
-#ims_na = dict(origin='lower', vmax=3., cmap=plt.cm.Greys_r)
-#ims_gam = dict(origin='lower', vmin=0., vmax=1, cmap=plt.cm.Greys_r)
+#ims_na = dict(origin='lower', vmax=2.5, cmap=plt.cm.Greys_r)
+#ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.Greys_r)
+ims_na = dict(origin='lower', vmax=3., cmap=plt.cm.viridis)
+ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.viridis)
 sl = 128 
 
 # use data for a single realization
 df_viz = df.loc[df.seed == realiz]
 
+# show the truth
+truth_fig, truth_ax = plt.subplots(figsize=(3,3))
+truth_ax.imshow(true_na_image[:,:,true_na_image.shape[2]//2].T, **ims_na)
+truth_fig.suptitle('Truth', fontsize='medium')
+truth_ax.set_title(
+                f"GM/WM {true['gm_wm_ratio']:.2f}",
+                fontsize='small')
+truth_fig.tight_layout()
+truth_ax.axis('off')
+truth_fig.show()
+
+# show all the images
 na_figs = []
 na_axs = []
 gam_figs = []
@@ -292,33 +304,10 @@ for g in range(nb_grad):
     conv_figs.append(temp_fig)
     conv_axs.append(temp_ax)
 
-# show the truth
-truth_fig, truth_ax = plt.subplots(figsize=(3,3))
-truth_ax.imshow(true_na_image[:,:,true_na_image.shape[2]//2].T, **ims_na)
-truth_fig.suptitle('Truth', fontsize='medium')
-truth_ax.set_title(
-                f"GM/WM {true['gm_wm_ratio']:.2f}",
-                fontsize='small')
-truth_fig.tight_layout()
-truth_ax.axis('off')
-truth_fig.show()
-
-# group over grad and beta_gamma, and vary over beta_recon
-#for (gradient_strength,
-#     beta_gamma), ddf in df_viz.groupby(['gradient_strength', 'beta_gamma']):
-
-#    fig_index = df.gradient_strength.cat.categories.to_list().index(
-#        gradient_strength)
-#    row_index = df.beta_gamma.cat.categories.to_list().index(beta_gamma)
-
-    # the group should contain all the different beta_recon values, and only once and sorted
-    #assert(ddf.shape[0] == nb_beta_recon and np.unique(ddf.beta_recon).size == nb_beta_recon)
-
 for fig_index in range(nb_grad):
-    for row_index in range(nb_beta_gamma):
-        for r in range(nb_beta_recon):
+    for row_index in range(nb_beta_recon):
+        for r in range(nb_beta_gamma):
 
-#    for r in range(ddf.shape[0]):
             na_axs[fig_index][row_index, r].imshow(agr_na_realiz[fig_index, r, row_index, ..., sl].T, **ims_na)
             gam_axs[fig_index][row_index, r].imshow(gamma_na_realiz[fig_index, r, row_index, ..., sl].T,
                                                     **ims_gam)
@@ -336,11 +325,11 @@ for fig_index in range(nb_grad):
 
             if r == 0:
                 na_axs[fig_index][row_index, r].set_ylabel(
-                    f'beta gamma {df.beta_gamma.cat.categories.to_list()[row_index]}')
+                    f'beta gamma {df.beta_gamma.cat.categories.to_list()[row_index]}', fontsize='small')
                 gam_axs[fig_index][row_index, r].set_ylabel(
-                    f'beta gamma {df.beta_gamma.cat.categories.to_list()[row_index]}')
+                    f'beta gamma {df.beta_gamma.cat.categories.to_list()[row_index]}', fontsize='small')
                 conv_axs[fig_index][row_index, r].set_ylabel(
-                    f'beta gamma {df.beta_gamma.cat.categories.to_list()[row_index]}')
+                    f'beta gamma {df.beta_gamma.cat.categories.to_list()[row_index]}', fontsize='small')
 
 for ax in na_axs:
     for axx in ax.ravel():
@@ -370,16 +359,19 @@ for i, fig in enumerate(na_figs):
     fig.suptitle(f'gradient strength {df.gradient_strength.cat.categories[i]}')
     fig.tight_layout()
     fig.show()
+    fig.savefig(Path(analysis_results_dir) / f'agr_grad{df.gradient_strength.cat.categories[i]}.png')
 
 for i, fig in enumerate(gam_figs):
     fig.suptitle(f'gradient strength {df.gradient_strength.cat.categories[i]}')
     fig.tight_layout()
     fig.show()
+    fig.savefig(Path(analysis_results_dir) / f'gamma_grad{df.gradient_strength.cat.categories[i]}.png')
 
 for i, fig in enumerate(conv_figs):
     fig.suptitle(f'gradient strength {df.gradient_strength.cat.categories[i]}')
     fig.tight_layout()
     fig.show()
+    fig.savefig(Path(analysis_results_dir) / f'conv_grad{df.gradient_strength.cat.categories[i]}.png')
 
 # ----------------------------------------------------------------
 # init seaborn 
@@ -544,18 +536,18 @@ for i,c in enumerate(criteria):
         df_stats[c+' std'] =  100 * df_stats[c+' std'].values / true[c]
         df_stats = df_stats.rename(columns={c+' mean':c+' bias[%]', c+' std':c+' std[%]'})
 
-df_stats = df_stats.rename(columns={'gradient_strength':'readout'})
+df_stats = df_stats.rename(columns={'gradient_strength':'readout time'})
 if load_nodecay:
-    df_stats['readout'] = df_stats['readout'].cat.rename_categories(['x1','x1.5','x2', 'x1 no decay'])
+    df_stats['readout time'] = df_stats['readout time'].cat.rename_categories(['x1','x0.7','x0.5', 'x1 no decay'])
 else:
-    df_stats['readout'] = df_stats['readout'].cat.rename_categories(['x1','x1.5','x2'])
+    df_stats['readout time'] = df_stats['readout time'].cat.rename_categories(['x1','x0.7','x0.5'])
 
 
 for col in criteria:
     # show plots of bias-stddev in perc for comparing gradients
     grid = sns.relplot(
             data=df_stats, kind="line",
-            x=col+' bias[%]', y=col+' std[%]', hue="readout", style='recon_type',
+            x=col+' bias[%]', y=col+' std[%]', hue="readout time", style='recon_type',
             col="beta_gamma", markers={'agr':'.', 'conv':'*'}, markersize=20, legend='brief')
 
     for ax in grid.axes.ravel():
@@ -601,7 +593,7 @@ for g in range(len(df.gradient_strength.cat.categories.to_list())):
     print(f'{df.gradient_strength.cat.categories.to_list()[g]} example mean over brain: truth={m_true:.2g} agr={mi_agr:.2g} conv={m_conv:.2g}')
 
 # mean over realiz
-agr_na_realiz /= nb_realiz
+agr_na_realiz_mean /= nb_realiz
 
 
 # script duration
