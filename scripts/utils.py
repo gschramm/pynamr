@@ -191,16 +191,18 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     simulation_voxel_size_mm: float = 10 * field_of_view_cm / simulation_matrix_size
 
     # setup the phantom on a high resolution grid (0.5^3mm) first
-    label_nii = nib.load(phantom_data_path / 'subject54_crisp_v.mnc.gz')
+    label_nii = nib.load(phantom_data_path / 'subject54_crisp_v.nii')
     label_nii = nib.as_closest_canonical(label_nii)
 
-    # pad o 434x434x434 voxels
-    lab = np.pad(label_nii.get_fdata(), ((36, 36), (0, 0), (36, 36)),
-                 'constant')
-
-    lab_affine = label_nii.affine.copy()
-    lab_affine[0, -1] -= 36 * lab_affine[0, 0]
-    lab_affine[2, -1] -= 36 * lab_affine[2, 2]
+    # pad to 220mm FOV
+    lab_voxelsize = label_nii.header['pixdim'][1]
+    lab = label_nii.get_fdata()
+    pad_size_220 = ((220 - np.array(lab.shape) * lab_voxelsize) /
+                    lab_voxelsize / 2).astype(int)
+    pad_size_220 = ((pad_size_220[0], pad_size_220[0]),
+                    (pad_size_220[1], pad_size_220[1]), (pad_size_220[2],
+                                                         pad_size_220[2]))
+    lab = np.pad(lab, pad_size_220, 'constant')
 
     # CSF = 1, GM = 2, WM = 3
     csf_inds = np.where(lab == 1)
@@ -229,67 +231,17 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     T2long_ms[wm_inds] = T2long_ms_wm
 
     # read the T1 and interpolate to the grid of the high-res image
-    t1_nii = nib.load(phantom_data_path / 'subject54_t1w_p4.mnc.gz')
+    t1_nii = nib.load(phantom_data_path / 'subject54_t1w_p4_resampled.nii')
     t1_nii = nib.as_closest_canonical(t1_nii)
-    t1 = t1_nii.get_fdata()
-    t1 = aff_transform(t1,
-                       np.linalg.inv(t1_nii.affine) @ lab_affine,
-                       lab.shape,
-                       cval=t1.min())
+    t1 = np.pad(t1_nii.get_fdata(), pad_size_220, 'constant')
 
     # extrapolate the all images to the voxel size we need for the data simulation
-    img_extrapolated = zoom3d(img, lab_affine[0, 0] / simulation_voxel_size_mm)
-    T2short_ms_extrapolated = zoom3d(
-        T2short_ms, lab_affine[0, 0] / simulation_voxel_size_mm)
-    T2long_ms_extrapolated = zoom3d(
-        T2long_ms, lab_affine[0, 0] / simulation_voxel_size_mm)
-    t1_extrapolated = zoom3d(t1, lab_affine[0, 0] / simulation_voxel_size_mm)
-
-    # since the FOV of the brainweb label image is slightly smaller than 220mm, we
-    # have to pad the image
-
-    pad_width = simulation_matrix_size - img_extrapolated.shape[0]
-    p0 = pad_width // 2
-    p1 = pad_width - p0
-
-    img_extrapolated = np.pad(img_extrapolated, (p0, p1))
-    T2short_ms_extrapolated = np.pad(
-        T2short_ms_extrapolated, (p0, p1),
-        constant_values=T2short_ms_extrapolated.max())
-    T2long_ms_extrapolated = np.pad(
-        T2long_ms_extrapolated, (p0, p1),
-        constant_values=T2long_ms_extrapolated.max())
-    t1_extrapolated = np.pad(t1_extrapolated, (p0, p1))
-
-    ## export GM and WM image
-    #from scipy.ndimage import zoom
-
-    #aparc_nii = nib.load(phantom_data_path / 'aparc+aseg_native.nii.gz')
-    #aparc_nii = nib.as_closest_canonical(aparc_nii)
-
-    #cortex = (aparc_nii.get_fdata() >= 1000)
-
-    #cortex = aff_transform(cortex,
-    #                       np.linalg.inv(aparc_nii.affine) @ lab_affine,
-    #                       lab.shape,
-    #                       cval=t1.min())
-
-    #gm = (lab == 2)
-    #wm = (lab == 3)
-
-    #gm_extrapolated = np.pad(
-    #    zoom(gm, lab_affine[0, 0] / simulation_voxel_size_mm, order=0),
-    #    (p0, p1))
-    #wm_extrapolated = np.pad(
-    #    zoom(wm, lab_affine[0, 0] / simulation_voxel_size_mm, order=0),
-    #    (p0, p1))
-    #cortex_extrapolated = np.pad(
-    #    zoom(cortex, lab_affine[0, 0] / simulation_voxel_size_mm, order=0),
-    #    (p0, p1))
-
-    #np.save('gm_256.npy', gm_extrapolated)
-    #np.save('wm_256.npy', wm_extrapolated)
-    #np.save('cortex_256.npy', cortex_extrapolated)
+    img_extrapolated = zoom3d(img, lab_voxelsize / simulation_voxel_size_mm)
+    T2short_ms_extrapolated = zoom3d(T2short_ms,
+                                     lab_voxelsize / simulation_voxel_size_mm)
+    T2long_ms_extrapolated = zoom3d(T2long_ms,
+                                    lab_voxelsize / simulation_voxel_size_mm)
+    t1_extrapolated = zoom3d(t1, lab_voxelsize / simulation_voxel_size_mm)
 
     return img_extrapolated, t1_extrapolated, T2short_ms_extrapolated, T2long_ms_extrapolated
 
