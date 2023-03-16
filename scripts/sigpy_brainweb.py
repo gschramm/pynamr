@@ -546,7 +546,7 @@ if not ofile_agr_both_echos.exists():
                                               AH=A.H,
                                               x=deepcopy(agr_e1_no_decay),
                                               u=ub,
-                                              tau=0.5 / sigma,
+                                              tau=0.7 / sigma,
                                               sigma=sigma,
                                               max_iter=max_num_iter)
 
