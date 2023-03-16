@@ -30,8 +30,8 @@ parser.add_argument('--phantom',
 parser.add_argument('--no_decay', action='store_true')
 parser.add_argument('--sigma', type=float, default=0.1)
 parser.add_argument('--seed', type=int, default=1)
-parser.add_argument('--beta_anatomical', type=float, default=1e-2)
-parser.add_argument('--beta_non_anatomical', type=float, default=3e-1)
+parser.add_argument('--beta_anatomical', type=float, default=0)
+parser.add_argument('--beta_non_anatomical', type=float, default=1e-1)
 args = parser.parse_args()
 
 max_num_iter = args.max_num_iter
@@ -364,259 +364,211 @@ del A
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
 
-#----------------------------------
-# setup projected gradient operator
-#----------------------------------
+if beta_anatomical > 0:
+    odir_agr = odir / 'agr'
+    odir_agr.mkdir(exist_ok=True, parents=True)
 
-prior_image = cp.asarray(zoom3d(t1_image, iter_shape[0] / sim_shape[0]))
-xi = G(prior_image)
+    #----------------------------------
+    # setup projected gradient operator
+    #----------------------------------
 
-# normalize the real and imaginary part of the joint gradient field
-real_norm = cp.linalg.norm(xi.real, axis=0)
-imag_norm = cp.linalg.norm(xi.imag, axis=0)
+    prior_image = cp.asarray(zoom3d(t1_image, iter_shape[0] / sim_shape[0]))
+    xi = G(prior_image)
 
-ir = cp.where(real_norm > 0)
-ii = cp.where(imag_norm > 0)
+    # normalize the real and imaginary part of the joint gradient field
+    real_norm = cp.linalg.norm(xi.real, axis=0)
+    imag_norm = cp.linalg.norm(xi.imag, axis=0)
 
-for i in range(xi.shape[0]):
-    xi[i, ...].real[ir] /= real_norm[ir]
-    xi[i, ...].imag[ii] /= imag_norm[ii]
+    ir = cp.where(real_norm > 0)
+    ii = cp.where(imag_norm > 0)
 
-M = sigpy.linop.Multiply(G.oshape, xi)
-S = sigpy.linop.Sum(M.oshape, (0, ))
-I = sigpy.linop.Identity(M.oshape)
+    for i in range(xi.shape[0]):
+        xi[i, ...].real[ir] /= real_norm[ir]
+        xi[i, ...].imag[ii] /= imag_norm[ii]
 
-# projection operator
-P = I - (M.H * S.H * S * M)
+    M = sigpy.linop.Multiply(G.oshape, xi)
+    S = sigpy.linop.Sum(M.oshape, (0, ))
+    I = sigpy.linop.Identity(M.oshape)
 
-# projected gradient operator
-PG = P * G
+    # projection operator
+    P = I - (M.H * S.H * S * M)
 
-prox_reg_anatomical = sigpy.prox.L1Reg(PG.oshape, lamda=beta_anatomical)
+    # projected gradient operator
+    PG = P * G
 
-# setup complete forward model and proximal operator
-A = sigpy.linop.Vstack([nufft_single_echo_no_decay, PG])
+    prox_reg_anatomical = sigpy.prox.L1Reg(PG.oshape, lamda=beta_anatomical)
 
-proxfc1 = sigpy.prox.Stack([
-    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
-    sigpy.prox.Conj(prox_reg_anatomical)
-])
+    # setup complete forward model and proximal operator
+    A = sigpy.linop.Vstack([nufft_single_echo_no_decay, PG])
 
-# setup the dual variable
-u_e1_no_decay_agr = deepcopy(u_e1_no_decay)
+    proxfc1 = sigpy.prox.Stack([
+        sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
+        sigpy.prox.Conj(prox_reg_anatomical)
+    ])
 
-ofile_e1_no_decay_agr = odir / f'agr_echo_1_no_decay_model_{beta_anatomical}.npz'
+    # setup the dual variable
+    u_e1_no_decay_agr = deepcopy(u_e1_no_decay)
 
-if not ofile_e1_no_decay_agr.exists():
-    alg_e1_no_decay_agr = sigpy.alg.PrimalDualHybridGradient(
-        proxfc=proxfc1,
-        proxg=sigpy.prox.NoOp(A.ishape),
-        A=A,
-        AH=A.H,
-        x=deepcopy(r_e1_no_decay),
-        u=u_e1_no_decay_agr,
-        tau=1. / sigma,
-        sigma=sigma,
-        max_iter=max_num_iter)
+    ofile_e1_no_decay_agr = odir_agr / f'agr_echo_1_no_decay_model_{beta_anatomical}.npz'
 
-    print('agr echo 1 - no T2* modeling')
-    for i in range(max_num_iter):
-        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
-        alg_e1_no_decay_agr.update()
-    print('')
+    if not ofile_e1_no_decay_agr.exists():
+        alg_e1_no_decay_agr = sigpy.alg.PrimalDualHybridGradient(
+            proxfc=proxfc1,
+            proxg=sigpy.prox.NoOp(A.ishape),
+            A=A,
+            AH=A.H,
+            x=deepcopy(r_e1_no_decay),
+            u=u_e1_no_decay_agr,
+            tau=1. / sigma,
+            sigma=sigma,
+            max_iter=max_num_iter)
 
-    cp.savez(ofile_e1_no_decay_agr,
-             x=alg_e1_no_decay_agr.x,
-             u=u_e1_no_decay_agr)
-    agr_e1_no_decay = alg_e1_no_decay_agr.x
-else:
-    d = cp.load(ofile_e1_no_decay_agr)
-    agr_e1_no_decay = d['x']
-    u_e1_no_decay_agr = d['u']
+        print('agr echo 1 - no T2* modeling')
+        for i in range(max_num_iter):
+            print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+            alg_e1_no_decay_agr.update()
+        print('')
 
-#--------------------------------------------------------------------------
-#--------------------------------------------------------------------------
-# recon of second echo without decay model and anatomical prior
-#--------------------------------------------------------------------------
-#--------------------------------------------------------------------------
+        cp.savez(ofile_e1_no_decay_agr,
+                 x=alg_e1_no_decay_agr.x,
+                 u=u_e1_no_decay_agr)
+        agr_e1_no_decay = alg_e1_no_decay_agr.x
+    else:
+        d = cp.load(ofile_e1_no_decay_agr)
+        agr_e1_no_decay = d['x']
+        u_e1_no_decay_agr = d['u']
 
-proxfc2 = sigpy.prox.Stack([
-    sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
-    sigpy.prox.Conj(prox_reg_anatomical)
-])
+    #--------------------------------------------------------------------------
+    #--------------------------------------------------------------------------
+    # recon of second echo without decay model and anatomical prior
+    #--------------------------------------------------------------------------
+    #--------------------------------------------------------------------------
 
-# setup the dual variable
-u_e2_no_decay_agr = deepcopy(u_e1_no_decay_agr)
+    proxfc2 = sigpy.prox.Stack([
+        sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
+        sigpy.prox.Conj(prox_reg_anatomical)
+    ])
 
-ofile_e2_no_decay_agr = odir / f'agr_echo_2_no_decay_model_{beta_anatomical}.npz'
+    # setup the dual variable
+    u_e2_no_decay_agr = deepcopy(u_e1_no_decay_agr)
 
-if not ofile_e2_no_decay_agr.exists():
-    alg_e2_no_decay_agr = sigpy.alg.PrimalDualHybridGradient(
-        proxfc=proxfc2,
-        proxg=sigpy.prox.NoOp(A.ishape),
-        A=A,
-        AH=A.H,
-        x=deepcopy(agr_e1_no_decay),
-        u=u_e2_no_decay_agr,
-        tau=1. / sigma,
-        sigma=sigma,
-        max_iter=max_num_iter)
+    ofile_e2_no_decay_agr = odir_agr / f'agr_echo_2_no_decay_model_{beta_anatomical}.npz'
 
-    print('agr echo 2 - no T2* modeling')
-    for i in range(max_num_iter):
-        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
-        alg_e2_no_decay_agr.update()
-    print('')
+    if not ofile_e2_no_decay_agr.exists():
+        alg_e2_no_decay_agr = sigpy.alg.PrimalDualHybridGradient(
+            proxfc=proxfc2,
+            proxg=sigpy.prox.NoOp(A.ishape),
+            A=A,
+            AH=A.H,
+            x=deepcopy(agr_e1_no_decay),
+            u=u_e2_no_decay_agr,
+            tau=1. / sigma,
+            sigma=sigma,
+            max_iter=max_num_iter)
 
-    cp.savez(ofile_e2_no_decay_agr,
-             x=alg_e2_no_decay_agr.x,
-             u=u_e2_no_decay_agr)
-    agr_e2_no_decay = alg_e2_no_decay_agr.x
-else:
-    d = cp.load(ofile_e2_no_decay_agr)
-    agr_e2_no_decay = d['x']
-    u_e2_no_decay_agr = d['u']
+        print('agr echo 2 - no T2* modeling')
+        for i in range(max_num_iter):
+            print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+            alg_e2_no_decay_agr.update()
+        print('')
 
-del A
-del nufft_single_echo_no_decay
+        cp.savez(ofile_e2_no_decay_agr,
+                 x=alg_e2_no_decay_agr.x,
+                 u=u_e2_no_decay_agr)
+        agr_e2_no_decay = alg_e2_no_decay_agr.x
+    else:
+        d = cp.load(ofile_e2_no_decay_agr)
+        agr_e2_no_decay = d['x']
+        u_e2_no_decay_agr = d['u']
 
-#--------------------------------------------------------------------------
-#--------------------------------------------------------------------------
-# estimate the ratio between first and second echo (AGR)
-#--------------------------------------------------------------------------
-#--------------------------------------------------------------------------
+    del A
+    del nufft_single_echo_no_decay
 
-est_ratio = cp.clip(cp.abs(agr_e2_no_decay) / cp.abs(agr_e1_no_decay), 0, 1)
-# set ratio to one in voxels where there is low signal in the first echo
-mask = 1 - (cp.abs(agr_e1_no_decay) < 0.05 * cp.abs(agr_e1_no_decay).max())
+    #--------------------------------------------------------------------------
+    #--------------------------------------------------------------------------
+    # estimate the ratio between first and second echo (AGR)
+    #--------------------------------------------------------------------------
+    #--------------------------------------------------------------------------
 
-label, num_label = ndimage.label(mask == 1)
-size = np.bincount(label.ravel())
-biggest_label = size[1:].argmax() + 1
-clump_mask = (label == biggest_label)
+    est_ratio = cp.clip(
+        cp.abs(agr_e2_no_decay) / cp.abs(agr_e1_no_decay), 0, 1)
+    # set ratio to one in voxels where there is low signal in the first echo
+    mask = 1 - (cp.abs(agr_e1_no_decay) < 0.05 * cp.abs(agr_e1_no_decay).max())
 
-est_ratio[clump_mask == 0] = 1
+    label, num_label = ndimage.label(mask == 1)
+    size = np.bincount(label.ravel())
+    biggest_label = size[1:].argmax() + 1
+    clump_mask = (label == biggest_label)
 
-cp.save(odir / f'est_ratio_{beta_anatomical}.npy', est_ratio)
+    est_ratio[clump_mask == 0] = 1
 
-#--------------------------------------------------------------------------
-#--------------------------------------------------------------------------
-# AGR of both echos including T2* model
-#--------------------------------------------------------------------------
-#--------------------------------------------------------------------------
+    cp.save(odir_agr / f'est_ratio_{beta_anatomical}.npy', est_ratio)
 
-nufft_echo_1, nufft_echo_2 = nufft_t2star_operator(
-    iter_shape,
-    k_1_cm,
-    field_of_view_cm=field_of_view_cm,
-    acq_sampling_time_ms=acq_sampling_time_ms,
-    time_bin_width_ms=time_bin_width_ms,
-    scale=nufft_scale,
-    add_mirrored_coordinates=False,
-    echo_time_1_ms=echo_time_1_ms,
-    echo_time_2_ms=echo_time_2_ms,
-    ratio_image=est_ratio)
+    #--------------------------------------------------------------------------
+    #--------------------------------------------------------------------------
+    # AGR of both echos including T2* model
+    #--------------------------------------------------------------------------
+    #--------------------------------------------------------------------------
 
-# the two echos usually have different phases
-# we correct for this by multiplying by the negative estimated phases
-phase_fac_1 = cp.exp(1j * cp.angle(agr_e1_no_decay))
-phase_fac_2 = cp.exp(1j * cp.angle(agr_e2_no_decay))
+    nufft_echo_1, nufft_echo_2 = nufft_t2star_operator(
+        iter_shape,
+        k_1_cm,
+        field_of_view_cm=field_of_view_cm,
+        acq_sampling_time_ms=acq_sampling_time_ms,
+        time_bin_width_ms=time_bin_width_ms,
+        scale=nufft_scale,
+        add_mirrored_coordinates=False,
+        echo_time_1_ms=echo_time_1_ms,
+        echo_time_2_ms=echo_time_2_ms,
+        ratio_image=est_ratio)
 
-A = sigpy.linop.Vstack([
-    nufft_echo_1 * sigpy.linop.Multiply(iter_shape, phase_fac_1),
-    nufft_echo_2 * sigpy.linop.Multiply(iter_shape, phase_fac_2), PG
-])
+    # the two echos usually have different phases
+    # we correct for this by multiplying by the negative estimated phases
+    phase_fac_1 = cp.exp(1j * cp.angle(agr_e1_no_decay))
+    phase_fac_2 = cp.exp(1j * cp.angle(agr_e2_no_decay))
 
-proxfcb = sigpy.prox.Stack([
-    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
-    sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
-    sigpy.prox.Conj(prox_reg_anatomical)
-])
+    A = sigpy.linop.Vstack([
+        nufft_echo_1 * sigpy.linop.Multiply(iter_shape, phase_fac_1),
+        nufft_echo_2 * sigpy.linop.Multiply(iter_shape, phase_fac_2), PG
+    ])
 
-ub = cp.concatenate((u_e1_no_decay_agr[:data_echo_1.size],
-                     u_e2_no_decay_agr[:data_echo_2.size],
-                     u_e1_no_decay_agr[data_echo_1.size:]))
+    proxfcb = sigpy.prox.Stack([
+        sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
+        sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
+        sigpy.prox.Conj(prox_reg_anatomical)
+    ])
 
-ofile_agr_both_echos = odir / f'agr_both_echos_w_decay_model_{beta_anatomical:.1E}.npz'
+    ub = cp.concatenate((u_e1_no_decay_agr[:data_echo_1.size],
+                         u_e2_no_decay_agr[:data_echo_2.size],
+                         u_e1_no_decay_agr[data_echo_1.size:]))
 
-if not ofile_agr_both_echos.exists():
-    algb = sigpy.alg.PrimalDualHybridGradient(proxfc=proxfcb,
-                                              proxg=sigpy.prox.NoOp(A.ishape),
-                                              A=A,
-                                              AH=A.H,
-                                              x=deepcopy(agr_e1_no_decay),
-                                              u=ub,
-                                              tau=0.7 / sigma,
-                                              sigma=sigma,
-                                              max_iter=max_num_iter)
+    ofile_agr_both_echos = odir_agr / f'agr_both_echos_w_decay_model_{beta_anatomical:.1E}.npz'
 
-    print('AGR both echos - "estimated" T2* modeling')
-    for i in range(max_num_iter):
-        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
-        algb.update()
-    print('')
+    if not ofile_agr_both_echos.exists():
+        algb = sigpy.alg.PrimalDualHybridGradient(proxfc=proxfcb,
+                                                  proxg=sigpy.prox.NoOp(
+                                                      A.ishape),
+                                                  A=A,
+                                                  AH=A.H,
+                                                  x=deepcopy(agr_e1_no_decay),
+                                                  u=ub,
+                                                  tau=0.7 / sigma,
+                                                  sigma=sigma,
+                                                  max_iter=max_num_iter)
 
-    cp.savez(ofile_agr_both_echos, x=algb.x, u=ub)
-    agr_both_echos_w_decay_model = algb.x
-else:
-    d = cp.load(ofile_agr_both_echos)
-    agr_both_echos_w_decay_model = d['x']
-    u = d['u']
+        print('AGR both echos - "estimated" T2* modeling')
+        for i in range(max_num_iter):
+            print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+            algb.update()
+        print('')
 
-del A
-del nufft_echo_1
-del nufft_echo_2
+        cp.savez(ofile_agr_both_echos, x=algb.x, u=ub)
+        agr_both_echos_w_decay_model = algb.x
+    else:
+        d = cp.load(ofile_agr_both_echos)
+        agr_both_echos_w_decay_model = d['x']
+        u = d['u']
 
-#-------------------------------------------------------------------------------
-# show results
-from scipy.ndimage import zoom
-
-a = zoom(cp.asnumpy(cp.flip(cp.abs(ifft1), (0, 1))), 256 / grid_shape[0])
-a2 = zoom(cp.asnumpy(cp.flip(cp.abs(r_e1_no_decay), (0, 1))),
-          256 / iter_shape[0])
-b = zoom(cp.asnumpy(cp.flip(cp.abs(agr_e1_no_decay), (0, 1))),
-         256 / iter_shape[0])
-b3 = zoom(cp.asnumpy(cp.flip(cp.abs(agr_both_echos_w_decay_model), (0, 1))),
-          256 / iter_shape[0])
-c = zoom(cp.asnumpy(cp.flip(cp.abs(x), (0, 1))), 256 / sim_shape[0])
-
-if phantom == 'brainweb':
-    gm = np.flip(np.load(odir.parent / 'gm_256.npy'), (0, 1))
-    wm = binary_erosion(np.flip(np.load(odir.parent / 'wm_256.npy'), (0, 1)),
-                        iterations=3)
-
-    IFFT_gm = a[gm == 1].mean()
-    IFFT_wm = a[wm == 1].mean()
-
-    ITER_gm = a2[gm == 1].mean()
-    ITER_wm = a2[wm == 1].mean()
-
-    AGR_1_gm = b[gm == 1].mean()
-    AGR_1_wm = b[wm == 1].mean()
-
-    AGR_b_gm = b3[gm == 1].mean()
-    AGR_b_wm = b3[wm == 1].mean()
-
-    true_gm = c[gm == 1].mean()
-    true_wm = c[wm == 1].mean()
-
-    rowlabels = [
-        f'IFFT GM {IFFT_gm:.2f} WM {IFFT_wm:.2f} GM/WM {(IFFT_gm/IFFT_wm):.2f}',
-        f'ITER GM {ITER_gm:.2f} WM {ITER_wm:.2f} GM/WM {(ITER_gm/ITER_wm):.2f}',
-        f'AGR_1 GM {AGR_1_gm:.2f} WM {AGR_1_wm:.2f} GM/WM {(AGR_1_gm/AGR_1_wm):.2f}',
-        f'AGR_B GM {AGR_b_gm:.2f} WM {AGR_b_wm:.2f} GM/WM {(AGR_b_gm/AGR_b_wm):.2f}',
-        f'true GM {true_gm:.2f} WM {true_wm:.2f} GM/WM {(true_gm/true_wm):.2f}',
-    ]
-else:
-    rowlabels = None
-
-plt.rcParams.update({'font.size': 5})
-vi = pv.ThreeAxisViewer([a, a2, b, b3, c],
-                        sl_z=112,
-                        sl_x=112,
-                        ls='',
-                        rowlabels=rowlabels,
-                        imshow_kwargs=dict(vmin=0,
-                                           vmax=1.1 * float(x.real.max()),
-                                           cmap='Greys_r'))
-vi.fig.savefig(odir / f'screenshot.png')
+    del A
+    del nufft_echo_1
+    del nufft_echo_2
