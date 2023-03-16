@@ -329,7 +329,7 @@ proxfc1 = sigpy.prox.Stack([
 # setup the dual variable
 u_e1_no_decay = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
-ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{max_num_iter}_{beta_non_anatomical}.npz'
+ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{beta_non_anatomical}.npz'
 
 if not ofile_e1_no_decay.exists():
     alg_e1_no_decay = sigpy.alg.PrimalDualHybridGradient(
@@ -405,7 +405,7 @@ proxfc1 = sigpy.prox.Stack([
 # setup the dual variable
 u_e1_no_decay_agr = deepcopy(u_e1_no_decay)
 
-ofile_e1_no_decay_agr = odir / f'agr_echo_1_no_decay_model_{max_num_iter}_{beta_anatomical}.npz'
+ofile_e1_no_decay_agr = odir / f'agr_echo_1_no_decay_model_{beta_anatomical}.npz'
 
 if not ofile_e1_no_decay_agr.exists():
     alg_e1_no_decay_agr = sigpy.alg.PrimalDualHybridGradient(
@@ -448,7 +448,7 @@ proxfc2 = sigpy.prox.Stack([
 # setup the dual variable
 u_e2_no_decay_agr = deepcopy(u_e1_no_decay_agr)
 
-ofile_e2_no_decay_agr = odir / f'agr_echo_2_no_decay_model_{max_num_iter}_{beta_anatomical}.npz'
+ofile_e2_no_decay_agr = odir / f'agr_echo_2_no_decay_model_{beta_anatomical}.npz'
 
 if not ofile_e2_no_decay_agr.exists():
     alg_e2_no_decay_agr = sigpy.alg.PrimalDualHybridGradient(
@@ -497,7 +497,7 @@ clump_mask = (label == biggest_label)
 
 est_ratio[clump_mask == 0] = 1
 
-cp.save(odir / f'est_ratio_{max_num_iter}_{beta_anatomical}.npy', est_ratio)
+cp.save(odir / f'est_ratio_{beta_anatomical}.npy', est_ratio)
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
