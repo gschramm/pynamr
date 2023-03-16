@@ -214,6 +214,14 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     other_inds = np.where(lab >= 4)
     skull_inds = np.where(lab == 7)
 
+    # calculate eye masks
+    x = np.arange(lab.shape[0])
+    X, Y, Z = np.meshgrid(x, x, x)
+    R1 = np.sqrt((X - 368)**2 + (Y - 143)**2 + (Z - 97)**2)
+    R2 = np.sqrt((X - 368)**2 + (Y - 291)**2 + (Z - 97)**2)
+    eye1_inds = np.where((R1 < 25))
+    eye2_inds = np.where((R2 < 25))
+
     # set up array for trans. magnetization
     img = np.zeros(lab.shape, dtype=np.float32)
     img[csf_inds] = csf_na_concentration
@@ -221,6 +229,8 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     img[wm_inds] = wm_na_concentration
     img[other_inds] = other_na_concentration
     img[skull_inds] = 0.1
+    img[eye1_inds] = csf_na_concentration
+    img[eye2_inds] = csf_na_concentration
 
     # set up array for Gamma (ratio between 2nd and 1st echo)
     T2short_ms = np.full(lab.shape,
@@ -230,6 +240,8 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     T2short_ms[gm_inds] = T2short_ms_gm
     T2short_ms[wm_inds] = T2short_ms_wm
     T2short_ms[other_inds] = T2short_ms_other
+    T2short_ms[eye1_inds] = T2short_ms_csf
+    T2short_ms[eye2_inds] = T2short_ms_csf
 
     T2long_ms = np.full(lab.shape,
                         0.5 * np.finfo(np.float32).max,
@@ -238,11 +250,17 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     T2long_ms[gm_inds] = T2long_ms_gm
     T2long_ms[wm_inds] = T2long_ms_wm
     T2long_ms[other_inds] = T2long_ms_other
+    T2long_ms[eye1_inds] = T2long_ms_csf
+    T2long_ms[eye2_inds] = T2long_ms_csf
 
     # read the T1 and interpolate to the grid of the high-res image
     t1_nii = nib.load(phantom_data_path / 'subject54_t1w_p4_resampled.nii')
     t1_nii = nib.as_closest_canonical(t1_nii)
     t1 = np.pad(t1_nii.get_fdata(), pad_size_220, 'constant')
+
+    # add eye contrast
+    t1[eye1_inds] *= 0.5
+    t1[eye2_inds] *= 0.5
 
     # extrapolate the all images to the voxel size we need for the data simulation
     img_extrapolated = zoom3d(img, lab_voxelsize / simulation_voxel_size_mm)
