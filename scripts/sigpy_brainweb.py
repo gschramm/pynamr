@@ -55,7 +55,7 @@ grid_shape = (64, 64, 64)
 field_of_view_cm: float = 22.
 
 # 10us sampling time
-acq_sampling_time_ms: float = 0.01
+acq_sampling_time_ms: float = 0.016
 
 # echo times in ms
 echo_time_1_ms = 0.5
