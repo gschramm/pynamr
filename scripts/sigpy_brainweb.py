@@ -407,7 +407,7 @@ if beta_anatomical > 0:
     ])
 
     # setup the dual variable
-    u_e1_no_decay_agr = deepcopy(u_e1_no_decay)
+    u_e1_no_decay_agr = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
     ofile_e1_no_decay_agr = odir_agr / f'agr_echo_1_no_decay_model_{beta_anatomical}.npz'
 
@@ -417,7 +417,7 @@ if beta_anatomical > 0:
             proxg=sigpy.prox.NoOp(A.ishape),
             A=A,
             AH=A.H,
-            x=deepcopy(r_e1_no_decay),
+            x=cp.zeros(A.ishape, dtype=cp.complex128),
             u=u_e1_no_decay_agr,
             tau=1. / sigma,
             sigma=sigma,
@@ -450,7 +450,7 @@ if beta_anatomical > 0:
     ])
 
     # setup the dual variable
-    u_e2_no_decay_agr = deepcopy(u_e1_no_decay_agr)
+    u_e2_no_decay_agr = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
     ofile_e2_no_decay_agr = odir_agr / f'agr_echo_2_no_decay_model_{beta_anatomical}.npz'
 
@@ -460,7 +460,7 @@ if beta_anatomical > 0:
             proxg=sigpy.prox.NoOp(A.ishape),
             A=A,
             AH=A.H,
-            x=deepcopy(agr_e1_no_decay),
+            x=cp.zeros(A.ishape, dtype=cp.complex128),
             u=u_e2_no_decay_agr,
             tau=1. / sigma,
             sigma=sigma,
@@ -538,23 +538,21 @@ if beta_anatomical > 0:
         sigpy.prox.Conj(prox_reg_anatomical)
     ])
 
-    ub = cp.concatenate((u_e1_no_decay_agr[:data_echo_1.size],
-                         u_e2_no_decay_agr[:data_echo_2.size],
-                         u_e1_no_decay_agr[data_echo_1.size:]))
+    ub = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
     ofile_agr_both_echos = odir_agr / f'agr_both_echos_w_decay_model_{beta_anatomical:.1E}.npz'
 
     if not ofile_agr_both_echos.exists():
-        algb = sigpy.alg.PrimalDualHybridGradient(proxfc=proxfcb,
-                                                  proxg=sigpy.prox.NoOp(
-                                                      A.ishape),
-                                                  A=A,
-                                                  AH=A.H,
-                                                  x=deepcopy(agr_e1_no_decay),
-                                                  u=ub,
-                                                  tau=0.7 / sigma,
-                                                  sigma=sigma,
-                                                  max_iter=max_num_iter)
+        algb = sigpy.alg.PrimalDualHybridGradient(
+            proxfc=proxfcb,
+            proxg=sigpy.prox.NoOp(A.ishape),
+            A=A,
+            AH=A.H,
+            x=cp.zeros(A.ishape, dtype=cp.complex128),
+            u=ub,
+            tau=0.7 / sigma,
+            sigma=sigma,
+            max_iter=max_num_iter)
 
         print('AGR both echos - "estimated" T2* modeling')
         for i in range(max_num_iter):
@@ -567,7 +565,7 @@ if beta_anatomical > 0:
     else:
         d = cp.load(ofile_agr_both_echos)
         agr_both_echos_w_decay_model = d['x']
-        u = d['u']
+        ub = d['u']
 
     del A
     del nufft_echo_1
