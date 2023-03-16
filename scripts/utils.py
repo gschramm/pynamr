@@ -181,12 +181,15 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
                            csf_na_concentration: float = 3.0,
                            gm_na_concentration: float = 1.5,
                            wm_na_concentration: float = 1.0,
+                           other_na_concentration: float = 0.5,
                            T2long_ms_csf: float = 50.,
                            T2long_ms_gm: float = 15.,
                            T2long_ms_wm: float = 18.,
+                           T2long_ms_other: float = 15.,
                            T2short_ms_csf: float = 50.,
                            T2short_ms_gm: float = 8.,
-                           T2short_ms_wm: float = 9.):
+                           T2short_ms_wm: float = 9.,
+                           T2short_ms_other: float = 8.):
 
     simulation_voxel_size_mm: float = 10 * field_of_view_cm / simulation_matrix_size
 
@@ -208,12 +211,16 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     csf_inds = np.where(lab == 1)
     gm_inds = np.where(lab == 2)
     wm_inds = np.where(lab == 3)
+    other_inds = np.where(lab >= 4)
+    skull_inds = np.where(lab == 7)
 
     # set up array for trans. magnetization
     img = np.zeros(lab.shape, dtype=np.float32)
     img[csf_inds] = csf_na_concentration
     img[gm_inds] = gm_na_concentration
     img[wm_inds] = wm_na_concentration
+    img[other_inds] = other_na_concentration
+    img[skull_inds] = 0.1
 
     # set up array for Gamma (ratio between 2nd and 1st echo)
     T2short_ms = np.full(lab.shape,
@@ -222,6 +229,7 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     T2short_ms[csf_inds] = T2short_ms_csf
     T2short_ms[gm_inds] = T2short_ms_gm
     T2short_ms[wm_inds] = T2short_ms_wm
+    T2short_ms[other_inds] = T2short_ms_other
 
     T2long_ms = np.full(lab.shape,
                         0.5 * np.finfo(np.float32).max,
@@ -229,6 +237,7 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     T2long_ms[csf_inds] = T2long_ms_csf
     T2long_ms[gm_inds] = T2long_ms_gm
     T2long_ms[wm_inds] = T2long_ms_wm
+    T2long_ms[other_inds] = T2long_ms_other
 
     # read the T1 and interpolate to the grid of the high-res image
     t1_nii = nib.load(phantom_data_path / 'subject54_t1w_p4_resampled.nii')
