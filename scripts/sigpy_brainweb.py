@@ -32,6 +32,14 @@ parser.add_argument('--sigma', type=float, default=0.1)
 parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--beta_anatomical', type=float, default=0)
 parser.add_argument('--beta_non_anatomical', type=float, default=1e-1)
+parser.add_argument('--norm_anatomical',
+                    type=str,
+                    default='L1',
+                    choices=['L1', 'L2'])
+parser.add_argument('--norm_non_anatomical',
+                    type=str,
+                    default='L2',
+                    choices=['L1', 'L2'])
 args = parser.parse_args()
 
 max_num_iter = args.max_num_iter
@@ -42,6 +50,8 @@ sigma = args.sigma
 seed = args.seed
 beta_anatomical = args.beta_anatomical
 beta_non_anatomical = args.beta_non_anatomical
+norm_anatomical = args.norm_anatomical
+norm_non_anatomical = args.norm_non_anatomical
 
 cp.random.seed(seed)
 
@@ -316,20 +326,30 @@ nufft_single_echo_no_decay = nufft_t2star_operator(
 
 # setup 3D finite difference operator with norm 1
 G = (1 / np.sqrt(12)) * sigpy.linop.FiniteDifference(iter_shape, axes=None)
-prox_reg_non_anatomical = sigpy.prox.L2Reg(G.oshape, lamda=beta_non_anatomical)
+
+if norm_non_anatomical == 'L1':
+    prox_reg_anatomical = sigpy.prox.L1Reg(G.oshape, lamda=beta_non_anatomical)
+elif norm_non_anatomical == 'L2':
+    prox_reg_non_anatomical = sigpy.prox.L2Reg(G.oshape,
+                                               lamda=beta_non_anatomical)
+else:
+    raise ValueError
 
 # setup complete forward model and proximal operator
-A = sigpy.linop.Vstack([nufft_single_echo_no_decay, G])
-
-proxfc1 = sigpy.prox.Stack([
-    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
-    sigpy.prox.Conj(prox_reg_non_anatomical)
-])
+if beta_non_anatomical > 0:
+    A = sigpy.linop.Vstack([nufft_single_echo_no_decay, G])
+    proxfc1 = sigpy.prox.Stack([
+        sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
+        sigpy.prox.Conj(prox_reg_non_anatomical)
+    ])
+else:
+    A = nufft_single_echo_no_decay
+    proxfc1 = sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1)
 
 # setup the dual variable
 u_e1_no_decay = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
-ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{beta_non_anatomical}.npz'
+ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{norm_non_anatomical}_{beta_non_anatomical:.2E}.npz'
 
 if not ofile_e1_no_decay.exists():
     alg_e1_no_decay = sigpy.alg.PrimalDualHybridGradient(
@@ -396,7 +416,14 @@ if beta_anatomical > 0:
     # projected gradient operator
     PG = P * G
 
-    prox_reg_anatomical = sigpy.prox.L1Reg(PG.oshape, lamda=beta_anatomical)
+    if norm_anatomical == 'L1':
+        prox_reg_anatomical = sigpy.prox.L1Reg(PG.oshape,
+                                               lamda=beta_anatomical)
+    elif norm_anatomical == 'L2':
+        prox_reg_anatomical = sigpy.prox.L2Reg(PG.oshape,
+                                               lamda=beta_anatomical)
+    else:
+        raise ValueError
 
     # setup complete forward model and proximal operator
     A = sigpy.linop.Vstack([nufft_single_echo_no_decay, PG])
@@ -409,7 +436,7 @@ if beta_anatomical > 0:
     # setup the dual variable
     u_e1_no_decay_agr = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
-    ofile_e1_no_decay_agr = odir_agr / f'agr_echo_1_no_decay_model_{beta_anatomical}.npz'
+    ofile_e1_no_decay_agr = odir_agr / f'agr_echo_1_no_decay_model_{norm_anatomical}_{beta_anatomical:.2E}.npz'
 
     if not ofile_e1_no_decay_agr.exists():
         alg_e1_no_decay_agr = sigpy.alg.PrimalDualHybridGradient(
@@ -452,7 +479,7 @@ if beta_anatomical > 0:
     # setup the dual variable
     u_e2_no_decay_agr = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
-    ofile_e2_no_decay_agr = odir_agr / f'agr_echo_2_no_decay_model_{beta_anatomical}.npz'
+    ofile_e2_no_decay_agr = odir_agr / f'agr_echo_2_no_decay_model_{norm_anatomical}_{beta_anatomical:.2E}.npz'
 
     if not ofile_e2_no_decay_agr.exists():
         alg_e2_no_decay_agr = sigpy.alg.PrimalDualHybridGradient(
@@ -502,7 +529,9 @@ if beta_anatomical > 0:
 
     est_ratio[clump_mask == 0] = 1
 
-    cp.save(odir_agr / f'est_ratio_{beta_anatomical}.npy', est_ratio)
+    cp.save(
+        odir_agr / f'est_ratio_{norm_anatomical}_{beta_anatomical:.2E}.npy',
+        est_ratio)
 
     #--------------------------------------------------------------------------
     #--------------------------------------------------------------------------
@@ -540,7 +569,7 @@ if beta_anatomical > 0:
 
     ub = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
-    ofile_agr_both_echos = odir_agr / f'agr_both_echos_w_decay_model_{beta_anatomical:.1E}.npz'
+    ofile_agr_both_echos = odir_agr / f'agr_both_echos_w_decay_model_{norm_anatomical}_{beta_anatomical:.2E}.npz'
 
     if not ofile_agr_both_echos.exists():
         algb = sigpy.alg.PrimalDualHybridGradient(
