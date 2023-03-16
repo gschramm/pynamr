@@ -4,7 +4,6 @@ import argparse
 import h5py
 import json
 from pathlib import Path
-from copy import deepcopy
 import numpy as np
 import cupy as cp
 import cupyx.scipy.ndimage as ndimage
@@ -21,8 +20,8 @@ from scipy.ndimage import binary_erosion
 #--------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--max_num_iter', type=int, default=200)
-parser.add_argument('--noise_level', type=float, default=1e-2)
+parser.add_argument('--max_num_iter', type=int, default=500)
+parser.add_argument('--noise_level', type=float, default=2e-2)
 parser.add_argument('--phantom',
                     type=str,
                     default='brainweb',
