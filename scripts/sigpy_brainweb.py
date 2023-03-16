@@ -48,8 +48,9 @@ cp.random.seed(seed)
 #---------------------------------------------------------------
 # fixed parameters
 
-simshape = (160, 160, 160)
-ishape = (128, 128, 128)
+sim_shape = (160, 160, 160)
+iter_shape = (128, 128, 128)
+grid_shape = (64, 64, 64)
 
 field_of_view_cm: float = 22.
 
@@ -108,7 +109,7 @@ phantom_data_path: Path = Path(data_root_dir) / 'brainweb54'
 # (1) setup the brainweb phantom with the given simulation matrix size
 if phantom == 'brainweb':
     x, t1_image, T2short_ms, T2long_ms = setup_brainweb_phantom(
-        simshape[0],
+        sim_shape[0],
         phantom_data_path,
         field_of_view_cm=field_of_view_cm,
         T2long_ms_csf=T2long_ms_csf,
@@ -118,7 +119,7 @@ if phantom == 'brainweb':
         T2short_ms_gm=T2short_ms_gm,
         T2short_ms_wm=T2short_ms_wm)
 elif phantom == 'blob':
-    x, t1_image, T2short_ms, T2long_ms = setup_blob_phantom(simshape[0],
+    x, t1_image, T2short_ms, T2long_ms = setup_blob_phantom(sim_shape[0],
                                                             radius=0.65)
 else:
     raise ValueError
@@ -168,7 +169,7 @@ print(f'64 kmax: {kmax_1_cm:.2f}')
 
 # setup the data operators for the 1/2 echo using the short T2* time
 data_operator_1_short, data_operator_2_short = nufft_t2star_operator(
-    simshape,
+    sim_shape,
     k_1_cm,
     field_of_view_cm=field_of_view_cm,
     acq_sampling_time_ms=acq_sampling_time_ms,
@@ -181,7 +182,7 @@ data_operator_1_short, data_operator_2_short = nufft_t2star_operator(
 
 # setup the data operators for the 1/2 echo using the long T2* time
 data_operator_1_long, data_operator_2_long = nufft_t2star_operator(
-    simshape,
+    sim_shape,
     k_1_cm,
     field_of_view_cm=field_of_view_cm,
     acq_sampling_time_ms=acq_sampling_time_ms,
@@ -201,8 +202,8 @@ data_echo_2 = short_fraction * data_operator_2_short(x) + (
 
 # scale data to account for difference in simulation and recon matrix sizes
 # related to np.fft.fft(norm = 'ortho')
-data_echo_1 *= np.sqrt(ishape[0] / simshape[0])**(3)
-data_echo_2 *= np.sqrt(ishape[0] / simshape[0])**(3)
+data_echo_1 *= np.sqrt(iter_shape[0] / sim_shape[0])**(3)
+data_echo_2 *= np.sqrt(iter_shape[0] / sim_shape[0])**(3)
 
 # add noise to the data
 nl = noise_level * cp.abs(data_echo_1.max())
@@ -229,25 +230,25 @@ param = 9.14
 data_echo_1_gridded = sigpy.gridding(data_echo_1,
                                      cp.asarray(k_1_cm.reshape(-1, 3)) *
                                      field_of_view_cm,
-                                     ishape,
+                                     grid_shape,
                                      kernel=kernel,
                                      width=width,
                                      param=param)
 data_echo_2_gridded = sigpy.gridding(data_echo_2,
                                      cp.asarray(k_1_cm.reshape(-1, 3)) *
                                      field_of_view_cm,
-                                     ishape,
+                                     grid_shape,
                                      kernel=kernel,
                                      width=width,
                                      param=param)
 samp_dens = sigpy.gridding(cp.ones_like(data_echo_1),
                            cp.asarray(k_1_cm.reshape(-1, 3)) *
                            field_of_view_cm,
-                           ishape,
+                           grid_shape,
                            kernel=kernel,
                            width=width,
                            param=param)
-ifft_op = sigpy.linop.IFFT(ishape)
+ifft_op = sigpy.linop.IFFT(grid_shape)
 
 data_echo_1_gridded_corr = data_echo_1_gridded.copy()
 data_echo_1_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
@@ -256,16 +257,16 @@ data_echo_2_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
 
 # perform IFFT recon (without correction for fall-of due to k-space interpolation)
 if phantom == 'brainweb':
-    ifft_scale = 62.5
+    ifft_scale = 62.5 / np.sqrt(8)
 elif phantom == 'blob':
-    ifft_scale = 80.5
+    ifft_scale = 80.5 / np.sqrt(8)
 else:
     raise ValueError
 
 ifft1 = ifft_scale * ifft_op(data_echo_1_gridded_corr)
 ifft2 = ifft_scale * ifft_op(data_echo_2_gridded_corr)
 
-tmp_x = cp.linspace(-width / 2, width / 2, ishape[0])
+tmp_x = cp.linspace(-width / 2, width / 2, grid_shape[0])
 TMP_X, TMP_Y, TMP_Z = cp.meshgrid(tmp_x, tmp_x, tmp_x)
 R = cp.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2)
 R = cp.clip(R, 0, tmp_x.max())
@@ -303,7 +304,7 @@ cp.save(odir / f'ifft2.npy', ifft2)
 #--------------------------------------------------------------------------
 
 nufft_single_echo_no_decay = nufft_t2star_operator(
-    ishape,
+    iter_shape,
     k_1_cm,
     field_of_view_cm=field_of_view_cm,
     acq_sampling_time_ms=acq_sampling_time_ms,
@@ -314,7 +315,7 @@ nufft_single_echo_no_decay = nufft_t2star_operator(
     echo_time_2_ms=echo_time_2_ms)
 
 # setup 3D finite difference operator with norm 1
-G = (1 / np.sqrt(12)) * sigpy.linop.FiniteDifference(ishape, axes=None)
+G = (1 / np.sqrt(12)) * sigpy.linop.FiniteDifference(iter_shape, axes=None)
 prox_reg_non_anatomical = sigpy.prox.L2Reg(G.oshape, lamda=beta_non_anatomical)
 
 # setup complete forward model and proximal operator
@@ -331,16 +332,16 @@ u_e1_no_decay = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{max_num_iter}_{beta_non_anatomical}.npz'
 
 if not ofile_e1_no_decay.exists():
-    alg_e1_no_decay = sigpy.alg.PrimalDualHybridGradient(proxfc=proxfc1,
-                                                         proxg=sigpy.prox.NoOp(
-                                                             A.ishape),
-                                                         A=A,
-                                                         AH=A.H,
-                                                         x=deepcopy(ifft1),
-                                                         u=u_e1_no_decay,
-                                                         tau=1. / sigma,
-                                                         sigma=sigma,
-                                                         max_iter=max_num_iter)
+    alg_e1_no_decay = sigpy.alg.PrimalDualHybridGradient(
+        proxfc=proxfc1,
+        proxg=sigpy.prox.NoOp(A.ishape),
+        A=A,
+        AH=A.H,
+        x=cp.zeros(A.ishape, dtype=cp.complex128),
+        u=u_e1_no_decay,
+        tau=1. / sigma,
+        sigma=sigma,
+        max_iter=max_num_iter)
 
     print('recon echo 1 - no T2* modeling')
     for i in range(max_num_iter):
@@ -367,7 +368,7 @@ del A
 # setup projected gradient operator
 #----------------------------------
 
-prior_image = cp.asarray(zoom3d(t1_image, ishape[0] / simshape[0]))
+prior_image = cp.asarray(zoom3d(t1_image, iter_shape[0] / sim_shape[0]))
 xi = G(prior_image)
 
 # normalize the real and imaginary part of the joint gradient field
@@ -412,7 +413,7 @@ if not ofile_e1_no_decay_agr.exists():
         proxg=sigpy.prox.NoOp(A.ishape),
         A=A,
         AH=A.H,
-        x=deepcopy(ifft1),
+        x=deepcopy(r_e1_no_decay),
         u=u_e1_no_decay_agr,
         tau=1. / sigma,
         sigma=sigma,
@@ -505,7 +506,7 @@ cp.save(odir / f'est_ratio_{max_num_iter}_{beta_anatomical}.npy', est_ratio)
 #--------------------------------------------------------------------------
 
 nufft_echo_1, nufft_echo_2 = nufft_t2star_operator(
-    ishape,
+    iter_shape,
     k_1_cm,
     field_of_view_cm=field_of_view_cm,
     acq_sampling_time_ms=acq_sampling_time_ms,
@@ -522,8 +523,8 @@ phase_fac_1 = cp.exp(1j * cp.angle(agr_e1_no_decay))
 phase_fac_2 = cp.exp(1j * cp.angle(agr_e2_no_decay))
 
 A = sigpy.linop.Vstack([
-    nufft_echo_1 * sigpy.linop.Multiply(ishape, phase_fac_1),
-    nufft_echo_2 * sigpy.linop.Multiply(ishape, phase_fac_2), PG
+    nufft_echo_1 * sigpy.linop.Multiply(iter_shape, phase_fac_1),
+    nufft_echo_2 * sigpy.linop.Multiply(iter_shape, phase_fac_2), PG
 ])
 
 proxfcb = sigpy.prox.Stack([
@@ -532,7 +533,9 @@ proxfcb = sigpy.prox.Stack([
     sigpy.prox.Conj(prox_reg_anatomical)
 ])
 
-ub = cp.zeros(A.oshape, dtype=cp.complex128)
+ub = cp.concatenate((u_e1_no_decay_agr[:data_echo_1.size],
+                     u_e2_no_decay_agr[:data_echo_2.size],
+                     u_e1_no_decay_agr[data_echo_1.size:]))
 
 ofile_agr_both_echos = odir / f'agr_both_echos_w_decay_model_{beta_anatomical:.1E}.npz'
 
@@ -568,13 +571,14 @@ del nufft_echo_2
 # show results
 from scipy.ndimage import zoom
 
-a = zoom(cp.asnumpy(cp.flip(cp.abs(ifft1), (0, 1))), 256 / ishape[0])
-b = zoom(cp.asnumpy(cp.flip(cp.abs(agr_e1_no_decay), (0, 1))), 256 / ishape[0])
-b2 = zoom(cp.asnumpy(cp.flip(cp.abs(agr_e2_no_decay), (0, 1))),
-          256 / ishape[0])
+a = zoom(cp.asnumpy(cp.flip(cp.abs(ifft1), (0, 1))), 256 / grid_shape[0])
+a2 = zoom(cp.asnumpy(cp.flip(cp.abs(r_e1_no_decay), (0, 1))),
+          256 / iter_shape[0])
+b = zoom(cp.asnumpy(cp.flip(cp.abs(agr_e1_no_decay), (0, 1))),
+         256 / iter_shape[0])
 b3 = zoom(cp.asnumpy(cp.flip(cp.abs(agr_both_echos_w_decay_model), (0, 1))),
-          256 / ishape[0])
-c = zoom(cp.asnumpy(cp.flip(cp.abs(x), (0, 1))), 256 / simshape[0])
+          256 / iter_shape[0])
+c = zoom(cp.asnumpy(cp.flip(cp.abs(x), (0, 1))), 256 / sim_shape[0])
 
 if phantom == 'brainweb':
     gm = np.flip(np.load(odir.parent / 'gm_256.npy'), (0, 1))
@@ -583,6 +587,9 @@ if phantom == 'brainweb':
 
     IFFT_gm = a[gm == 1].mean()
     IFFT_wm = a[wm == 1].mean()
+
+    ITER_gm = a2[gm == 1].mean()
+    ITER_wm = a2[wm == 1].mean()
 
     AGR_1_gm = b[gm == 1].mean()
     AGR_1_wm = b[wm == 1].mean()
@@ -595,8 +602,8 @@ if phantom == 'brainweb':
 
     rowlabels = [
         f'IFFT GM {IFFT_gm:.2f} WM {IFFT_wm:.2f} GM/WM {(IFFT_gm/IFFT_wm):.2f}',
+        f'ITER GM {ITER_gm:.2f} WM {ITER_wm:.2f} GM/WM {(ITER_gm/ITER_wm):.2f}',
         f'AGR_1 GM {AGR_1_gm:.2f} WM {AGR_1_wm:.2f} GM/WM {(AGR_1_gm/AGR_1_wm):.2f}',
-        '',
         f'AGR_B GM {AGR_b_gm:.2f} WM {AGR_b_wm:.2f} GM/WM {(AGR_b_gm/AGR_b_wm):.2f}',
         f'true GM {true_gm:.2f} WM {true_wm:.2f} GM/WM {(true_gm/true_wm):.2f}',
     ]
@@ -604,7 +611,7 @@ else:
     rowlabels = None
 
 plt.rcParams.update({'font.size': 5})
-vi = pv.ThreeAxisViewer([a, b, b2, b3, c],
+vi = pv.ThreeAxisViewer([a, a2, b, b3, c],
                         sl_z=112,
                         sl_x=112,
                         ls='',
@@ -612,3 +619,4 @@ vi = pv.ThreeAxisViewer([a, b, b2, b3, c],
                         imshow_kwargs=dict(vmin=0,
                                            vmax=1.1 * float(x.real.max()),
                                            cmap='Greys_r'))
+vi.fig.savefig(odir / f'screenshot.png')
