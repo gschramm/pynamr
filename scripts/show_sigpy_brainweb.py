@@ -65,7 +65,10 @@ aparc = np.pad(np.asanyarray(aparc_nii.dataobj), pad_size_220, 'constant')
 roi_inds = {}
 roi_inds['cortical_gm'] = np.where(aparc >= 1000)
 roi_inds['putamen'] = np.where(np.isin(aparc, [12, 51]))
-roi_inds['wm'] = np.where(binary_erosion(lab == 3, iterations=5))
+roi_inds['wm'] = np.where(binary_erosion(np.isin(aparc, [2, 41]),
+                                         iterations=5))
+roi_inds['ventricles'] = np.where(
+    binary_erosion(np.isin(aparc, [4, 43]), iterations=3))
 #-----------------------------------------------------------------------
 
 beta_non_anatomical = 3e-1
