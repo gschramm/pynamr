@@ -272,8 +272,14 @@ elif phantom == 'blob':
 else:
     raise ValueError
 
-ifft1 = ifft_scale * ifft_op(data_echo_1_gridded_corr)
-ifft2 = ifft_scale * ifft_op(data_echo_2_gridded_corr)
+# setup a phase correction field to account phase definition in numpy's fft
+tmp_x = np.arange(grid_shape[0])
+TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
+
+phase_corr = cp.asarray(((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z))
+
+ifft1 = ifft_scale * phase_corr * ifft_op(data_echo_1_gridded_corr)
+ifft2 = ifft_scale * phase_corr * ifft_op(data_echo_2_gridded_corr)
 
 tmp_x = cp.linspace(-width / 2, width / 2, grid_shape[0])
 TMP_X, TMP_Y, TMP_Z = cp.meshgrid(tmp_x, tmp_x, tmp_x)

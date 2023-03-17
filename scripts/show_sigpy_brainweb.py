@@ -9,7 +9,7 @@ from scipy.ndimage import binary_erosion, gaussian_filter
 import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--max_num_iter', type=int, default=500)
+parser.add_argument('--max_num_iter', type=int, default=1000)
 parser.add_argument('--noise_level', type=float, default=2e-2)
 parser.add_argument('--phantom',
                     type=str,
@@ -77,7 +77,7 @@ gt = np.abs(np.load(odirs[0] / 'na_gt.npy'))
 gt = zoom3d(gt, 440 / gt.shape[0])
 
 norm_non_anatomical = 'L2'
-betas_non_anatomical = [1e-2, 3e-2, 1e-1, 3e-1, 1e0]
+betas_non_anatomical = [3e-3, 1e-2, 3e-2, 1e-1, 3e-1]
 
 sm_fwhms_mm = [0.1, 4., 8., 12., 16.]
 
