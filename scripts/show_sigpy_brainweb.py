@@ -5,7 +5,7 @@ import numpy as np
 import pymirc.viewer as pv
 import nibabel as nib
 from pymirc.image_operations import zoom3d
-from scipy.ndimage import binary_erosion
+from scipy.ndimage import binary_erosion, gaussian_filter
 import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser()
@@ -79,12 +79,28 @@ gt = zoom3d(gt, 440 / gt.shape[0])
 norm_non_anatomical = 'L2'
 betas_non_anatomical = [1e-2, 3e-2, 1e-1, 3e-1, 1e0]
 
+sm_fwhms_mm = [0.1, 4., 8., 12., 16.]
+
 recons_e1_no_decay = np.zeros(
     (len(odirs), len(betas_non_anatomical), 440, 440, 440))
+
+ifft1s = np.zeros((len(odirs), len(sm_fwhms_mm), 440, 440, 440))
+
+ifft_scale_fac = 1 / 1.2
 
 for i, odir in enumerate(odirs):
     print(odir)
 
+    # load IFFT of first echo
+    ifft = ifft_scale_fac * np.abs(np.load(odir / 'ifft1.npy'))
+    ifft_voxsize = 220 / ifft.shape[0]
+
+    for j, sm_fwhm_mm in enumerate(sm_fwhms_mm):
+        ifft1s[i, j, ...] = zoom3d(
+            gaussian_filter(ifft, sm_fwhm_mm / (2.35 * ifft_voxsize)),
+            440 / ifft.shape[0])
+
+    # load iterative recons of first echo with non-anatomical prior
     for ib, beta_non_anatomical in enumerate(betas_non_anatomical):
         ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{norm_non_anatomical}_{beta_non_anatomical:.2E}.npz'
         d = np.load(ofile_e1_no_decay)
@@ -94,17 +110,30 @@ for i, odir in enumerate(odirs):
 # calculate the ROI averages
 true_means = {}
 recon_e1_no_decay_roi_means = {}
+ifft1_roi_means = {}
 
 for key, inds in roi_inds.items():
     true_means[key] = gt[inds].mean()
     recon_e1_no_decay_roi_means[key] = np.array([[x[inds].mean() for x in y]
                                                  for y in recons_e1_no_decay])
+    ifft1_roi_means[key] = np.array([[x[inds].mean() for x in y]
+                                     for y in ifft1s])
 
 #--------------------------------------------------------------------------------
 # bias noise plots
 
 num_cols = len(roi_inds)
 fig, ax = plt.subplots(1, num_cols, figsize=(4 * num_cols, num_cols))
+
+for i, (roi, vals) in enumerate(ifft1_roi_means.items()):
+    x = vals.std(0)
+    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+    ax[i].plot(x, y, 'x-')
+
+    for j in range(len(x)):
+        ax[i].annotate(f'{sm_fwhms_mm[j]:.1f}mm', (x[j], y[j]),
+                       horizontalalignment='center',
+                       verticalalignment='bottom')
 
 for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
     x = vals.std(0)
@@ -172,3 +201,39 @@ for axx in ax2.ravel():
 
 fig2.tight_layout()
 fig2.show()
+
+num_cols3 = len(sm_fwhms_mm)
+num_rows3 = 3
+fig3, ax3 = plt.subplots(num_rows3,
+                         num_cols3,
+                         figsize=(3 * num_cols3, 3 * num_rows3))
+
+for i in range(num_cols3):
+    ax3[0, i].imshow(ifft1s[0, i, :, :, 200].T,
+                     origin='lower',
+                     cmap='Greys_r',
+                     vmin=0,
+                     vmax=3.5)
+    ax3[1, i].imshow(ifft1s[:, i, :, :, 200].mean(0).T - gt[:, :, 200].T,
+                     origin='lower',
+                     cmap='seismic',
+                     vmin=-1,
+                     vmax=1)
+    ax3[2, i].imshow(ifft1s[:, i, :, :, 200].std(0).T,
+                     origin='lower',
+                     cmap='Greys_r',
+                     vmin=0,
+                     vmax=0.5)
+
+    ax3[0, i].set_title(f'fwhm = {sm_fwhms_mm[i]:.1f}mm')
+
+ax3[0, 0].set_ylabel('first noise realization')
+ax3[1, 0].set_ylabel('bias image')
+ax3[2, 0].set_ylabel('std.dev. image')
+
+for axx in ax3.ravel():
+    axx.set_xticks([])
+    axx.set_yticks([])
+
+fig3.tight_layout()
+fig3.show()
