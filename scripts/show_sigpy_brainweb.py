@@ -71,38 +71,64 @@ roi_inds['ventricles'] = np.where(
     binary_erosion(np.isin(aparc, [4, 43]), iterations=3))
 #-----------------------------------------------------------------------
 
-beta_non_anatomical = 3e-1
-beta_anatomical = 1e-2
+# load the ground truth
+gt = np.abs(np.load(odirs[0] / 'na_gt.npy'))
+gt = zoom3d(gt, 440 / gt.shape[0])
 
-recons_e1_no_decay = np.zeros((len(odirs), 440, 440, 440))
-agrs_e1_no_decay = np.zeros((len(odirs), 440, 440, 440))
-agrs_both_echos_w_decay_model = np.zeros((len(odirs), 440, 440, 440))
+norm_non_anatomical = 'L2'
+betas_non_anatomical = [1e-2, 3e-2, 1e-1, 3e-1, 1e0]
+
+recons_e1_no_decay = np.zeros(
+    (len(odirs), len(betas_non_anatomical), 440, 440, 440))
 
 for i, odir in enumerate(odirs):
     print(odir)
-    ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{max_num_iter}_{beta_non_anatomical}.npz'
-    ofile_e1_no_decay_agr = odir / f'agr_echo_1_no_decay_model_{max_num_iter}_{beta_anatomical}.npz'
-    ofile_agr_both_echos = odir / f'agr_both_echos_w_decay_model_{beta_anatomical:.1E}.npz'
 
-    d = np.load(ofile_e1_no_decay)
-    recons_e1_no_decay[i, ...] = zoom3d(np.abs(d['x']), 440 / iter_shape[0])
-
-    da = np.load(ofile_e1_no_decay_agr)
-    agrs_e1_no_decay[i, ...] = zoom3d(np.abs(da['x']), 440 / iter_shape[0])
-
-    db = np.load(ofile_agr_both_echos)
-    agrs_both_echos_w_decay_model[i, ...] = zoom3d(np.abs(db['x']),
-                                                   440 / iter_shape[0])
+    for ib, beta_non_anatomical in enumerate(betas_non_anatomical):
+        ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{norm_non_anatomical}_{beta_non_anatomical:.2E}.npz'
+        d = np.load(ofile_e1_no_decay)
+        recons_e1_no_decay[i, ib, ...] = zoom3d(np.abs(d['x']),
+                                                440 / iter_shape[0])
 
 # calculate the ROI averages
+true_means = {}
 recon_e1_no_decay_roi_means = {}
-agr_e1_no_decay_roi_means = {}
-agr_both_echos_w_decay_roi_means = {}
 
 for key, inds in roi_inds.items():
-    recon_e1_no_decay_roi_means[key] = np.array(
-        [x[inds].mean() for x in recons_e1_no_decay])
-    agr_e1_no_decay_roi_means[key] = np.array(
-        [x[inds].mean() for x in agrs_e1_no_decay])
-    agr_both_echos_w_decay_roi_means[key] = np.array(
-        [x[inds].mean() for x in agrs_both_echos_w_decay_model])
+    true_means[key] = gt[inds].mean()
+    recon_e1_no_decay_roi_means[key] = np.array([[x[inds].mean() for x in y]
+                                                 for y in recons_e1_no_decay])
+
+#--------------------------------------------------------------------------------
+# plots
+import matplotlib.pyplot as plt
+
+num_cols = len(roi_inds)
+fig, ax = plt.subplots(1, num_cols, figsize=(4 * num_cols, num_cols))
+
+for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
+    x = vals.std(0)
+    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+    ax[i].plot(x, y, 'o-')
+
+    for j in range(len(x)):
+        ax[i].annotate(f'{betas_non_anatomical[j]}', (x[j], y[j]),
+                       horizontalalignment='center',
+                       verticalalignment='bottom')
+
+    ax[i].set_title(roi)
+    ax[i].grid(ls=':')
+    ax[i].set_xlabel('std.dev. of ROI mean')
+    ax[i].axhline(0, color='k')
+
+    # get y-axis limits of the plot
+    low, high = ax[i].get_ylim()
+    # find the new limits
+    bound = max(abs(low), abs(high))
+    # set new limits
+    ax[i].set_ylim(-bound, bound)
+
+ax[0].set_ylabel('bias of ROI mean [%]')
+
+fig.tight_layout()
+fig.show()
