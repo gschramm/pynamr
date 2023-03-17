@@ -6,6 +6,7 @@ import pymirc.viewer as pv
 import nibabel as nib
 from pymirc.image_operations import zoom3d
 from scipy.ndimage import binary_erosion
+import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--max_num_iter', type=int, default=500)
@@ -100,8 +101,7 @@ for key, inds in roi_inds.items():
                                                  for y in recons_e1_no_decay])
 
 #--------------------------------------------------------------------------------
-# plots
-import matplotlib.pyplot as plt
+# bias noise plots
 
 num_cols = len(roi_inds)
 fig, ax = plt.subplots(1, num_cols, figsize=(4 * num_cols, num_cols))
@@ -132,3 +132,43 @@ ax[0].set_ylabel('bias of ROI mean [%]')
 
 fig.tight_layout()
 fig.show()
+
+#--------------------------------------------------------------------------------
+# recon plots
+
+num_cols2 = len(betas_non_anatomical)
+num_rows2 = 3
+fig2, ax2 = plt.subplots(num_rows2,
+                         num_cols2,
+                         figsize=(3 * num_cols2, 3 * num_rows2))
+
+for i in range(num_cols2):
+    ax2[0, i].imshow(recons_e1_no_decay[0, i, :, :, 200].T,
+                     origin='lower',
+                     cmap='Greys_r',
+                     vmin=0,
+                     vmax=3.5)
+    ax2[1, i].imshow(recons_e1_no_decay[:, i, :, :, 200].mean(0).T -
+                     gt[:, :, 200].T,
+                     origin='lower',
+                     cmap='seismic',
+                     vmin=-1,
+                     vmax=1)
+    ax2[2, i].imshow(recons_e1_no_decay[:, i, :, :, 200].std(0).T,
+                     origin='lower',
+                     cmap='Greys_r',
+                     vmin=0,
+                     vmax=0.5)
+
+    ax2[0, i].set_title(f'beta = {betas_non_anatomical[i]}')
+
+ax2[0, 0].set_ylabel('first noise realization')
+ax2[1, 0].set_ylabel('bias image')
+ax2[2, 0].set_ylabel('std.dev. image')
+
+for axx in ax2.ravel():
+    axx.set_xticks([])
+    axx.set_yticks([])
+
+fig2.tight_layout()
+fig2.show()
