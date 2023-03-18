@@ -37,6 +37,12 @@ odirs = sorted(
             f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_nl_{noise_level:.1E}_s_*'
         )))
 
+############# HACK
+############# HACK
+odirs = [odirs[x] for x in [0, 10, 20]]
+############# HACK
+############# HACK
+
 #-----------------------------------------------------------------------
 # load the brainweb label array
 
@@ -77,11 +83,18 @@ gt = np.abs(np.load(odirs[0] / 'na_gt.npy'))
 gt = zoom3d(gt, 440 / gt.shape[0])
 
 norm_non_anatomical = 'L2'
+norm_anatomical = 'L1'
 betas_non_anatomical = [3e-3, 1e-2, 3e-2, 1e-1, 3e-1]
+betas_anatomical = [1e-3, 3e-3, 1e-2, 3e-2, 1e-1]
 
-sm_fwhms_mm = [0.1, 4., 8., 12., 16.]
+sm_fwhms_mm = [0.1, 5., 7., 9., 11.]
 
 recons_e1_no_decay = np.zeros(
+    (len(odirs), len(betas_non_anatomical), 440, 440, 440))
+agrs_e1_no_decay = np.zeros(
+    (len(odirs), len(betas_non_anatomical), 440, 440, 440))
+
+agrs_both_echos_w_decay = np.zeros(
     (len(odirs), len(betas_non_anatomical), 440, 440, 440))
 
 ifft1s = np.zeros((len(odirs), len(sm_fwhms_mm), 440, 440, 440))
@@ -92,12 +105,12 @@ for i, odir in enumerate(odirs):
     print(odir)
 
     # load IFFT of first echo
-    ifft = ifft_scale_fac * np.abs(np.load(odir / 'ifft1.npy'))
+    ifft = ifft_scale_fac * np.load(odir / 'ifft1.npy')
     ifft_voxsize = 220 / ifft.shape[0]
 
     for j, sm_fwhm_mm in enumerate(sm_fwhms_mm):
         ifft1s[i, j, ...] = zoom3d(
-            gaussian_filter(ifft, sm_fwhm_mm / (2.35 * ifft_voxsize)),
+            np.abs(gaussian_filter(ifft, sm_fwhm_mm / (2.35 * ifft_voxsize))),
             440 / ifft.shape[0])
 
     # load iterative recons of first echo with non-anatomical prior
@@ -107,15 +120,35 @@ for i, odir in enumerate(odirs):
         recons_e1_no_decay[i, ib, ...] = zoom3d(np.abs(d['x']),
                                                 440 / iter_shape[0])
 
+    # load AGR of first echo with out decay model
+    for ib, beta_anatomical in enumerate(betas_anatomical):
+        ofile_e1_no_decay_agr = odir / 'agr' / f'agr_echo_1_no_decay_model_{norm_anatomical}_{beta_anatomical:.2E}.npz'
+        d = np.load(ofile_e1_no_decay_agr)
+        agrs_e1_no_decay[i, ib, ...] = zoom3d(np.abs(d['x']),
+                                              440 / iter_shape[0])
+
+    # load AGR of borhs echos with decay model
+    for ib, beta_anatomical in enumerate(betas_anatomical):
+        ofile_both_echos_agr = odir / 'agr' / f'agr_both_echos_w_decay_model_{norm_anatomical}_{beta_anatomical:.2E}.npz'
+        d = np.load(ofile_both_echos_agr)
+        agrs_both_echos_w_decay[i, ib, ...] = zoom3d(np.abs(d['x']),
+                                                     440 / iter_shape[0])
+
 # calculate the ROI averages
 true_means = {}
 recon_e1_no_decay_roi_means = {}
+agr_e1_no_decay_roi_means = {}
+agr_both_echos_w_decay_roi_means = {}
 ifft1_roi_means = {}
 
 for key, inds in roi_inds.items():
     true_means[key] = gt[inds].mean()
     recon_e1_no_decay_roi_means[key] = np.array([[x[inds].mean() for x in y]
                                                  for y in recons_e1_no_decay])
+    agr_e1_no_decay_roi_means[key] = np.array([[x[inds].mean() for x in y]
+                                               for y in agrs_e1_no_decay])
+    agr_both_echos_w_decay_roi_means[key] = np.array(
+        [[x[inds].mean() for x in y] for y in agrs_both_echos_w_decay])
     ifft1_roi_means[key] = np.array([[x[inds].mean() for x in y]
                                      for y in ifft1s])
 
@@ -128,7 +161,7 @@ fig, ax = plt.subplots(1, num_cols, figsize=(4 * num_cols, num_cols))
 for i, (roi, vals) in enumerate(ifft1_roi_means.items()):
     x = vals.std(0)
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    ax[i].plot(x, y, 'x-')
+    ax[i].plot(x, y, 'x-', label='IFFT')
 
     for j in range(len(x)):
         ax[i].annotate(f'{sm_fwhms_mm[j]:.1f}mm', (x[j], y[j]),
@@ -138,10 +171,30 @@ for i, (roi, vals) in enumerate(ifft1_roi_means.items()):
 for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
     x = vals.std(0)
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    ax[i].plot(x, y, 'o-')
+    ax[i].plot(x, y, 'o-', label='iter quad. prior')
 
     for j in range(len(x)):
         ax[i].annotate(f'{betas_non_anatomical[j]}', (x[j], y[j]),
+                       horizontalalignment='center',
+                       verticalalignment='bottom')
+
+for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
+    x = vals.std(0)
+    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+    ax[i].plot(x, y, 'o-', label='AGR wo decay m.')
+
+    for j in range(len(x)):
+        ax[i].annotate(f'{betas_anatomical[j]}', (x[j], y[j]),
+                       horizontalalignment='center',
+                       verticalalignment='bottom')
+
+for i, (roi, vals) in enumerate(agr_both_echos_w_decay_roi_means.items()):
+    x = vals.std(0)
+    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+    ax[i].plot(x, y, 'o-', label='AGR w decay m.')
+
+    for j in range(len(x)):
+        ax[i].annotate(f'{betas_anatomical[j]}', (x[j], y[j]),
                        horizontalalignment='center',
                        verticalalignment='bottom')
 
@@ -158,6 +211,7 @@ for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
     ax[i].set_ylim(-bound, bound)
 
 ax[0].set_ylabel('bias of ROI mean [%]')
+ax[-1].legend(loc='upper left', ncols=2)
 
 fig.tight_layout()
 fig.show()
