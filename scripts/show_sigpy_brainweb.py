@@ -87,7 +87,7 @@ norm_anatomical = 'L1'
 betas_non_anatomical = [3e-3, 1e-2, 3e-2, 1e-1, 3e-1]
 betas_anatomical = [1e-3, 3e-3, 1e-2, 3e-2, 1e-1]
 
-sm_fwhms_mm = [0.1, 5., 7., 9., 11.]
+sm_fwhms_mm = [0.1, 4., 6., 8., 10.]
 
 recons_e1_no_decay = np.zeros(
     (len(odirs), len(betas_non_anatomical), 440, 440, 440))
@@ -256,6 +256,8 @@ for axx in ax2.ravel():
 fig2.tight_layout()
 fig2.show()
 
+#------------------------------------------------------------------------------------
+
 num_cols3 = len(sm_fwhms_mm)
 num_rows3 = 3
 fig3, ax3 = plt.subplots(num_rows3,
@@ -291,3 +293,81 @@ for axx in ax3.ravel():
 
 fig3.tight_layout()
 fig3.show()
+
+#--------------------------------------------------------------------------------
+
+num_cols4 = len(betas_anatomical)
+num_rows4 = 3
+fig4, ax4 = plt.subplots(num_rows4,
+                         num_cols4,
+                         figsize=(3 * num_cols4, 3 * num_rows4))
+
+for i in range(num_cols4):
+    ax4[0, i].imshow(agrs_e1_no_decay[0, i, :, :, 200].T,
+                     origin='lower',
+                     cmap='Greys_r',
+                     vmin=0,
+                     vmax=3.5)
+    ax4[1, i].imshow(agrs_e1_no_decay[:, i, :, :, 200].mean(0).T -
+                     gt[:, :, 200].T,
+                     origin='lower',
+                     cmap='seismic',
+                     vmin=-1,
+                     vmax=1)
+    ax4[2, i].imshow(agrs_e1_no_decay[:, i, :, :, 200].std(0).T,
+                     origin='lower',
+                     cmap='Greys_r',
+                     vmin=0,
+                     vmax=0.5)
+
+    ax4[0, i].set_title(f'beta = {betas_non_anatomical[i]}')
+
+ax4[0, 0].set_ylabel('first noise realization')
+ax4[1, 0].set_ylabel('bias image')
+ax4[2, 0].set_ylabel('std.dev. image')
+
+for axx in ax4.ravel():
+    axx.set_xticks([])
+    axx.set_yticks([])
+
+fig4.tight_layout()
+fig4.show()
+
+#--------------------------------------------------------------------------------
+
+num_cols5 = len(betas_anatomical)
+num_rows5 = 3
+fig5, ax5 = plt.subplots(num_rows5,
+                         num_cols5,
+                         figsize=(3 * num_cols5, 3 * num_rows5))
+
+for i in range(num_cols5):
+    ax5[0, i].imshow(agrs_both_echos_w_decay[0, i, :, :, 200].T,
+                     origin='lower',
+                     cmap='Greys_r',
+                     vmin=0,
+                     vmax=3.5)
+    ax5[1, i].imshow(agrs_both_echos_w_decay[:, i, :, :, 200].mean(0).T -
+                     gt[:, :, 200].T,
+                     origin='lower',
+                     cmap='seismic',
+                     vmin=-1,
+                     vmax=1)
+    ax5[2, i].imshow(agrs_both_echos_w_decay[:, i, :, :, 200].std(0).T,
+                     origin='lower',
+                     cmap='Greys_r',
+                     vmin=0,
+                     vmax=0.5)
+
+    ax5[0, i].set_title(f'beta = {betas_non_anatomical[i]}')
+
+ax5[0, 0].set_ylabel('first noise realization')
+ax5[1, 0].set_ylabel('bias image')
+ax5[2, 0].set_ylabel('std.dev. image')
+
+for axx in ax5.ravel():
+    axx.set_xticks([])
+    axx.set_yticks([])
+
+fig5.tight_layout()
+fig5.show()
