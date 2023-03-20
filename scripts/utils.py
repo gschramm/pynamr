@@ -592,3 +592,89 @@ def align_images(fixed_image: np.ndarray,
         moving_sitk_image_resampled)
 
     return moving_image_aligned, final_transform
+
+
+def read_GE_ak_wav(fname: str):
+    """
+    read GE waveforms stored to external file using Stanford format
+
+    Parameters
+    ----------
+    fname : str
+
+    Returns
+    -------
+    grad: np.ndarray
+        Gradient waveforms in (T/m)
+        shape (#pts/interleave,#interleaves,#groups)
+        with: #groups = 2 for 2d-imaging, =3 for 3d-imaging
+    bw: float
+        full bandwidth (opuser0 = 2d3*oprbw)           [Hz]
+    fov: float
+        field-of-view (old=nucleus; new=1H equivalent) [m]
+    desc: np.ndarray
+        description string (256 chars)
+    N: dict
+         N.gpts   # input gradient pts/interleave
+         N.groups # groups
+         N.intl   # interleaves
+         N.params # parameters
+    params : np.ndarray
+        header file parameters (scanner units)
+        grad_type fov N.intl gmax N.gpts gdt N.kpts kdt 0 0 0
+    """
+    N = {}
+    offset = 0
+
+    desc = np.fromfile(fname, dtype=np.int8, offset=offset, count=256)
+    offset += desc.size * desc.itemsize
+
+    N["gpts"] = np.fromfile(fname,
+                            dtype=np.dtype('>u2'),
+                            offset=offset,
+                            count=1)[0]
+    offset += N["gpts"].size * N["gpts"].itemsize
+
+    N["groups"] = np.fromfile(fname,
+                              dtype=np.dtype('>u2'),
+                              offset=offset,
+                              count=1)[0]
+    offset += N["groups"].size * N["groups"].itemsize
+
+    N["intl"] = np.fromfile(fname,
+                            dtype=np.dtype('>u2'),
+                            offset=offset,
+                            count=N["groups"])
+    offset += N["intl"].size * N["intl"].itemsize
+
+    N["params"] = np.fromfile(fname,
+                              dtype=np.dtype('>u2'),
+                              offset=256 + 4 + N["groups"] * 2,
+                              count=1)[0]
+    offset += N["params"].size * N["params"].itemsize
+
+    params = np.fromfile(fname,
+                         dtype=np.dtype('>f8'),
+                         offset=offset,
+                         count=N["params"])
+    offset += params.size * params.itemsize
+
+    wave = np.fromfile(fname, dtype=np.dtype('>i2'), offset=offset)
+    offset += wave.size * wave.itemsize
+
+    grad = np.swapaxes(wave.reshape((N["groups"], N["intl"][0], N["gpts"])), 0,
+                       2)
+
+    # set stop bit to 0
+    grad[-1, ...] = 0
+
+    # scale gradients to SI units (T/m)
+    grad = (grad / 32767) * (params[3] / 100)
+
+    # bandwidth in (Hz)
+    bw = 1e6 / params[7]
+
+    # (proton) field of view in (m)
+    fov = params[1] / 100
+
+    return grad, bw, fov, desc, N, params
