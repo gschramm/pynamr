@@ -39,6 +39,7 @@ phantom_path: Path = Path(workdir) / 'brainweb54'
 
 config_files = sorted(list(recon_path.rglob('config.json')))
 
+entire_seeds = []
 df = pd.DataFrame()
 for i, config_file in enumerate(config_files):
     with open(config_file, 'r') as f:
@@ -54,6 +55,7 @@ for i, config_file in enumerate(config_files):
         if load_nodecay:
             assert(tmp["gradient_strength"].values[0]=="16")
             tmp["gradient_strength"]="16nd"
+            entire_seeds.append(tmp.at[tmp.index[0], 'seed'])
         else:
             continue
     df = pd.concat([df, tmp])
@@ -84,12 +86,12 @@ df['noise_level'] = df['noise_level'].cat.remove_unused_categories()
 #df['seed'] = df['seed'].cat.remove_unused_categories()
 
 # select a subset of beta values
-#beta_recon_chosen = [0.3, 1.]
-#beta_gamma_chosen = [10., 30.]
-#df = df[df.beta_recon.isin(beta_recon_chosen)]
-#df = df[df.beta_gamma.isin(beta_gamma_chosen)]
-#df['beta_recon'] = df['beta_recon'].cat.remove_unused_categories()
-#df['beta_gamma'] = df['beta_gamma'].cat.remove_unused_categories()
+beta_recon_chosen = [0.3, 1.]
+beta_gamma_chosen = [10., 30.]
+df = df[df.beta_recon.isin(beta_recon_chosen)]
+df = df[df.beta_gamma.isin(beta_gamma_chosen)]
+df['beta_recon'] = df['beta_recon'].cat.remove_unused_categories()
+df['beta_gamma'] = df['beta_gamma'].cat.remove_unused_categories()
 
 # load true simulated na image
 true_na_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1{jitter_suffix}' / 'simulated_nufft_data.npz')['na_image']
@@ -124,7 +126,7 @@ print('seeds')
 print(df.seed.cat.categories.tolist())
 
 # there should be a single entry for each possible combination of categories
-assert(df.shape[0] == nb_grad*nb_beta_gamma*nb_beta_recon*nb_realiz)
+#assert(df.shape[0] == nb_grad*nb_beta_gamma*nb_beta_recon*nb_realiz)
 
 # load the 256 GM, WM and cortex mask
 gm_256 = np.load(phantom_path / 'gm_256.npy')
@@ -177,6 +179,8 @@ for r in range(df.shape[0]):
     gam_recon = np.load(run_dir / 'gamma.npy')
     conv_nofilt = np.abs(np.load(run_dir / 'ifft_echo_1_corr.npy'))
     conv = np.abs(np.load(run_dir / 'ifft_echo_1_filtered_corr.npy'))
+
+    #agr_na *= gam_recon**(0.5/4.5)
 
     # AGR
     # for the quantification we have to interpolate the reconstructed
@@ -242,18 +246,17 @@ for r in range(df.shape[0]):
     df_conv = pd.concat([df_conv, df_conv_line.to_frame().T, df_conv_line_filt.to_frame().T], ignore_index=True)
 
     # save the images for the example realization for display
+    grad_index = df.gradient_strength.cat.categories.to_list().index(df.at[df.index[r], 'gradient_strength'])
+    beta_gamma_index = df.beta_gamma.cat.categories.to_list().index(df.at[df.index[r], 'beta_gamma'])
+    beta_recon_index = df.beta_recon.cat.categories.to_list().index(df.at[df.index[r], 'beta_recon'])
     if df.at[df.index[r], 'seed'] == realiz:
-        grad_index = df.gradient_strength.cat.categories.to_list().index(
-                df.at[df.index[r], 'gradient_strength'])
-        beta_gamma_index = df.beta_gamma.cat.categories.to_list().index(df.at[df.index[r], 'beta_gamma'])
-        beta_recon_index = df.beta_recon.cat.categories.to_list().index(df.at[df.index[r], 'beta_recon'])
         realiz_index = df.seed.cat.categories.to_list().index(df.at[df.index[r], 'seed'])
         agr_na_realiz[grad_index, beta_gamma_index, beta_recon_index] = agr_na_interp
         gamma_na_realiz[grad_index, beta_gamma_index, beta_recon_index] = gamma_na_interp
         conv_realiz[grad_index] = conv_interp
 
     # compute the mean over realizations
-    agr_na_realiz_mean += agr_na_interp
+    agr_na_realiz_mean[grad_index, beta_gamma_index, beta_recon_index] += agr_na_interp
 
 # add the database with conventional reconstructions to the agr db
 df = pd.concat([df, df_conv], ignore_index=True)
@@ -538,9 +541,10 @@ for i,c in enumerate(criteria):
 
 df_stats = df_stats.rename(columns={'gradient_strength':'readout time'})
 if load_nodecay:
-    df_stats['readout time'] = df_stats['readout time'].cat.rename_categories(['x1','x0.7','x0.5', 'x1 no decay'])
+    df_stats['readout time'] = df_stats['readout time'].cat.rename_categories({'16':'x1','24':'x0.7','32':'x0.5', '16nd':'x1 no decay'})
+    df_stats['readout time'] = df_stats['readout time'].cat.reorder_categories(['x1', 'x0.7', 'x0.5', 'x1 no decay'])
 else:
-    df_stats['readout time'] = df_stats['readout time'].cat.rename_categories(['x1','x0.7','x0.5'])
+    df_stats['readout time'] = df_stats['readout time'].cat.rename_categories({'16':'x1','24':'x0.7','32':'x0.5'})
 
 
 for col in criteria:
@@ -552,6 +556,7 @@ for col in criteria:
 
     for ax in grid.axes.ravel():
         ax.grid(ls=':')
+        ax.plot([0.], [0.], markersize=15, marker='P', color='k')
 
     grid.fig.show()
     grid.fig.savefig(Path(analysis_results_dir) / f'{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_biasstd_perc_grad.pdf')

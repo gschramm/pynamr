@@ -190,7 +190,6 @@ delta_k = 1 / field_of_view_cm
 
 # calculate vector of TPI sampling densities for all kspace points in the non-uniform data
 sampling_density = tpi_sampling_density(k0.ravel(), k1.ravel(), k2.ravel(), kp)
-
 regridder = TriliniearKSpaceRegridder(gridded_data_matrix_size, delta_k,
                                       k0.ravel(), k1.ravel(), k2.ravel(),
                                       sampling_density, kmax)
@@ -260,7 +259,7 @@ readout_inds = []
 for i, _ in enumerate(tr):
     readout_inds.append(np.where(readout_bin_image == i))
 
-vi2 = pv.ThreeAxisViewer(np.fft.fftshift(readout_bin_image))
+#vi2 = pv.ThreeAxisViewer(np.fft.fftshift(readout_bin_image))
 
 #-------------------------------------------------------------------------------
 # setup an initial guess for Gamma (the ratio between the second and first echo)
@@ -393,11 +392,11 @@ ims = 3 * [{
     'vmax': 1.
 }]
 
-vi4 = pv.ThreeAxisViewer([
-    np.flip(abs_recons[-1, ...], (0, 1)),
-    np.flip(np.abs(ifft_echo_1), (0, 1)),
-    np.flip(np.abs(ifft_echo_1_filtered), (0, 1)),
-    np.flip(Gam_recons[-1, ...], (0, 1))
-],
-                         imshow_kwargs=ims)
-vi4.fig.savefig(output_dir / '00_screenshot.png')
+#vi4 = pv.ThreeAxisViewer([
+#    np.flip(abs_recons[-1, ...], (0, 1)),
+#    np.flip(np.abs(ifft_echo_1), (0, 1)),
+#    np.flip(np.abs(ifft_echo_1_filtered), (0, 1)),
+#    np.flip(Gam_recons[-1, ...], (0, 1))
+#],
+#                         imshow_kwargs=ims)
+#vi4.fig.savefig(output_dir / '00_screenshot.png')
