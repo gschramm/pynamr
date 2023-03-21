@@ -98,7 +98,7 @@ agrs_both_echos_w_decay = np.zeros(
 
 ifft1s = np.zeros((len(odirs), len(sm_fwhms_mm), 440, 440, 440))
 
-ifft_scale_fac = 1 / 1.2
+ifft_scale_fac = 1.
 
 # calculate the ROI averages
 true_means = {}
