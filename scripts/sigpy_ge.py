@@ -1,9 +1,8 @@
-#TODO save and check "rotation field" in rdb_hdr of pfile
-
 import h5py
 import numpy as np
 import cupy as cp
 import cupyx.scipy.ndimage as ndimage
+import scipy.ndimage as ndi
 import sigpy
 import pymirc.viewer as pv
 import nibabel as nib
@@ -34,10 +33,12 @@ max_num_iter = args.max_num_iter
 #gradient_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/ak_grad56.wav'
 #echo_1_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P30208.7.h5'
 #echo_2_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P32256.7.h5'
+#rotation = 0  # rotation value from pfile header
 
 gradient_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/ak_grad59.wav'
 echo_1_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/P25600.7.h5'
 echo_2_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/P27648.7.h5'
+rotation = 3  # rotation value from pfile header
 
 t1_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/niftis/t1.nii'
 
@@ -98,6 +99,43 @@ with h5py.File(echo_2_data_file) as data2:
 # convert data to complex (from two reals) send data arrays to GPU
 data_echo_1 = cp.asarray(data_echo_1['real'] + 1j * data_echo_1['imag'])
 data_echo_2 = cp.asarray(data_echo_2['real'] + 1j * data_echo_2['imag'])
+
+# calculate the signal max across all readouts to detect potential readout problems
+max_echo_1 = cp.asnumpy(cp.abs(data_echo_1).max(0))
+max_echo_2 = cp.asnumpy(cp.abs(data_echo_2).max(0))
+
+# calculate the most common maximum signal to find outliers
+h1 = np.histogram(ndi.gaussian_filter1d(max_echo_1, 5), bins=100)
+most_common_max_1 = h1[1][np.argmax(h1[0])]
+h2 = np.histogram(ndi.gaussian_filter1d(max_echo_2, 5), bins=100)
+most_common_max_2 = h2[1][np.argmax(h2[0])]
+
+th1 = most_common_max_1 - 3 * max_echo_1[max_echo_1 >= 0.95 *
+                                         most_common_max_1].std()
+th2 = most_common_max_2 - 3 * max_echo_2[max_echo_2 >= 0.95 *
+                                         most_common_max_2].std()
+
+i_bad_1 = np.where(max_echo_1 < th1)[0]
+i_bad_2 = np.where(max_echo_2 < th2)[0]
+
+print(f'num bad readouts 1st echo {i_bad_1.size}')
+print(f'num bad readouts 2nd echo {i_bad_2.size}')
+
+#import matplotlib.pyplot as plt
+#
+#fig, ax = plt.subplots(1, 2, figsize=(8, 4))
+#ax[0].plot(max_echo_1)
+#ax[0].axhline(th1)
+#ax[1].plot(max_echo_2)
+#ax[1].axhline(th2)
+#fig.tight_layout()
+#fig.show()
+
+# print info related to SNR
+for i in np.linspace(0, data_echo_1.shape[1], 10, endpoint=False).astype(int):
+    print(
+        f'{i:04} {float(cp.abs(data_echo_1[:, i]).max() / cp.abs(data_echo_1[-100:, i]).std()):.2f}'
+    )
 
 # scale the data such that we get CSF approx 3 with normalized nufft operator
 data_scale = 3. / cp.abs(data_echo_1)[0, :].mean()
@@ -325,9 +363,22 @@ t1_affine = t1_nii.affine
 t1_voxsize = t1_nii.header['pixdim'][1:4]
 t1_origin = t1_affine[:-1, -1]
 
+# the sodium data can be rotated during the acq.
+# the rotation is encoded in the "rotation" field of the
+# pfile header
+# depending on the value, we have to flip the T1
+
+if rotation == 0:
+    t1_reoriented = np.flip(np.swapaxes(t1, 0, 1), 0)
+    t1_origin = t1_origin[[1, 0, 2]]
+    t1_voxsize = t1_voxsize[[1, 0, 2]]
+elif rotation == 3:
+    t1_reoriented = t1
+else:
+    raise ValueError('unknown rotation value')
+
 na_voxsize = 10 * field_of_view_cm / np.array(ishape)
 na_origin = t1_origin.copy()
-
 # save the Na origin such that we can later transform the
 # Na recons back to other grids
 np.savetxt(odir / 'na_origin.txt', na_origin)
@@ -337,8 +388,8 @@ t1_aligned_file = odir / 't1_aligned.npy'
 if not t1_aligned_file.exists():
     print('aligning the 1H MR image')
     t1_aligned, final_transform = align_images(
-        np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)), t1, na_voxsize,
-        na_origin, t1_voxsize, t1_origin)
+        np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)), t1_reoriented,
+        na_voxsize, na_origin, t1_voxsize, t1_origin)
 
     # send aligned image to GPU
     t1_aligned = cp.asarray(t1_aligned)
@@ -483,166 +534,165 @@ clump_mask = (label == biggest_label)
 
 est_ratio[clump_mask == 0] = 1
 
-##-----------------------------------------------------------------------------
-##-----------------------------------------------------------------------------
-## perform independent AGRs with decay modeling
-##-----------------------------------------------------------------------------
-##-----------------------------------------------------------------------------
-##
-#recon_operator_1, recon_operator_2 = nufft_t2star_operator(
-#    ishape,
-#    k_1_cm,
-#    field_of_view_cm=field_of_view_cm,
-#    acq_sampling_time_ms=acq_sampling_time_ms,
-#    time_bin_width_ms=time_bin_width_ms,
-#    scale=1 / np.sqrt(max_eig_nufft_single),
-#    add_mirrored_coordinates=False,
-#    echo_time_1_ms=echo_time_1_ms,
-#    echo_time_2_ms=echo_time_2_ms,
-#    ratio_image=est_ratio)
+#-----------------------------------------------------------------------------
+#-----------------------------------------------------------------------------
+# perform independent AGRs with decay modeling
+#-----------------------------------------------------------------------------
+#-----------------------------------------------------------------------------
 #
-#A = sigpy.linop.Vstack([recon_operator_1, PG])
-#
-#if regularization_norm_anatomical == 'L2':
-#    proxg = sigpy.prox.L2Reg(PG.oshape, lamda=beta_anatomical)
-#elif regularization_norm_anatomical == 'L1':
-#    proxg = sigpy.prox.L1Reg(PG.oshape, lamda=beta_anatomical)
-#else:
-#    raise ValueError('unknown regularization norm')
-#
-#proxfc1 = sigpy.prox.Stack([
-#    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
-#    sigpy.prox.Conj(proxg)
-#])
-#
-#outfile1 = odir / f'agr_echo_1_with_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
-#
-#if not outfile1.exists():
-#    alg1 = sigpy.alg.PrimalDualHybridGradient(
-#        proxfc=proxfc1,
-#        proxg=sigpy.prox.NoOp(A.ishape),
-#        A=A,
-#        AH=A.H,
-#        x=deepcopy(agr_echo_1_wo_decay_model),
-#        u=u1,
-#        tau=1 / sigma,
-#        sigma=sigma,
-#        max_iter=max_num_iter)
-#
-#    print('AGR echo 1 - with T2* modeling')
-#    for i in range(max_num_iter):
-#        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
-#        alg1.update()
-#    print('')
-#
-#    cp.savez(outfile1, x=alg1.x, u=alg1.u)
-#    agr_echo_1_w_decay_model = alg1.x
-#else:
-#    d1 = cp.load(outfile1)
-#    agr_echo_1_w_decay_model = d1['x']
-#    u1 = d1['u']
-#
-##----------------------------------------------------------------------
-## AGR of 2nd echo with decay modeling
-#
-#proxfc2 = sigpy.prox.Stack([
-#    sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
-#    sigpy.prox.Conj(proxg)
-#])
-#
-#outfile2 = odir / f'agr_echo_2_with_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
-#
-#if not outfile2.exists():
-#    alg2 = sigpy.alg.PrimalDualHybridGradient(
-#        proxfc=proxfc2,
-#        proxg=sigpy.prox.NoOp(A.ishape),
-#        A=A,
-#        AH=A.H,
-#        x=deepcopy(recon_echo_2_wo_decay_model),
-#        u=u2,
-#        tau=1. / sigma,
-#        sigma=sigma,
-#        max_iter=max_num_iter)
-#
-#    print('AGR echo 2 - with T2* modeling')
-#    for i in range(max_num_iter):
-#        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
-#        alg2.update()
-#    print('')
-#
-#    cp.savez(outfile2, x=alg2.x, u=alg2.u)
-#    agr_echo_2_w_decay_model = alg2.x
-#else:
-#    d2 = cp.load(outfile2)
-#    agr_echo_2_w_decay_model = d2['x']
-#    u2 = d2['u']
-#
-#del A
-#
-##---------------------------------------------------------------------------------------
-##---------------------------------------------------------------------------------------
-## recons with "estimated" decay model and anatomical prior using data from both echos
-##---------------------------------------------------------------------------------------
-##---------------------------------------------------------------------------------------
-#
-## the two echos usually have different phases
-## we correct for this by multiplying by the negative estimated phases
-#phase_fac_1 = cp.exp(1j * cp.angle(agr_echo_1_w_decay_model))
-#phase_fac_2 = cp.exp(1j * cp.angle(agr_echo_2_w_decay_model))
-#
-#A = sigpy.linop.Vstack([
-#    recon_operator_1 * sigpy.linop.Multiply(ishape, phase_fac_1),
-#    recon_operator_2 * sigpy.linop.Multiply(ishape, phase_fac_2), PG
-#])
-#
-#proxfcb = sigpy.prox.Stack([
-#    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
-#    sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
-#    sigpy.prox.Conj(proxg)
-#])
-#
-#ub = cp.zeros(A.oshape, dtype=cp.complex128)
-#
-#outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
-#
-#if not outfileb.exists():
-#    algb = sigpy.alg.PrimalDualHybridGradient(
-#        proxfc=proxfcb,
-#        proxg=sigpy.prox.NoOp(A.ishape),
-#        A=A,
-#        AH=A.H,
-#        x=deepcopy(agr_echo_1_w_decay_model),
-#        u=ub,
-#        tau=0.5 / sigma,
-#        sigma=sigma,
-#        max_iter=max_num_iter)
-#
-#    print('AGR both echos - "estimated" T2* modeling')
-#    for i in range(max_num_iter):
-#        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
-#        algb.update()
-#    print('')
-#
-#    cp.savez(outfileb, x=algb.x, u=ub)
-#    agr_both_echos_w_decay_model = algb.x
-#else:
-#    db = cp.load(outfileb)
-#    agr_both_echos_w_decay_model = db['x']
-#    ub = db['u']
-#
-#del A
-#del recon_operator_1
-#del recon_operator_2
-#
-##-----------------------------------------------------------------------------
-#
-#ims = 4 * [dict(vmin=0, vmax=4., cmap='Greys_r')] + [dict(cmap='Greys_r')]
-#vi = pv.ThreeAxisViewer([
-#    np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)),
-#    np.abs(cp.asnumpy(agr_echo_1_wo_decay_model)),
-#    np.abs(cp.asnumpy(agr_echo_1_w_decay_model)),
-#    np.abs(cp.asnumpy(agr_both_echos_w_decay_model)),
-#    cp.asnumpy(est_ratio)
-#],
-#                        imshow_kwargs=ims)
-#
+recon_operator_1, recon_operator_2 = nufft_t2star_operator(
+    ishape,
+    k_1_cm,
+    field_of_view_cm=field_of_view_cm,
+    acq_sampling_time_ms=acq_sampling_time_ms,
+    time_bin_width_ms=time_bin_width_ms,
+    scale=1 / np.sqrt(max_eig_nufft_single),
+    add_mirrored_coordinates=False,
+    echo_time_1_ms=echo_time_1_ms,
+    echo_time_2_ms=echo_time_2_ms,
+    ratio_image=est_ratio)
+
+A = sigpy.linop.Vstack([recon_operator_1, PG])
+
+if regularization_norm_anatomical == 'L2':
+    proxg = sigpy.prox.L2Reg(PG.oshape, lamda=beta_anatomical)
+elif regularization_norm_anatomical == 'L1':
+    proxg = sigpy.prox.L1Reg(PG.oshape, lamda=beta_anatomical)
+else:
+    raise ValueError('unknown regularization norm')
+
+proxfc1 = sigpy.prox.Stack([
+    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
+    sigpy.prox.Conj(proxg)
+])
+
+outfile1 = odir / f'agr_echo_1_with_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
+
+if not outfile1.exists():
+    alg1 = sigpy.alg.PrimalDualHybridGradient(
+        proxfc=proxfc1,
+        proxg=sigpy.prox.NoOp(A.ishape),
+        A=A,
+        AH=A.H,
+        x=deepcopy(agr_echo_1_wo_decay_model),
+        u=u1,
+        tau=1 / sigma,
+        sigma=sigma,
+        max_iter=max_num_iter)
+
+    print('AGR echo 1 - with T2* modeling')
+    for i in range(max_num_iter):
+        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+        alg1.update()
+    print('')
+
+    cp.savez(outfile1, x=alg1.x, u=alg1.u)
+    agr_echo_1_w_decay_model = alg1.x
+else:
+    d1 = cp.load(outfile1)
+    agr_echo_1_w_decay_model = d1['x']
+    u1 = d1['u']
+
+#----------------------------------------------------------------------
+# AGR of 2nd echo with decay modeling
+
+proxfc2 = sigpy.prox.Stack([
+    sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
+    sigpy.prox.Conj(proxg)
+])
+
+outfile2 = odir / f'agr_echo_2_with_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
+
+if not outfile2.exists():
+    alg2 = sigpy.alg.PrimalDualHybridGradient(
+        proxfc=proxfc2,
+        proxg=sigpy.prox.NoOp(A.ishape),
+        A=A,
+        AH=A.H,
+        x=deepcopy(recon_echo_2_wo_decay_model),
+        u=u2,
+        tau=1. / sigma,
+        sigma=sigma,
+        max_iter=max_num_iter)
+
+    print('AGR echo 2 - with T2* modeling')
+    for i in range(max_num_iter):
+        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+        alg2.update()
+    print('')
+
+    cp.savez(outfile2, x=alg2.x, u=alg2.u)
+    agr_echo_2_w_decay_model = alg2.x
+else:
+    d2 = cp.load(outfile2)
+    agr_echo_2_w_decay_model = d2['x']
+    u2 = d2['u']
+
+del A
+
+#---------------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------
+# recons with "estimated" decay model and anatomical prior using data from both echos
+#---------------------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------
+
+# the two echos usually have different phases
+# we correct for this by multiplying by the negative estimated phases
+phase_fac_1 = cp.exp(1j * cp.angle(agr_echo_1_w_decay_model))
+phase_fac_2 = cp.exp(1j * cp.angle(agr_echo_2_w_decay_model))
+
+A = sigpy.linop.Vstack([
+    recon_operator_1 * sigpy.linop.Multiply(ishape, phase_fac_1),
+    recon_operator_2 * sigpy.linop.Multiply(ishape, phase_fac_2), PG
+])
+
+proxfcb = sigpy.prox.Stack([
+    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
+    sigpy.prox.L2Reg(data_echo_2.shape, 1, y=-data_echo_2),
+    sigpy.prox.Conj(proxg)
+])
+
+ub = cp.zeros(A.oshape, dtype=cp.complex128)
+
+outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
+
+if not outfileb.exists():
+    algb = sigpy.alg.PrimalDualHybridGradient(
+        proxfc=proxfcb,
+        proxg=sigpy.prox.NoOp(A.ishape),
+        A=A,
+        AH=A.H,
+        x=deepcopy(agr_echo_1_w_decay_model),
+        u=ub,
+        tau=0.5 / sigma,
+        sigma=sigma,
+        max_iter=max_num_iter)
+
+    print('AGR both echos - "estimated" T2* modeling')
+    for i in range(max_num_iter):
+        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+        algb.update()
+    print('')
+
+    cp.savez(outfileb, x=algb.x, u=ub)
+    agr_both_echos_w_decay_model = algb.x
+else:
+    db = cp.load(outfileb)
+    agr_both_echos_w_decay_model = db['x']
+    ub = db['u']
+
+del A
+del recon_operator_1
+del recon_operator_2
+
+#-----------------------------------------------------------------------------
+
+ims = 4 * [dict(vmin=0, vmax=4., cmap='Greys_r')] + [dict(cmap='Greys_r')]
+vi = pv.ThreeAxisViewer([
+    np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)),
+    np.abs(cp.asnumpy(agr_echo_1_wo_decay_model)),
+    np.abs(cp.asnumpy(agr_echo_1_w_decay_model)),
+    np.abs(cp.asnumpy(agr_both_echos_w_decay_model)),
+    cp.asnumpy(est_ratio)
+],
+                        imshow_kwargs=ims)
