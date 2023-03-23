@@ -20,7 +20,7 @@ def setup_operator(ish, coords, rr, nn, delt, sc):
 
 np.random.seed(1)
 
-ishape = (4, )
+ishape = (3, 2, 2)
 num_coords = 4
 n = 1.7
 delta = 0.4
@@ -75,13 +75,13 @@ grad = np.real(H(d))
 # numerically approximate gradient
 c = 0.5 * (d * d.conj()).sum().real
 
-for i in range(ishape[0]):
+for i in range(x.size):
     eps = 1e-7
     rd = r.copy()
-    rd[i] += eps
+    rd.ravel()[i] += eps
     A2_e1, A2_e2 = setup_operator(ishape, cs, rd, n, delta, scale)
     A2 = sigpy.linop.Vstack([A2_e1, A2_e2])
     d2 = A2(x) - y
     c2 = 0.5 * (d2 * d2.conj()).sum().real
 
-    print((c2 - c) / eps, grad[i])
+    print(f'{((c2 - c) / eps): .4E} {(grad.ravel()[i]): .4E}')
