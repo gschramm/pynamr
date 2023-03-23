@@ -3,13 +3,17 @@ import numpy as np
 from functools import reduce
 
 
-def setup_operator(ish, co1, co2, rr, nn1, nn2, sc):
-    op1 = sc * sigpy.linop.NUFFT(ish, co1) * sigpy.linop.Multiply(
-        ishape, rr**nn1)
-    op2 = sc * sigpy.linop.NUFFT(ish, co2) * sigpy.linop.Multiply(
-        ishape, rr**nn2)
+def setup_operator(ish, coords, rr, nn, delt, sc):
+    ops1 = []
+    ops2 = []
+    # first echo op
+    for i, co in enumerate(coords):
+        ops1.append(sc * sigpy.linop.NUFFT(ish, co) *
+                    sigpy.linop.Multiply(ish, rr**(nn + i * delt)))
+        ops2.append(sc * sigpy.linop.NUFFT(ish, co) *
+                    sigpy.linop.Multiply(ish, rr**(nn + i * delt + 1)))
 
-    return sigpy.linop.Vstack([op1, op2])
+    return sigpy.linop.Vstack(ops1), sigpy.linop.Vstack(ops2)
 
 
 #---------------------------------------------------------------------
@@ -17,25 +21,27 @@ def setup_operator(ish, co1, co2, rr, nn1, nn2, sc):
 np.random.seed(1)
 
 ishape = (4, )
-num_coords = 6
-n1 = 0.7
-n2 = n1 + 1
+num_coords = 4
+n = 1.7
+delta = 0.4
 scale = 1.2
 
 #-------------------------------------------------------------
 #-------------------------------------------------------------
 
 # setup the nufft operator
-coord1 = np.random.rand(num_coords, len(ishape))
-coord1 *= ishape[0]
-coord1 -= ishape[0] / 2
+cs = []
 
-coord2 = np.random.rand(num_coords + 1, len(ishape))
-coord2 *= ishape[0]
-coord2 -= ishape[0] / 2
+for i in range(3):
+    coord = np.random.rand(num_coords + 1, len(ishape))
+    coord *= ishape[0]
+    coord -= ishape[0] / 2
+
+    cs.append(coord)
 
 r = np.random.rand(*ishape)
-A = setup_operator(ishape, coord1, coord2, r, n1, n2, scale)
+A_e1, A_e2 = setup_operator(ishape, cs, r, n, delta, scale)
+A = sigpy.linop.Vstack([A_e1, A_e2])
 
 # setup random test image
 x = np.random.rand(*ishape) + 1j * np.random.rand(*ishape)
@@ -46,14 +52,23 @@ y = np.random.rand(*A.oshape) + 1j * np.random.rand(*A.oshape)
 # calculate gradient w.r.t ratio image
 d = A(x) - y
 
-F1 = sigpy.linop.Multiply(ishape,
-                          n1 * (r**(n1 - 1)) * x.conj()) * sigpy.linop.Compose(
-                              A.linops[0].linops[:-1]).H
-F2 = sigpy.linop.Multiply(ishape,
-                          n2 * (r**(n2 - 1)) * x.conj()) * sigpy.linop.Compose(
-                              A.linops[1].linops[:-1]).H
+F0 = []
+F1 = []
 
-H = sigpy.linop.Hstack([F1, F2])
+for i in range(3):
+    F0.append(
+        sigpy.linop.Multiply(ishape, (n + i * delta) *
+                             (r**(n + i * delta - 1)) * x.conj()) *
+        sigpy.linop.Compose(A.linops[0].linops[i].linops[:-1]).H)
+    F1.append(
+        sigpy.linop.Multiply(ishape, (n + i * delta + 1) *
+                             (r**(n + i * delta)) * x.conj()) *
+        sigpy.linop.Compose(A.linops[1].linops[i].linops[:-1]).H)
+
+F0 = sigpy.linop.Hstack(F0)
+F1 = sigpy.linop.Hstack(F1)
+
+H = sigpy.linop.Hstack([F0, F1])
 
 grad = np.real(H(d))
 
@@ -64,7 +79,8 @@ for i in range(ishape[0]):
     eps = 1e-7
     rd = r.copy()
     rd[i] += eps
-    A2 = setup_operator(ishape, coord1, coord2, rd, n1, n2, scale)
+    A2_e1, A2_e2 = setup_operator(ishape, cs, rd, n, delta, scale)
+    A2 = sigpy.linop.Vstack([A2_e1, A2_e2])
     d2 = A2(x) - y
     c2 = 0.5 * (d2 * d2.conj()).sum().real
 
