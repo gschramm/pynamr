@@ -43,17 +43,16 @@ A = sigpy.linop.Vstack([A_e1, A_e2])
 # setup random data
 data = np.random.rand(*A.oshape) + 1j * np.random.rand(*A.oshape) - 0.5 - 0.5j
 
-# calculate gradient w.r.t ratio image
-diff = A(x) - data
-
 # calculate the data fidelity cost
+diff = A(x) - data
 c = 0.5 * (diff * diff.conj()).sum().real
 
-# calculate the gradient w.r.t. to the ratio image
+# calculate the gradient w.r.t. to the ratio image at another random r
 model.x = x
 model.data = data
 grad = model.data_fidelity_gradient_r(r)
 
+# approximate the gradient numerically
 for i in range(x.size):
     eps = 1e-6
     rd = r.copy()
