@@ -6,18 +6,170 @@ import cupy as cp
 from typing import Union
 
 
+class NUFFTT2starDualEchoModel:
+
+    def __init__(self,
+                 ishape: tuple[int, int, int],
+                 k_1_cm: np.ndarray,
+                 field_of_view_cm: float = 22.,
+                 acq_sampling_time_ms: float = 0.016,
+                 time_bin_width_ms: float = 0.25,
+                 scale: float = 0.03,
+                 echo_time_1_ms: float = 0.5,
+                 echo_time_2_ms: float = 5,
+                 nufft_kwargs=None) -> None:
+
+        self._ishape = ishape
+        self._scale = scale
+        if nufft_kwargs is None:
+            self._nufft_kwargs = {}
+        else:
+            self._nufft_kwargs = nufft_kwargs
+
+        self._acq_sampling_time_ms = acq_sampling_time_ms
+        self._time_bin_width_ms = time_bin_width_ms
+        self._echo_time_1_ms = echo_time_1_ms
+        self._echo_time_2_ms = echo_time_2_ms
+
+        self._time_bins_inds = np.array_split(
+            np.arange(k_1_cm.shape[0]),
+            math.ceil(k_1_cm.shape[0] /
+                      (self._time_bin_width_ms / self._acq_sampling_time_ms)))
+
+        self._coords = []
+
+        for _, time_bin_inds in enumerate(self._time_bins_inds):
+            chunk_coords_1_cm = k_1_cm[time_bin_inds, :, :].reshape(-1, 3)
+
+            self._coords.append(chunk_coords_1_cm * field_of_view_cm)
+
+        self._x = None
+        self._data = None
+
+    @property
+    def x(self) -> Union[None, cp.ndarray]:
+        return self._x
+
+    @x.setter
+    def x(self, value: cp.ndarray) -> None:
+        self._x = value
+
+    @property
+    def data(self) -> Union[None, cp.ndarray]:
+        return self._data
+
+    @data.setter
+    def data(self, value: cp.ndarray) -> None:
+        self._data = value
+
+    def get_operator_wo_decay_model(self) -> sigpy.linop.Linop:
+        return self._scale * sigpy.linop.NUFFT(
+            self._ishape, cp.vstack(self._coords), **self._nufft_kwargs)
+
+    def get_operators_w_decay_model(
+            self,
+            r: cp.ndarray) -> tuple[sigpy.linop.Linop, sigpy.linop.Linop]:
+        """NUFFT operators for dual echo including mono-exponential decay model
+
+        Parameters
+        ----------
+        r : cp.ndarray
+            ratio image (2nd / 1st echo image)
+
+        Returns
+        -------
+        Union[sigpy.linop.Linop, sigpy.linop.Linop]
+        """
+        op1s = []
+        op2s = []
+        for i, time_bin_inds in enumerate(self._time_bins_inds):
+            #setup the decay image
+            readout_time_1_ms = self._echo_time_1_ms + time_bin_inds.mean(
+            ) * self._acq_sampling_time_ms
+            readout_time_2_ms = self._echo_time_2_ms + time_bin_inds.mean(
+            ) * self._acq_sampling_time_ms
+
+            n_1 = ((readout_time_1_ms) /
+                   (self._echo_time_2_ms - self._echo_time_1_ms))
+            n_2 = ((readout_time_2_ms) /
+                   (self._echo_time_2_ms - self._echo_time_1_ms))
+
+            op1s.append(self._scale * sigpy.linop.NUFFT(
+                self._ishape, self._coords[i], **self._nufft_kwargs) *
+                        sigpy.linop.Multiply(self._ishape, r**n_1))
+
+            op2s.append(self._scale * sigpy.linop.NUFFT(
+                self._ishape, self._coords[i], **self._nufft_kwargs) *
+                        sigpy.linop.Multiply(self._ishape, r**n_2))
+
+        operator1 = sigpy.linop.Vstack(op1s)
+        operator2 = sigpy.linop.Vstack(op2s)
+
+        return operator1, operator2
+
+    def data_fidelity_gradient_r(self, r: cp.ndarray) -> cp.ndarray:
+
+        if self._x is None:
+            raise ValueError("x is not set")
+
+        if self._data is None:
+            raise ValueError("data is not set")
+
+        A_e1, A_e2 = self.get_operators_w_decay_model(r)
+        A = sigpy.linop.Vstack([A_e1, A_e2])
+        diff = A(self._x) - self._data
+
+        del A
+        del A_e1
+        del A_e2
+
+        f1s = []
+        f2s = []
+        for i, time_bin_inds in enumerate(self._time_bins_inds):
+            #setup the decay image
+            readout_time_1_ms = self._echo_time_1_ms + time_bin_inds.mean(
+            ) * self._acq_sampling_time_ms
+            readout_time_2_ms = self._echo_time_2_ms + time_bin_inds.mean(
+            ) * self._acq_sampling_time_ms
+
+            n_1 = ((readout_time_1_ms) /
+                   (self._echo_time_2_ms - self._echo_time_1_ms))
+            n_2 = ((readout_time_2_ms) /
+                   (self._echo_time_2_ms - self._echo_time_1_ms))
+
+            f1s.append(
+                self._scale *
+                sigpy.linop.Multiply(self._ishape,
+                                     n_1 * (r**(n_1 - 1)) * self._x.conj()) *
+                sigpy.linop.NUFFT(self._ishape, self._coords[i], **
+                                  self._nufft_kwargs).H)
+
+            f2s.append(
+                self._scale *
+                sigpy.linop.Multiply(self._ishape,
+                                     n_2 * (r**(n_2 - 1)) * self._x.conj()) *
+                sigpy.linop.NUFFT(self._ishape, self._coords[i], **
+                                  self._nufft_kwargs).H)
+
+        h_op = sigpy.linop.Hstack(
+            [sigpy.linop.Hstack(f1s),
+             sigpy.linop.Hstack(f2s)])
+
+        return cp.real(h_op(diff))
+
+
 def nufft_t2star_operator(
-    ishape: tuple[int, int, int],
-    k: np.ndarray,
-    field_of_view_cm: float = 22.,
-    acq_sampling_time_ms: float = 0.01,
-    time_bin_width_ms: float = 0.25,
-    scale: float = 0.03,
-    add_mirrored_coordinates=True,
-    ratio_image: Union[cp.ndarray, None] = None,
-    echo_time_1_ms: float = 0.5,
-    echo_time_2_ms: float = 5.
-) -> Union[sigpy.linop.Linop, Union[sigpy.linop.Linop, sigpy.linop.Linop]]:
+        ishape: tuple[int, int, int],
+        k: np.ndarray,
+        field_of_view_cm: float = 22.,
+        acq_sampling_time_ms: float = 0.01,
+        time_bin_width_ms: float = 0.25,
+        scale: float = 0.03,
+        add_mirrored_coordinates=True,
+        ratio_image: Union[cp.ndarray, None] = None,
+        echo_time_1_ms: float = 0.5,
+        echo_time_2_ms: float = 5.
+) -> Union[sigpy.linop.Linop, sigpy.linop.Linop]:
     """sigpy (dual echo) forward nufft operator including monoexp. T2* decay modeling
 
     Parameters
@@ -83,17 +235,15 @@ def nufft_t2star_operator(
             readout_time_2_ms = echo_time_2_ms + time_bin_inds.mean(
             ) * acq_sampling_time_ms
 
-            decay_image_1 = ratio_image**((readout_time_1_ms) /
-                                          (echo_time_2_ms - echo_time_1_ms))
-            decay_image_2 = ratio_image**((readout_time_2_ms) /
-                                          (echo_time_2_ms - echo_time_1_ms))
+            n_1 = ((readout_time_1_ms) / (echo_time_2_ms - echo_time_1_ms))
+            n_2 = ((readout_time_2_ms) / (echo_time_2_ms - echo_time_1_ms))
 
             op1s.append(scale * sigpy.linop.NUFFT(
                 ishape, all_coords[i], oversamp=1.25, width=4) *
-                        sigpy.linop.Multiply(ishape, decay_image_1))
+                        sigpy.linop.Multiply(ishape, ratio_image**n_1))
             op2s.append(scale * sigpy.linop.NUFFT(
                 ishape, all_coords[i], oversamp=1.25, width=4) *
-                        sigpy.linop.Multiply(ishape, decay_image_2))
+                        sigpy.linop.Multiply(ishape, ratio_image**n_2))
 
         # operator including T2* decay for first echo and second echo
         operator1 = sigpy.linop.Vstack(op1s)
