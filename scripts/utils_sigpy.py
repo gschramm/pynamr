@@ -18,7 +18,28 @@ class NUFFTT2starDualEchoModel:
                  echo_time_1_ms: float = 0.5,
                  echo_time_2_ms: float = 5,
                  nufft_kwargs=None) -> None:
+        """sigpy (dual echo) forward nufft operator including monoexp. T2* decay modeling
 
+        Parameters
+        ----------
+        ishape : tuple[int, int, int]
+            shape of the input image
+        k_1_cm : np.ndarray
+            input kx, ky, kz coordinates - shape: (num_samples, num_readouts, 3)
+            units 1/cm
+        field_of_view_cm : float, optional
+            field of view in cm, by default 220.
+        acq_sampling_time_ms : float, optional
+            samplignt time during acquisition in ms, by default 0.01
+        time_bin_width_ms : float, optional
+            time bin width for modeling T2* decay, by default 0.25
+        scale : float, optional
+            scale of the forward operator, by default 0.03
+        echo_time_1_ms : float, optional
+            first echo time in ms, by default 0.5
+        echo_time_2_ms : float, optional
+            second echo time in ms, by default 5.
+        """
         self._ishape = ishape
         self._scale = scale
         if nufft_kwargs is None:
