@@ -16,7 +16,7 @@ class NUFFTT2starDualEchoModel:
                  field_of_view_cm: float = 22.,
                  acq_sampling_time_ms: float = 0.016,
                  time_bin_width_ms: float = 0.25,
-                 scale: float = 0.03,
+                 scale: float = 1.,
                  echo_time_1_ms: float = 0.5,
                  echo_time_2_ms: float = 5,
                  nufft_kwargs=None) -> None:
@@ -82,6 +82,14 @@ class NUFFTT2starDualEchoModel:
         self._x = value
 
     @property
+    def scale(self) -> float:
+        return self._scale
+
+    @scale.setter
+    def scale(self, value: float) -> None:
+        self._scale = value
+
+    @property
     def phase_factor_1(self) -> Union[None, cp.ndarray]:
         return self._phase_factor_1
 
@@ -137,16 +145,18 @@ class NUFFTT2starDualEchoModel:
             n_2 = ((readout_time_2_ms) /
                    (self._echo_time_2_ms - self._echo_time_1_ms))
 
-            op1s.append(self._scale * sigpy.linop.NUFFT(
-                self._ishape, self._coords[i], **self._nufft_kwargs) *
-                        sigpy.linop.Multiply(self._ishape, r**n_1))
+            op1s.append(
+                sigpy.linop.NUFFT(self._ishape, self._coords[i], **
+                                  self._nufft_kwargs) *
+                sigpy.linop.Multiply(self._ishape, r**n_1))
 
-            op2s.append(self._scale * sigpy.linop.NUFFT(
-                self._ishape, self._coords[i], **self._nufft_kwargs) *
-                        sigpy.linop.Multiply(self._ishape, r**n_2))
+            op2s.append(
+                sigpy.linop.NUFFT(self._ishape, self._coords[i], **
+                                  self._nufft_kwargs) *
+                sigpy.linop.Multiply(self._ishape, r**n_2))
 
-        operator1 = sigpy.linop.Vstack(op1s)
-        operator2 = sigpy.linop.Vstack(op2s)
+        operator1 = self._scale * sigpy.linop.Vstack(op1s)
+        operator2 = self._scale * sigpy.linop.Vstack(op2s)
 
         if self._phase_factor_1 is not None:
             operator1 = operator1 * sigpy.linop.Multiply(
@@ -209,21 +219,19 @@ class NUFFTT2starDualEchoModel:
                    (self._echo_time_2_ms - self._echo_time_1_ms))
 
             f1s.append(
-                self._scale *
                 sigpy.linop.Multiply(self._ishape,
                                      n_1 * (r**(n_1 - 1)) * self._x.conj()) *
                 sigpy.linop.NUFFT(self._ishape, self._coords[i], **
                                   self._nufft_kwargs).H)
 
             f2s.append(
-                self._scale *
                 sigpy.linop.Multiply(self._ishape,
                                      n_2 * (r**(n_2 - 1)) * self._x.conj()) *
                 sigpy.linop.NUFFT(self._ishape, self._coords[i], **
                                   self._nufft_kwargs).H)
 
-        f1s = sigpy.linop.Hstack(f1s)
-        f2s = sigpy.linop.Hstack(f2s)
+        f1s = self._scale * sigpy.linop.Hstack(f1s)
+        f2s = self._scale * sigpy.linop.Hstack(f2s)
 
         if self._phase_factor_1 is not None:
             f1s = sigpy.linop.Multiply(self._ishape,
