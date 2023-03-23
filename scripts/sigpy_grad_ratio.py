@@ -4,7 +4,7 @@ from utils_sigpy import NUFFTT2starDualEchoModel
 
 #---------------------------------------------------------------------
 
-ishape = (3, 4)
+ishape = (3, 4, 2)
 num_readouts = 3
 num_samples_per_readout = 1000
 
@@ -36,6 +36,13 @@ model = NUFFTT2starDualEchoModel(ishape,
                                  echo_time_1_ms=0.5,
                                  echo_time_2_ms=5)
 
+# generate random phase factors
+phi1 = 2 * np.pi * np.random.rand(*ishape)
+phi2 = 2 * np.pi * np.random.rand(*ishape)
+
+model.phase_factor_1 = np.exp(1j * phi1)
+model.phase_factor_2 = np.exp(1j * phi2)
+
 A_e1, A_e2 = model.get_operators_w_decay_model(r)
 
 A = sigpy.linop.Vstack([A_e1, A_e2])
@@ -49,7 +56,7 @@ c = 0.5 * (diff * diff.conj()).sum().real
 
 # calculate the gradient w.r.t. to the ratio image at another random r
 model.x = x
-model.data = data
+model.dual_echo_data = data
 grad = model.data_fidelity_gradient_r(r)
 
 # approximate the gradient numerically

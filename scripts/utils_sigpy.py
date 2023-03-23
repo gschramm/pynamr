@@ -70,20 +70,39 @@ class NUFFTT2starDualEchoModel:
         self._x = None
         self._dual_echo_data = None
 
+        self._phase_factor_1 = None
+        self._phase_factor_2 = None
+
     @property
     def x(self) -> Union[None, cp.ndarray]:
         return self._x
 
     @x.setter
-    def x(self, value: cp.ndarray) -> None:
+    def x(self, value: Union[None, cp.ndarray]) -> None:
         self._x = value
+
+    @property
+    def phase_factor_1(self) -> Union[None, cp.ndarray]:
+        return self._phase_factor_1
+
+    @phase_factor_1.setter
+    def phase_factor_1(self, value: Union[None, cp.ndarray]) -> None:
+        self._phase_factor_1 = value
+
+    @property
+    def phase_factor_2(self) -> Union[None, cp.ndarray]:
+        return self._phase_factor_2
+
+    @phase_factor_2.setter
+    def phase_factor_2(self, value: Union[None, cp.ndarray]) -> None:
+        self._phase_factor_2 = value
 
     @property
     def dual_echo_data(self) -> Union[None, cp.ndarray]:
         return self._dual_echo_data
 
     @dual_echo_data.setter
-    def dual_echo_data(self, value: cp.ndarray) -> None:
+    def dual_echo_data(self, value: Union[None, cp.ndarray]) -> None:
         self._dual_echo_data = value
 
     def get_operator_wo_decay_model(self) -> sigpy.linop.Linop:
@@ -128,6 +147,14 @@ class NUFFTT2starDualEchoModel:
 
         operator1 = sigpy.linop.Vstack(op1s)
         operator2 = sigpy.linop.Vstack(op2s)
+
+        if self._phase_factor_1 is not None:
+            operator1 = operator1 * sigpy.linop.Multiply(
+                self._ishape, self._phase_factor_1)
+
+        if self._phase_factor_2 is not None:
+            operator2 = operator2 * sigpy.linop.Multiply(
+                self._ishape, self._phase_factor_2)
 
         return operator1, operator2
 
@@ -195,9 +222,18 @@ class NUFFTT2starDualEchoModel:
                 sigpy.linop.NUFFT(self._ishape, self._coords[i], **
                                   self._nufft_kwargs).H)
 
-        h_op = sigpy.linop.Hstack(
-            [sigpy.linop.Hstack(f1s),
-             sigpy.linop.Hstack(f2s)])
+        f1s = sigpy.linop.Hstack(f1s)
+        f2s = sigpy.linop.Hstack(f2s)
+
+        if self._phase_factor_1 is not None:
+            f1s = sigpy.linop.Multiply(self._ishape,
+                                       self._phase_factor_1.conj()) * f1s
+
+        if self._phase_factor_2 is not None:
+            f2s = sigpy.linop.Multiply(self._ishape,
+                                       self._phase_factor_2.conj()) * f2s
+
+        h_op = sigpy.linop.Hstack([f1s, f2s])
 
         return cp.real(h_op(diff))
 
