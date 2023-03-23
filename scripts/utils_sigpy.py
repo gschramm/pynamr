@@ -60,7 +60,8 @@ class NUFFTT2starDualEchoModel:
         self._coords = []
 
         for _, time_bin_inds in enumerate(self._time_bins_inds):
-            chunk_coords_1_cm = k_1_cm[time_bin_inds, :, :].reshape(-1, 3)
+            chunk_coords_1_cm = k_1_cm[time_bin_inds, :, :].reshape(
+                -1, k_1_cm.shape[-1])
 
             self._coords.append(chunk_coords_1_cm * field_of_view_cm)
 

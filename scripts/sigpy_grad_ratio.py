@@ -1,87 +1,73 @@
 import sigpy
 import numpy as np
-from functools import reduce
-
-
-def setup_operator(ish, coords, rr, nn, delt, sc):
-    ops1 = []
-    ops2 = []
-    # first echo op
-    for i, co in enumerate(coords):
-        ops1.append(sc * sigpy.linop.NUFFT(ish, co) *
-                    sigpy.linop.Multiply(ish, rr**(nn + i * delt)))
-        ops2.append(sc * sigpy.linop.NUFFT(ish, co) *
-                    sigpy.linop.Multiply(ish, rr**(nn + i * delt + 1)))
-
-    return sigpy.linop.Vstack(ops1), sigpy.linop.Vstack(ops2)
-
+from utils_sigpy import NUFFTT2starDualEchoModel
 
 #---------------------------------------------------------------------
 
+ishape = (3, 4)
+num_readouts = 3
+num_samples_per_readout = 1000
+
+fov_cm = 22.
+
 np.random.seed(1)
-
-ishape = (3, 2, 2)
-num_coords = 4
-n = 1.7
-delta = 0.4
-scale = 1.2
-
 #-------------------------------------------------------------
 #-------------------------------------------------------------
 
-# setup the nufft operator
-cs = []
+# setup unitless kspace coordinates
+coord = np.random.rand(num_samples_per_readout, num_readouts, len(ishape))
+coord *= ishape[0]
+coord -= ishape[0] / 2
 
-for i in range(3):
-    coord = np.random.rand(num_coords + 1, len(ishape))
-    coord *= ishape[0]
-    coord -= ishape[0] / 2
-
-    cs.append(coord)
-
-r = np.random.rand(*ishape)
-A_e1, A_e2 = setup_operator(ishape, cs, r, n, delta, scale)
-A = sigpy.linop.Vstack([A_e1, A_e2])
+# convert to 1/cm  units
+k_1_cm = coord / fov_cm
 
 # setup random test image
-x = np.random.rand(*ishape) + 1j * np.random.rand(*ishape)
+x = np.random.rand(*ishape) + 1j * np.random.rand(*ishape) - 0.5 - 0.5j
+
+# setup random ratio image
+r = np.random.rand(*ishape)
+
+model = NUFFTT2starDualEchoModel(ishape,
+                                 k_1_cm,
+                                 field_of_view_cm=fov_cm,
+                                 scale=0.03,
+                                 acq_sampling_time_ms=0.016,
+                                 echo_time_1_ms=0.5,
+                                 echo_time_2_ms=5)
+
+A_e1, A_e2 = model.get_operators_w_decay_model(r)
+
+A = sigpy.linop.Vstack([A_e1, A_e2])
 
 # setup random data
-y = np.random.rand(*A.oshape) + 1j * np.random.rand(*A.oshape)
+data = np.random.rand(*A.oshape) + 1j * np.random.rand(*A.oshape) - 0.5 - 0.5j
 
 # calculate gradient w.r.t ratio image
-d = A(x) - y
+diff = A(x) - data
 
-F0 = []
-F1 = []
+# calculate the data fidelity cost
+c = 0.5 * (diff * diff.conj()).sum().real
 
-for i in range(3):
-    F0.append(
-        sigpy.linop.Multiply(ishape, (n + i * delta) *
-                             (r**(n + i * delta - 1)) * x.conj()) *
-        sigpy.linop.Compose(A.linops[0].linops[i].linops[:-1]).H)
-    F1.append(
-        sigpy.linop.Multiply(ishape, (n + i * delta + 1) *
-                             (r**(n + i * delta)) * x.conj()) *
-        sigpy.linop.Compose(A.linops[1].linops[i].linops[:-1]).H)
-
-F0 = sigpy.linop.Hstack(F0)
-F1 = sigpy.linop.Hstack(F1)
-
-H = sigpy.linop.Hstack([F0, F1])
-
-grad = np.real(H(d))
-
-# numerically approximate gradient
-c = 0.5 * (d * d.conj()).sum().real
+# calculate the gradient w.r.t. to the ratio image
+model.x = x
+model.data = data
+grad = model.data_fidelity_gradient_r(r)
 
 for i in range(x.size):
-    eps = 1e-7
+    eps = 1e-6
     rd = r.copy()
     rd.ravel()[i] += eps
-    A2_e1, A2_e2 = setup_operator(ishape, cs, rd, n, delta, scale)
+    A2_e1, A2_e2 = model.get_operators_w_decay_model(rd)
     A2 = sigpy.linop.Vstack([A2_e1, A2_e2])
-    d2 = A2(x) - y
-    c2 = 0.5 * (d2 * d2.conj()).sum().real
+    diff2 = A2(x) - data
+    c2 = 0.5 * (diff2 * diff2.conj()).sum().real
 
-    print(f'{((c2 - c) / eps): .4E} {(grad.ravel()[i]): .4E}')
+    grad_num = (c2 - c) / eps
+
+    abs_diff = np.abs(grad_num - grad.ravel()[i])
+    rel_diff = abs_diff / np.abs(grad_num)
+
+    print(
+        f'{((c2 - c) / eps): .4E} {(grad.ravel()[i]): .4E} {abs_diff: .4E} {rel_diff: .4E}'
+    )
