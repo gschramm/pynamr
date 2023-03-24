@@ -1,11 +1,11 @@
 #TODO:
-# - oname for initial ratio
 # - visualizations at the end (including rotation)
 # - rotation from file
 # - remove bad readouts
 
 import h5py
 import numpy as np
+import matplotlib.pyplot as plt
 import cupy as cp
 import cupyx.scipy.ndimage as ndimage
 import scipy.ndimage as ndi
@@ -23,34 +23,55 @@ from utils_sigpy import NUFFTT2starDualEchoModel, projected_gradient_operator
 import argparse
 
 parser = argparse.ArgumentParser()
+parser.add_argument(
+    '--gradient_file',
+    type=str,
+    default='/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/ak_grad56.wav')
+parser.add_argument(
+    '--echo_1_data_file',
+    type=str,
+    default='/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P30208.7.h5')
+parser.add_argument(
+    '--echo_2_data_file',
+    type=str,
+    default='/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P32256.7.h5')
+parser.add_argument(
+    '--t1_file',
+    type=str,
+    default='/data/sodium_mr/20230316_MR3_GS_QED/niftis/t1.nii')
 parser.add_argument('--beta_anatomical', type=float, default=1e-2)
 parser.add_argument('--beta_non_anatomical', type=float, default=1e-1)
 parser.add_argument('--beta_r', type=float, default=3e0)
 parser.add_argument('--num_iter_r', type=int, default=100)
 parser.add_argument('--max_num_iter', type=int, default=200)
+parser.add_argument('--rotation', type=int, default=None, choices=[0, 1, 2, 3])
+parser.add_argument('--odir', type=str, default=None)
 args = parser.parse_args()
 
 #--------------------------------------------------------------------
 # input parameters
+gradient_file = args.gradient_file
+echo_1_data_file = args.echo_1_data_file
+echo_2_data_file = args.echo_2_data_file
+t1_file = args.t1_file
+rotation = args.rotation
+
 beta_anatomical = args.beta_anatomical
 beta_non_anatomical = args.beta_non_anatomical
 max_num_iter = args.max_num_iter
 beta_r = args.beta_r
 num_iter_r = args.num_iter_r
+
+# create the output directory
+if args.odir is None:
+    odir = Path(echo_1_data_file).parent / 'recons'
+else:
+    odir = Path(args.odir)
+odir.mkdir(exist_ok=True, parents=True)
 #--------------------------------------------------------------------
 # fixed parameters
-gradient_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/ak_grad56.wav'
-echo_1_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P30208.7.h5'
-echo_2_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P32256.7.h5'
-rotation = 0  # rotation value from pfile header
 
-#gradient_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/ak_grad59.wav'
-#echo_1_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/P25600.7.h5'
-#echo_2_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/P27648.7.h5'
-#rotation = 3  # rotation value from pfile header
-
-t1_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/niftis/t1.nii'
-
+# shape of the images to be reconstructed
 ishape = (128, 128, 128)
 
 # regularization parameters for non-anatomy-guided recons
@@ -59,16 +80,18 @@ regularization_norm_non_anatomical = 'L2'
 # regularization parameters for anatomy-guided recons
 regularization_norm_anatomical = 'L1'
 
+# sigma step size of PDHG
 sigma = 0.1
 
+# time bin width for T2* decay modeling
 time_bin_width_ms: float = 0.25
 
 # echo times in ms
 echo_time_1_ms = 0.455
 echo_time_2_ms = 5.
 
-odir = Path(echo_1_data_file).parent / 'recons'
-odir.mkdir(exist_ok=True, parents=True)
+# show the readout data (to spot bad readouts)
+show_readouts = False
 
 #--------------------------------------------------------------------
 #--------------------------------------------------------------------
@@ -130,15 +153,14 @@ i_bad_2 = np.where(max_echo_2 < th2)[0]
 print(f'num bad readouts 1st echo {i_bad_1.size}')
 print(f'num bad readouts 2nd echo {i_bad_2.size}')
 
-#import matplotlib.pyplot as plt
-#
-#fig, ax = plt.subplots(1, 2, figsize=(8, 4))
-#ax[0].plot(max_echo_1)
-#ax[0].axhline(th1)
-#ax[1].plot(max_echo_2)
-#ax[1].axhline(th2)
-#fig.tight_layout()
-#fig.show()
+if show_readouts:
+    fig, ax = plt.subplots(1, 2, figsize=(8, 4))
+    ax[0].plot(max_echo_1)
+    ax[0].axhline(th1)
+    ax[1].plot(max_echo_2)
+    ax[1].axhline(th2)
+    fig.tight_layout()
+    fig.show()
 
 # print info related to SNR
 for i in np.linspace(0, data_echo_1.shape[1], 10, endpoint=False).astype(int):
@@ -547,72 +569,31 @@ clump_mask = (label == biggest_label)
 est_ratio[clump_mask == 0] = 1
 
 init_est_ratio = est_ratio.copy()
-
-#-----------------------------------------------------------------------------
-#-----------------------------------------------------------------------------
-# perform independent AGRs with decay modeling
-#-----------------------------------------------------------------------------
-#-----------------------------------------------------------------------------
-#
-recon_operator_1, recon_operator_2 = acq_model.get_operators_w_decay_model(
-    est_ratio)
-
-A = sigpy.linop.Vstack([recon_operator_1, PG])
-
-proxfc1 = sigpy.prox.Stack([
-    sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
-    sigpy.prox.Conj(proxg)
-])
-
-outfile1 = odir / f'agr_echo_1_with_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
-
-if not outfile1.exists():
-    alg1 = sigpy.alg.PrimalDualHybridGradient(
-        proxfc=proxfc1,
-        proxg=sigpy.prox.NoOp(A.ishape),
-        A=A,
-        AH=A.H,
-        x=deepcopy(agr_echo_1_wo_decay_model),
-        u=u1,
-        tau=1 / sigma,
-        sigma=sigma,
-        max_iter=max_num_iter)
-
-    print('AGR echo 1 - with T2* modeling')
-    for i in range(max_num_iter):
-        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
-        alg1.update()
-    print('')
-
-    cp.savez(outfile1, x=alg1.x, u=alg1.u)
-    agr_echo_1_w_decay_model = alg1.x
-else:
-    d1 = cp.load(outfile1)
-    agr_echo_1_w_decay_model = d1['x']
-    u1 = d1['u']
-
-del A
-del recon_operator_1, recon_operator_2
+cp.save(odir / f'init_est_ratio_{beta_anatomical:.1E}.npy', init_est_ratio)
 
 #---------------------------------------------------------------------------------------
 #---------------------------------------------------------------------------------------
-# calculate gradient of data fidelity with respect to the ratio image
+# optimize the ratio image using gradient descent on data fidelity + prior
 #---------------------------------------------------------------------------------------
 #---------------------------------------------------------------------------------------
 
-acq_model.x = agr_echo_1_w_decay_model
+acq_model.x = agr_echo_1_wo_decay_model
 acq_model.dual_echo_data = cp.concatenate([data_echo_1, data_echo_2])
 
+# step size for gradient descent on ratio image
 step = 0.3
 
-outfile_r = odir / f'est_ratio_{beta_r:.1E}_{num_iter_r}.npy'
+outfile_r = odir / f'est_ratio_{beta_anatomical:.1E}_{beta_r:.1E}_{num_iter_r}.npy'
 
 if not outfile_r.exists():
     print('updating ratio image')
+    # projected gradient descent on ratio image
     for i in range(num_iter_r):
         print(f'{(i+1):04} / {num_iter_r:04}', end='\r')
 
+        # gradient based on data fidelity
         grad_df = acq_model.data_fidelity_gradient_r(est_ratio)
+        # gradient of beta_r * ||PG(r)||_2^2
         grad_prior = beta_r * PG.H(PG(est_ratio))
         est_ratio = cp.clip(est_ratio - step * (grad_df + grad_prior), 1e-2, 1)
 
@@ -649,7 +630,7 @@ if not outfileb.exists():
         proxg=sigpy.prox.NoOp(A.ishape),
         A=A,
         AH=A.H,
-        x=deepcopy(agr_echo_1_w_decay_model),
+        x=deepcopy(agr_echo_1_wo_decay_model),
         u=ub,
         tau=0.5 / sigma,
         sigma=sigma,
