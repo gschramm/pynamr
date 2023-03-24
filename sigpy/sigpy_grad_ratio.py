@@ -43,12 +43,22 @@ phi2 = 2 * np.pi * np.random.rand(*ishape)
 model.phase_factor_1 = np.exp(1j * phi1)
 model.phase_factor_2 = np.exp(1j * phi2)
 
+# calculate data weights
+dw1 = (np.random.rand(np.prod(k_1_cm.shape[:-1])) > 0.5).astype(np.uint8)
+dw2 = (np.random.rand(np.prod(k_1_cm.shape[:-1])) > 0.5).astype(np.uint8)
+
+model.data_weights_1 = dw1
+model.data_weights_2 = dw2
+
 A_e1, A_e2 = model.get_operators_w_decay_model(r)
 
 A = sigpy.linop.Vstack([A_e1, A_e2])
 
 # setup random data
 data = np.random.rand(*A.oshape) + 1j * np.random.rand(*A.oshape) - 0.5 - 0.5j
+
+data[:dw1.shape[0]] *= dw1
+data[dw1.shape[0]:] *= dw2
 
 # calculate the data fidelity cost
 diff = A(x) - data

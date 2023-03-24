@@ -71,6 +71,9 @@ class NUFFTT2starDualEchoModel:
         self._phase_factor_1 = None
         self._phase_factor_2 = None
 
+        self._data_weights_1 = None
+        self._data_weights_2 = None
+
     @property
     def x(self) -> Union[None, cp.ndarray]:
         return self._x
@@ -104,6 +107,22 @@ class NUFFTT2starDualEchoModel:
         self._phase_factor_2 = value
 
     @property
+    def data_weights_1(self) -> Union[None, cp.ndarray]:
+        return self._data_weights_1
+
+    @data_weights_1.setter
+    def data_weights_1(self, value: Union[None, cp.ndarray]) -> None:
+        self._data_weights_1 = value
+
+    @property
+    def data_weights_2(self) -> Union[None, cp.ndarray]:
+        return self._data_weights_2
+
+    @data_weights_2.setter
+    def data_weights_2(self, value: Union[None, cp.ndarray]) -> None:
+        self._data_weights_2 = value
+
+    @property
     def dual_echo_data(self) -> Union[None, cp.ndarray]:
         return self._dual_echo_data
 
@@ -126,6 +145,12 @@ class NUFFTT2starDualEchoModel:
         if self._phase_factor_2 is not None:
             op2 = op2 * sigpy.linop.Multiply(self._ishape,
                                              self._phase_factor_2)
+
+        if self._data_weights_1 is not None:
+            op1 = sigpy.linop.Multiply(op1.oshape, self._data_weights_1) * op1
+
+        if self._data_weights_2 is not None:
+            op2 = sigpy.linop.Multiply(op2.oshape, self._data_weights_2) * op2
 
         return op1, op2
 
@@ -178,6 +203,14 @@ class NUFFTT2starDualEchoModel:
             operator2 = operator2 * sigpy.linop.Multiply(
                 self._ishape, self._phase_factor_2)
 
+        if self._data_weights_1 is not None:
+            operator1 = sigpy.linop.Multiply(operator1.oshape,
+                                             self._data_weights_1) * operator1
+
+        if self._data_weights_2 is not None:
+            operator2 = sigpy.linop.Multiply(operator2.oshape,
+                                             self._data_weights_2) * operator2
+
         return operator1, operator2
 
     def data_fidelity_gradient_r(self, r: cp.ndarray) -> cp.ndarray:
@@ -210,6 +243,12 @@ class NUFFTT2starDualEchoModel:
         A_e1, A_e2 = self.get_operators_w_decay_model(r)
         A = sigpy.linop.Vstack([A_e1, A_e2])
         diff = A(self._x) - self._dual_echo_data
+
+        # account for data weights
+        if self._data_weights_1 is not None:
+            diff[:A_e1.oshape[0]] *= self._data_weights_1
+        if self._data_weights_2 is not None:
+            diff[A_e1.oshape[0]:] *= self._data_weights_2
 
         del A
         del A_e1
