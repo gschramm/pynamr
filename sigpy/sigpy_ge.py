@@ -1,6 +1,5 @@
 #TODO:
 # - visualizations at the end (including rotation)
-# - rotation from file
 # - remove bad readouts
 
 import h5py
@@ -44,7 +43,6 @@ parser.add_argument('--beta_non_anatomical', type=float, default=1e-1)
 parser.add_argument('--beta_r', type=float, default=3e0)
 parser.add_argument('--num_iter_r', type=int, default=100)
 parser.add_argument('--max_num_iter', type=int, default=200)
-parser.add_argument('--rotation', type=int, default=None, choices=[0, 1, 2, 3])
 parser.add_argument('--odir', type=str, default=None)
 args = parser.parse_args()
 
@@ -54,7 +52,6 @@ gradient_file = args.gradient_file
 echo_1_data_file = args.echo_1_data_file
 echo_2_data_file = args.echo_2_data_file
 t1_file = args.t1_file
-rotation = args.rotation
 
 beta_anatomical = args.beta_anatomical
 beta_non_anatomical = args.beta_non_anatomical
@@ -124,6 +121,8 @@ field_of_view_cm = 100 * fov * 42.577 / gamma_by_2pi_MHz_T
 
 with h5py.File(echo_1_data_file) as data1:
     data_echo_1 = data1['/data'][:]
+    rotation = int(data1['/header']['rdb_hdr']['rotation'][0])
+    print(f'rotation: {rotation}')
 
 with h5py.File(echo_2_data_file) as data2:
     data_echo_2 = data2['/data'][:]
