@@ -113,9 +113,23 @@ class NUFFTT2starDualEchoModel:
     def dual_echo_data(self, value: Union[None, cp.ndarray]) -> None:
         self._dual_echo_data = value
 
-    def get_operator_wo_decay_model(self) -> sigpy.linop.Linop:
-        return self._scale * sigpy.linop.NUFFT(
+    def get_operators_wo_decay_model(
+            self) -> tuple[sigpy.linop.Linop, sigpy.linop.Linop]:
+        op1 = self._scale * sigpy.linop.NUFFT(
             self._ishape, cp.vstack(self._coords), **self._nufft_kwargs)
+
+        op2 = self._scale * sigpy.linop.NUFFT(
+            self._ishape, cp.vstack(self._coords), **self._nufft_kwargs)
+
+        if self._phase_factor_1 is not None:
+            op1 = op1 * sigpy.linop.Multiply(self._ishape,
+                                             self._phase_factor_1)
+
+        if self._phase_factor_2 is not None:
+            op2 = op2 * sigpy.linop.Multiply(self._ishape,
+                                             self._phase_factor_2)
+
+        return op1, op2
 
     def get_operators_w_decay_model(
             self,
