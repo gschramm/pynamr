@@ -33,7 +33,7 @@ parser.add_argument('--data_dir',
 parser.add_argument('--beta_anatomical', type=float, default=1e-2)
 parser.add_argument('--beta_non_anatomical', type=float, default=1e-1)
 parser.add_argument('--beta_r', type=float, default=3e0)
-parser.add_argument('--num_iter_r', type=int, default=100)
+parser.add_argument('--num_iter_r', type=int, default=50)
 parser.add_argument('--max_num_iter', type=int, default=200)
 parser.add_argument('--odir', type=str, default=None)
 parser.add_argument('--matrix_size', type=int, default=128)
@@ -576,44 +576,15 @@ cp.save(odir / f'init_est_ratio_{beta_anatomical:.1E}.npy', init_est_ratio)
 
 #---------------------------------------------------------------------------------------
 #---------------------------------------------------------------------------------------
-# optimize the ratio image using gradient descent on data fidelity + prior
-#---------------------------------------------------------------------------------------
-#---------------------------------------------------------------------------------------
-
-acq_model.x = agr_echo_1_wo_decay_model
-acq_model.dual_echo_data = cp.concatenate([data_echo_1, data_echo_2])
-
-# step size for gradient descent on ratio image
-step = 0.3
-
-outfile_r = odir / f'est_ratio_{beta_anatomical:.1E}_{beta_r:.1E}_{num_iter_r}.npy'
-
-if not outfile_r.exists():
-    print('updating ratio image')
-    # projected gradient descent on ratio image
-    for i in range(num_iter_r):
-        print(f'{(i+1):04} / {num_iter_r:04}', end='\r')
-
-        # gradient based on data fidelity
-        grad_df = acq_model.data_fidelity_gradient_r(est_ratio)
-        # gradient of beta_r * ||PG(r)||_2^2
-        grad_prior = beta_r * PG.H(PG(est_ratio))
-        est_ratio = cp.clip(est_ratio - step * (grad_df + grad_prior), 1e-2, 1)
-
-    cp.save(outfile_r, est_ratio)
-else:
-    est_ratio = cp.load(outfile_r)
-
-#---------------------------------------------------------------------------------------
-#---------------------------------------------------------------------------------------
 # recons with "estimated" decay model and anatomical prior using data from both echos
 #---------------------------------------------------------------------------------------
 #---------------------------------------------------------------------------------------
 
-# regenerate recon operators with updated estimated ratio for T2* decay modeling
-recon_operator_1, recon_operator_2 = acq_model.get_operators_w_decay_model(
-    est_ratio)
-A = sigpy.linop.Vstack([recon_operator_1, recon_operator_2, PG])
+# step size for gradient descent on ratio image
+step = 0.3
+acq_model.dual_echo_data = cp.concatenate([data_echo_1, data_echo_2])
+
+agr_both_echos_w_decay_model = deepcopy(agr_echo_1_wo_decay_model)
 
 proxfcb = sigpy.prox.Stack([
     sigpy.prox.L2Reg(data_echo_1.shape, 1, y=-data_echo_1),
@@ -621,46 +592,80 @@ proxfcb = sigpy.prox.Stack([
     sigpy.prox.Conj(proxg)
 ])
 
-#ub = cp.zeros(A.oshape, dtype=cp.complex128)
-ub = cp.concatenate(
-    [u1[:data_echo_1.size], u1[:data_echo_1.size], u1[data_echo_1.size:]])
+num_outer = max_num_iter // 50
 
-outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
+for i_outer in range(num_outer):
+    print(f'outer iteration {i_outer+1} / {num_outer}')
+    # regenerate recon operators with updated estimated ratio for T2* decay modeling
+    recon_operator_1, recon_operator_2 = acq_model.get_operators_w_decay_model(
+        est_ratio)
+    A = sigpy.linop.Vstack([recon_operator_1, recon_operator_2, PG])
 
-if not outfileb.exists():
-    max_eig_w_decay = sigpy.app.MaxEig(A.H * A,
-                                       dtype=cp.complex128,
-                                       device=data_echo_1.device,
-                                       max_iter=30).run()
+    if i_outer == 0:
+        ub = cp.concatenate([
+            u1[:data_echo_1.size], u1[:data_echo_1.size], u1[data_echo_1.size:]
+        ])
 
-    algb = sigpy.alg.PrimalDualHybridGradient(
-        proxfc=proxfcb,
-        proxg=sigpy.prox.NoOp(A.ishape),
-        A=A,
-        AH=A.H,
-        x=deepcopy(agr_echo_1_wo_decay_model),
-        u=ub,
-        tau=1. / (max_eig_w_decay * sigma),
-        sigma=sigma,
-        max_iter=max_num_iter)
+    outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}_{i_outer}.npz'
 
-    print('AGR both echos - "estimated" T2* modeling')
-    for i in range(max_num_iter):
-        print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
-        algb.update()
-    print('')
+    if not outfileb.exists():
+        max_eig_w_decay = sigpy.app.MaxEig(A.H * A,
+                                           dtype=cp.complex128,
+                                           device=data_echo_1.device,
+                                           max_iter=30).run()
 
-    cp.savez(outfileb, x=algb.x, u=ub, max_eig=max_eig_w_decay)
-    agr_both_echos_w_decay_model = algb.x
-else:
-    db = cp.load(outfileb)
-    agr_both_echos_w_decay_model = db['x']
-    ub = db['u']
-    max_eig_w_decay = float(db['max_eig'])
+        algb = sigpy.alg.PrimalDualHybridGradient(
+            proxfc=proxfcb,
+            proxg=sigpy.prox.NoOp(A.ishape),
+            A=A,
+            AH=A.H,
+            x=agr_both_echos_w_decay_model,
+            u=ub,
+            tau=1. / (max_eig_w_decay * sigma),
+            sigma=sigma,
+            max_iter=50)
 
-del A
-del recon_operator_1
-del recon_operator_2
+        print('AGR both echos - "estimated" T2* modeling')
+        for i in range(max_num_iter):
+            print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+            algb.update()
+        print('')
+
+        cp.savez(outfileb, x=algb.x, u=ub, max_eig=max_eig_w_decay)
+        agr_both_echos_w_decay_model = algb.x
+    else:
+        db = cp.load(outfileb)
+        agr_both_echos_w_decay_model = db['x']
+        ub = db['u']
+        max_eig_w_decay = float(db['max_eig'])
+
+    #---------------------------------------------------------------------------------------
+    # optimize the ratio image using gradient descent on data fidelity + prior
+    #---------------------------------------------------------------------------------------
+
+    acq_model.x = agr_both_echos_w_decay_model
+    outfile_r = odir / f'est_ratio_{beta_anatomical:.1E}_{beta_r:.1E}_{num_iter_r}_{i_outer}.npy'
+
+    if not outfile_r.exists():
+        print('updating ratio image')
+        # projected gradient descent on ratio image
+        for i in range(num_iter_r):
+            print(f'{(i+1):04} / {num_iter_r:04}', end='\r')
+
+            # gradient based on data fidelity
+            grad_df = acq_model.data_fidelity_gradient_r(est_ratio)
+            # gradient of beta_r * ||PG(r)||_2^2
+            grad_prior = beta_r * PG.H(PG(est_ratio))
+            est_ratio = cp.clip(est_ratio - step * (grad_df + grad_prior),
+                                1e-2, 1)
+
+        cp.save(outfile_r, est_ratio)
+    else:
+        est_ratio = cp.load(outfile_r)
+
+    del A
+    del recon_operator_1
+    del recon_operator_2
 
 #-----------------------------------------------------------------------------
 # visualize results
