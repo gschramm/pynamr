@@ -123,6 +123,10 @@ with h5py.File(echo_2_data_file) as data2:
 data_echo_1 = cp.asarray(data_echo_1['real'] + 1j * data_echo_1['imag'])
 data_echo_2 = cp.asarray(data_echo_2['real'] + 1j * data_echo_2['imag'])
 
+if k_1_cm.shape[0] < data_echo_1.shape[0]:
+    data_echo_1 = data_echo_1[:k_1_cm.shape[0], :]
+    data_echo_2 = data_echo_2[:k_1_cm.shape[0], :]
+
 # calculate the signal max across all readouts to detect potential readout problems
 max_echo_1 = cp.asnumpy(cp.abs(data_echo_1).max(0))
 max_echo_2 = cp.asnumpy(cp.abs(data_echo_2).max(0))
@@ -221,6 +225,7 @@ data_echo_2_gridded = sigpy.gridding(data_echo_2,
                                      kernel=kernel,
                                      width=width,
                                      param=param)
+
 samp_dens_1 = sigpy.gridding(data_weights_1.astype(np.complex128),
                              cp.asarray(k_1_cm.reshape(-1, 3)) *
                              field_of_view_cm,
