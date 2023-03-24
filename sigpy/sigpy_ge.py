@@ -1,3 +1,4 @@
+"""script for Na AGR of GE dual echo sodium data"""
 #TODO:
 # - visualizations at the end (including rotation)
 # - remove bad readouts
@@ -21,55 +22,43 @@ from utils_sigpy import NUFFTT2starDualEchoModel, projected_gradient_operator
 
 import argparse
 
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    '--gradient_file',
-    type=str,
-    default='/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/ak_grad56.wav')
-parser.add_argument(
-    '--echo_1_data_file',
-    type=str,
-    default='/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P30208.7.h5')
-parser.add_argument(
-    '--echo_2_data_file',
-    type=str,
-    default='/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P32256.7.h5')
-parser.add_argument(
-    '--t1_file',
-    type=str,
-    default='/data/sodium_mr/20230316_MR3_GS_QED/niftis/t1.nii')
+parser = argparse.ArgumentParser(
+    description='AGR sodium recons for GE data',
+    epilog=
+    'DATA_DIR must contain the files: grad.wav, Pecho_1.7.h5, Pecho_2.7.h5, t1.nii'
+)
+parser.add_argument('--data_dir',
+                    type=str,
+                    default='/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16')
 parser.add_argument('--beta_anatomical', type=float, default=1e-2)
 parser.add_argument('--beta_non_anatomical', type=float, default=1e-1)
 parser.add_argument('--beta_r', type=float, default=3e0)
 parser.add_argument('--num_iter_r', type=int, default=100)
 parser.add_argument('--max_num_iter', type=int, default=200)
 parser.add_argument('--odir', type=str, default=None)
+parser.add_argument('--matrix_size', type=int, default=128)
 args = parser.parse_args()
 
 #--------------------------------------------------------------------
 # input parameters
-gradient_file = args.gradient_file
-echo_1_data_file = args.echo_1_data_file
-echo_2_data_file = args.echo_2_data_file
-t1_file = args.t1_file
+data_dir = Path(args.data_dir)
 
 beta_anatomical = args.beta_anatomical
 beta_non_anatomical = args.beta_non_anatomical
 max_num_iter = args.max_num_iter
 beta_r = args.beta_r
 num_iter_r = args.num_iter_r
+matrix_size = args.matrix_size
 
-# create the output directory
-if args.odir is None:
-    odir = Path(echo_1_data_file).parent / 'recons'
-else:
-    odir = Path(args.odir)
-odir.mkdir(exist_ok=True, parents=True)
 #--------------------------------------------------------------------
 # fixed parameters
+gradient_file = data_dir / 'grad.wav'
+echo_1_data_file = data_dir / 'Pecho_1.7.h5'
+echo_2_data_file = data_dir / 'Pecho_2.7.h5'
+t1_file = data_dir / 't1.nii'
 
 # shape of the images to be reconstructed
-ishape = (128, 128, 128)
+ishape = (matrix_size, matrix_size, matrix_size)
 
 # regularization parameters for non-anatomy-guided recons
 regularization_norm_non_anatomical = 'L2'
@@ -89,6 +78,13 @@ echo_time_2_ms = 5.
 
 # show the readout data (to spot bad readouts)
 show_readouts = False
+
+# create the output directory
+if args.odir is None:
+    odir = Path(echo_1_data_file).parent / 'recons'
+else:
+    odir = Path(args.odir)
+odir.mkdir(exist_ok=True, parents=True)
 
 #--------------------------------------------------------------------
 #--------------------------------------------------------------------
@@ -122,7 +118,6 @@ field_of_view_cm = 100 * fov * 42.577 / gamma_by_2pi_MHz_T
 with h5py.File(echo_1_data_file) as data1:
     data_echo_1 = data1['/data'][:]
     rotation = int(data1['/header']['rdb_hdr']['rotation'][0])
-    print(f'rotation: {rotation}')
 
 with h5py.File(echo_2_data_file) as data2:
     data_echo_2 = data2['/data'][:]
@@ -195,6 +190,7 @@ print(
 print(
     f'readout time              .: {(k_1_cm.shape[0]+1) * acq_sampling_time_ms:.2f} ms'
 )
+print(f'rotation                  .: {rotation}')
 #--------------------------------------------------------------------
 #--------------------------------------------------------------------
 # regrid the data and do simple IFFT
@@ -286,20 +282,28 @@ phase_fac_2 = cp.exp(1j * cp.angle(ifft2_sm))
 acq_model.phase_factor_1 = phase_fac_1
 acq_model.phase_factor_2 = phase_fac_2
 
-# get a test single echo nufft operator without T2* decay modeling
-# and estimate its norm
-test_nufft, test_nufft2 = acq_model.get_operators_wo_decay_model()
+nufft_norm_file = odir / 'nufft_norm.txt'
 
-max_eig_nufft_single = sigpy.app.MaxEig(test_nufft.H * test_nufft,
-                                        dtype=cp.complex128,
-                                        device=data_echo_1.device,
-                                        max_iter=30).run()
+if not nufft_norm_file.exists():
+    # get a test single echo nufft operator without T2* decay modeling
+    # and estimate its norm
+    test_nufft, test_nufft2 = acq_model.get_operators_wo_decay_model()
+    max_eig_nufft_single = sigpy.app.MaxEig(test_nufft.H * test_nufft,
+                                            dtype=cp.complex128,
+                                            device=data_echo_1.device,
+                                            max_iter=30).run()
+
+    with open(nufft_norm_file, 'w') as f:
+        f.write(f'{max_eig_nufft_single}\n')
+
+    del test_nufft
+    del test_nufft2
+else:
+    with open(nufft_norm_file, 'r') as f:
+        max_eig_nufft_single = float(f.readline())
 
 # scale the acquisition model such that norm of the single echo operator is 1
 acq_model.scale = 1 / np.sqrt(max_eig_nufft_single)
-
-del test_nufft
-del test_nufft2
 
 # setup scaled single echo nufft operator
 nufft_echo1_no_decay, nufft_echo2_no_decay = acq_model.get_operators_wo_decay_model(
@@ -312,13 +316,6 @@ G = (1 / np.sqrt(12)) * sigpy.linop.FiniteDifference(ishape, axes=None)
 
 A = sigpy.linop.Vstack([nufft_echo1_no_decay, G])
 A2 = sigpy.linop.Vstack([nufft_echo2_no_decay, G])
-
-# estimate the norm of the stacked nufft and gradient operator
-# which we need for the step sizes of the PDHG
-max_eig = sigpy.app.MaxEig(A.H * A,
-                           dtype=cp.complex128,
-                           device=data_echo_1.device,
-                           max_iter=30).run()
 
 if regularization_norm_non_anatomical == 'L2':
     proxg = sigpy.prox.L2Reg(G.oshape, lamda=beta_non_anatomical)
@@ -337,13 +334,18 @@ u1 = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 outfile1 = odir / f'recon_echo_1_no_decay_model_{regularization_norm_non_anatomical}_{beta_non_anatomical:.1E}_{max_num_iter}.npz'
 
 if not outfile1.exists():
+    max_eig_wo_decay = sigpy.app.MaxEig(A.H * A,
+                                        dtype=cp.complex128,
+                                        device=data_echo_1.device,
+                                        max_iter=30).run()
     alg1 = sigpy.alg.PrimalDualHybridGradient(proxfc=proxfc1,
                                               proxg=sigpy.prox.NoOp(A.ishape),
                                               A=A,
                                               AH=A.H,
                                               x=deepcopy(ifft1_sm),
                                               u=u1,
-                                              tau=1 / (max_eig * sigma),
+                                              tau=1 /
+                                              (max_eig_wo_decay * sigma),
                                               sigma=sigma,
                                               max_iter=max_num_iter)
 
@@ -353,12 +355,13 @@ if not outfile1.exists():
         alg1.update()
     print('')
 
-    cp.savez(outfile1, x=alg1.x, u=u1)
+    cp.savez(outfile1, x=alg1.x, u=u1, max_eig=max_eig_wo_decay)
     recon_echo_1_wo_decay_model = alg1.x
 else:
     d1 = cp.load(outfile1)
     recon_echo_1_wo_decay_model = d1['x']
     u1 = d1['u']
+    max_eig_wo_decay = float(d1['max_eig'])
 
 #-----------------------------------------------------
 proxfc2 = sigpy.prox.Stack([
@@ -376,7 +379,8 @@ if not outfile2.exists():
                                               AH=A2.H,
                                               x=deepcopy(ifft2_sm),
                                               u=u2,
-                                              tau=1. / (max_eig * sigma),
+                                              tau=1. /
+                                              (max_eig_wo_decay * sigma),
                                               sigma=sigma,
                                               max_iter=max_num_iter)
 
@@ -492,7 +496,7 @@ if not outfile1.exists():
         AH=A.H,
         x=deepcopy(recon_echo_1_wo_decay_model),
         u=u1,
-        tau=1. / sigma,
+        tau=1. / (max_eig_wo_decay * sigma),
         sigma=sigma,
         max_iter=max_num_iter)
 
@@ -527,7 +531,7 @@ if not outfile2.exists():
         AH=A2.H,
         x=deepcopy(recon_echo_2_wo_decay_model),
         u=u2,
-        tau=1. / sigma,
+        tau=1. / (max_eig_wo_decay * sigma),
         sigma=sigma,
         max_iter=max_num_iter)
 
@@ -624,6 +628,11 @@ ub = cp.concatenate(
 outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
 
 if not outfileb.exists():
+    max_eig_w_decay = sigpy.app.MaxEig(A.H * A,
+                                       dtype=cp.complex128,
+                                       device=data_echo_1.device,
+                                       max_iter=30).run()
+
     algb = sigpy.alg.PrimalDualHybridGradient(
         proxfc=proxfcb,
         proxg=sigpy.prox.NoOp(A.ishape),
@@ -631,7 +640,7 @@ if not outfileb.exists():
         AH=A.H,
         x=deepcopy(agr_echo_1_wo_decay_model),
         u=ub,
-        tau=0.5 / sigma,
+        tau=1. / (max_eig_w_decay * sigma),
         sigma=sigma,
         max_iter=max_num_iter)
 
@@ -641,26 +650,65 @@ if not outfileb.exists():
         algb.update()
     print('')
 
-    cp.savez(outfileb, x=algb.x, u=ub)
+    cp.savez(outfileb, x=algb.x, u=ub, max_eig=max_eig_w_decay)
     agr_both_echos_w_decay_model = algb.x
 else:
     db = cp.load(outfileb)
     agr_both_echos_w_decay_model = db['x']
     ub = db['u']
+    max_eig_w_decay = float(db['max_eig'])
 
 del A
 del recon_operator_1
 del recon_operator_2
 
-##-----------------------------------------------------------------------------
-#
-#ims = 4 * [dict(vmin=0, vmax=4., cmap='Greys_r')] + [dict(cmap='Greys_r')]
-#vi = pv.ThreeAxisViewer([
-#    np.abs(cp.asnumpy(recon_echo_1_wo_decay_model)),
-#    np.abs(cp.asnumpy(agr_echo_1_wo_decay_model)),
-#    np.abs(cp.asnumpy(agr_echo_1_w_decay_model)),
-#    np.abs(cp.asnumpy(agr_both_echos_w_decay_model)),
-#    cp.asnumpy(est_ratio)
-#],
-#                        imshow_kwargs=ims)
-#
+#-----------------------------------------------------------------------------
+# visualize results
+
+a = cp.asnumpy(cp.abs(agr_echo_1_wo_decay_model))
+b = cp.asnumpy(cp.abs(agr_both_echos_w_decay_model))
+c = cp.asnumpy(est_ratio)
+
+d = cp.asnumpy(cp.abs(ifft1_sm))
+e = cp.asnumpy(cp.abs(recon_echo_1_wo_decay_model))
+f = cp.asnumpy(t1_aligned)
+
+# re-orient to RAS
+if rotation == 0:
+    a = np.swapaxes(np.flip(a, 0), 0, 1)
+    b = np.swapaxes(np.flip(b, 0), 0, 1)
+    c = np.swapaxes(np.flip(c, 0), 0, 1)
+    d = np.swapaxes(np.flip(d, 0), 0, 1)
+    e = np.swapaxes(np.flip(e, 0), 0, 1)
+    f = np.swapaxes(np.flip(f, 0), 0, 1)
+
+# re-orient to LPS
+a = np.flip(a, (0, 1))
+b = np.flip(b, (0, 1))
+c = np.flip(c, (0, 1))
+d = np.flip(d, (0, 1))
+e = np.flip(e, (0, 1))
+f = np.flip(f, (0, 1))
+
+ims1 = 2 * [dict(vmin=0, vmax=5., cmap='Greys_r')] + [
+    dict(cmap='Greys_r', vmin=0, vmax=1)
+]
+vi1 = pv.ThreeAxisViewer([
+    a,
+    b,
+    c,
+], imshow_kwargs=ims1)
+vi1.fig.savefig(
+    odir /
+    f'figure_1_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.png',
+    dpi=300)
+
+ims2 = 2 * [dict(vmin=0, vmax=5., cmap='Greys_r')] + [dict(cmap='Greys_r')]
+vi2 = pv.ThreeAxisViewer([
+    d,
+    e,
+    f,
+], imshow_kwargs=ims2)
+vi2.fig.savefig(odir /
+                f'figure_2_{beta_non_anatomical:.1E}_{max_num_iter}.png',
+                dpi=300)
