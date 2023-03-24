@@ -1,3 +1,9 @@
+#TODO:
+# - oname for initial ratio
+# - visualizations at the end (including rotation)
+# - rotation from file
+# - remove bad readouts
+
 import h5py
 import numpy as np
 import cupy as cp
@@ -33,15 +39,15 @@ beta_r = args.beta_r
 num_iter_r = args.num_iter_r
 #--------------------------------------------------------------------
 # fixed parameters
-#gradient_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/ak_grad56.wav'
-#echo_1_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P30208.7.h5'
-#echo_2_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P32256.7.h5'
-#rotation = 0  # rotation value from pfile header
+gradient_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/ak_grad56.wav'
+echo_1_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P30208.7.h5'
+echo_2_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16/P32256.7.h5'
+rotation = 0  # rotation value from pfile header
 
-gradient_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/ak_grad59.wav'
-echo_1_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/P25600.7.h5'
-echo_2_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/P27648.7.h5'
-rotation = 3  # rotation value from pfile header
+#gradient_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/ak_grad59.wav'
+#echo_1_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/P25600.7.h5'
+#echo_2_data_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g32/P27648.7.h5'
+#rotation = 3  # rotation value from pfile header
 
 t1_file: str = '/data/sodium_mr/20230316_MR3_GS_QED/niftis/t1.nii'
 
