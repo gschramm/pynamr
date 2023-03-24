@@ -1,5 +1,3 @@
-# TODO: add phases for 1st/2nd echo
-
 import sigpy
 import math
 import numpy as np
@@ -260,96 +258,50 @@ class NUFFTT2starDualEchoModel:
         return cp.real(h_op(diff))
 
 
-#def nufft_t2star_operator(
-#        ishape: tuple[int, int, int],
-#        k: np.ndarray,
-#        field_of_view_cm: float = 22.,
-#        acq_sampling_time_ms: float = 0.01,
-#        time_bin_width_ms: float = 0.25,
-#        scale: float = 0.03,
-#        add_mirrored_coordinates=True,
-#        ratio_image: Union[cp.ndarray, None] = None,
-#        echo_time_1_ms: float = 0.5,
-#        echo_time_2_ms: float = 5.
-#) -> Union[sigpy.linop.Linop, sigpy.linop.Linop]:
-#    """sigpy (dual echo) forward nufft operator including monoexp. T2* decay modeling
-#
-#    Parameters
-#    ----------
-#    ishape : tuple[int, int, int]
-#        shape of the input image
-#    k : np.ndarray
-#        input kx, ky, kz coordinates - shape: (num_samples, num_readouts, 3)
-#        units 1/cm
-#    field_of_view_cm : float, optional
-#        field of view in cm, by default 220.
-#    acq_sampling_time_ms : float, optional
-#        samplignt time during acquisition in ms, by default 0.01
-#    time_bin_width_ms : float, optional
-#        time bin width for modeling T2* decay, by default 0.25
-#    scale : float, optional
-#        scale of the forward operator, by default 0.03
-#    add_mirrored_coordinates : bool, optional
-#        add -kx, -ky, -kz to coordinates, by default True
-#    ratio_image : Union[cp.ndarray, None], optional
-#        ratio between first and second echo image for modeling T2* decay, by default None
-#        None means that no decay is modeled
-#    echo_time_1_ms : float, optional
-#        first echo time in ms, by default 0.5
-#    echo_time_2_ms : float, optional
-#        second echo time in ms, by default 5.
-#
-#    Returns
-#    -------
-#    Union[sigpy.linop.LinOp, Union[sigpy.linop.LinOp, sigpy.linop.LinOp]]
-#        single sigpy linear operator if ratio image is None
-#        two sigpy linear operators if ratio image is not None
-#    """
-#    time_bins_inds = np.array_split(
-#        np.arange(k.shape[0]),
-#        math.ceil(k.shape[0] / (time_bin_width_ms / acq_sampling_time_ms)))
-#
-#    # split the k-space coordinates into time bins
-#    all_coords = []
-#
-#    for _, time_bin_inds in enumerate(time_bins_inds):
-#        chunk_coords_1_cm = k[time_bin_inds, :, :].reshape(-1, 3)
-#
-#        # the gradient files only contain a half sphere
-#        # we add the 2nd half where all gradients are reversed
-#        if add_mirrored_coordinates:
-#            chunk_coords_1_cm = cp.vstack(
-#                (chunk_coords_1_cm, -chunk_coords_1_cm))
-#
-#        all_coords.append(chunk_coords_1_cm * field_of_view_cm)
-#
-#    if ratio_image is None:
-#        operator1 = scale * sigpy.linop.NUFFT(
-#            ishape, cp.vstack(all_coords), oversamp=1.25, width=4)
-#        return operator1
-#    else:
-#        op1s = []
-#        op2s = []
-#        for i, time_bin_inds in enumerate(time_bins_inds):
-#            #setup the decay image
-#            readout_time_1_ms = echo_time_1_ms + time_bin_inds.mean(
-#            ) * acq_sampling_time_ms
-#            readout_time_2_ms = echo_time_2_ms + time_bin_inds.mean(
-#            ) * acq_sampling_time_ms
-#
-#            n_1 = ((readout_time_1_ms) / (echo_time_2_ms - echo_time_1_ms))
-#            n_2 = ((readout_time_2_ms) / (echo_time_2_ms - echo_time_1_ms))
-#
-#            op1s.append(scale * sigpy.linop.NUFFT(
-#                ishape, all_coords[i], oversamp=1.25, width=4) *
-#                        sigpy.linop.Multiply(ishape, ratio_image**n_1))
-#            op2s.append(scale * sigpy.linop.NUFFT(
-#                ishape, all_coords[i], oversamp=1.25, width=4) *
-#                        sigpy.linop.Multiply(ishape, ratio_image**n_2))
-#
-#        # operator including T2* decay for first echo and second echo
-#        operator1 = sigpy.linop.Vstack(op1s)
-#        operator2 = sigpy.linop.Vstack(op2s)
-#
-#        return operator1, operator2
-#
+def projected_gradient_operator(ishape: tuple[int, ...],
+                                prior_image: cp.ndarray,
+                                eta: float = 0.) -> sigpy.linop.Linop:
+    """Projected gradient operator as defined in https://doi.org/10.1137/15M1047325.
+       Gradient operator that return the component of a gradient that is orthogonal 
+       to a joint gradient field (derived from a prior image)
+
+    Parameters
+    ----------
+    ishape : tuple[int, ...]
+        input image shape
+    prior_image : Union[np.ndarray, cp.ndarray]
+        the prior image used to calcuate the joint gradient field for the projection
+
+    Returns
+    -------
+    sigpy.linop.Linop
+    """
+
+    # normalized "normal" gradient operator
+    G = (1 / np.sqrt(4 * len(ishape))) * sigpy.linop.FiniteDifference(
+        ishape, axes=None)
+
+    xi = G(prior_image)
+
+    # normalize the real and imaginary part of the joint gradient field
+    real_norm = cp.sqrt(cp.linalg.norm(xi.real, axis=0)**2 + eta**2)
+    imag_norm = cp.sqrt(cp.linalg.norm(xi.imag, axis=0)**2 + eta**2)
+
+    ir = cp.where(real_norm > 0)
+    ii = cp.where(imag_norm > 0)
+
+    for i in range(xi.shape[0]):
+        xi[i, ...].real[ir] /= real_norm[ir]
+        xi[i, ...].imag[ii] /= imag_norm[ii]
+
+    M = sigpy.linop.Multiply(G.oshape, xi)
+    S = sigpy.linop.Sum(M.oshape, (0, ))
+    I = sigpy.linop.Identity(M.oshape)
+
+    # projection operator
+    P = I - (M.H * S.H * S * M)
+
+    # projected gradient operator
+    PG = P * G
+
+    return PG

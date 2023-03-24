@@ -18,7 +18,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from utils import align_images, read_GE_ak_wav, kb_rolloff
-from utils_sigpy import NUFFTT2starDualEchoModel
+from utils_sigpy import NUFFTT2starDualEchoModel, projected_gradient_operator
 
 import argparse
 
@@ -439,28 +439,8 @@ vi = pv.ThreeAxisViewer([
 
 #---------------------------------------------------------------------
 # projected gradient operator that we need for DTV
-xi = G(t1_aligned)
 
-# normalize the real and imaginary part of the joint gradient field
-real_norm = cp.linalg.norm(xi.real, axis=0)
-imag_norm = cp.linalg.norm(xi.imag, axis=0)
-
-ir = cp.where(real_norm > 0)
-ii = cp.where(imag_norm > 0)
-
-for i in range(xi.shape[0]):
-    xi[i, ...].real[ir] /= real_norm[ir]
-    xi[i, ...].imag[ii] /= imag_norm[ii]
-
-M = sigpy.linop.Multiply(G.oshape, xi)
-S = sigpy.linop.Sum(M.oshape, (0, ))
-I = sigpy.linop.Identity(M.oshape)
-
-# projection operator
-P = I - (M.H * S.H * S * M)
-
-# projected gradient operator
-PG = P * G
+PG = projected_gradient_operator(ishape, t1_aligned, eta=0.)
 
 #----------------------------------------------------------------------
 #----------------------------------------------------------------------
