@@ -656,6 +656,10 @@ for i_outer in range(num_outer):
         ub = db['u']
         max_eig_w_decay = float(db['max_eig'])
 
+    del A
+    del recon_operator_1
+    del recon_operator_2
+
     #---------------------------------------------------------------------------------------
     # optimize the ratio image using gradient descent on data fidelity + prior
     #---------------------------------------------------------------------------------------
@@ -679,10 +683,6 @@ for i_outer in range(num_outer):
         cp.save(outfile_r, est_ratio)
     else:
         est_ratio = cp.load(outfile_r)
-
-    del A
-    del recon_operator_1
-    del recon_operator_2
 
 #-----------------------------------------------------------------------------
 # visualize results
