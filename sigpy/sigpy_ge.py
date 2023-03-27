@@ -623,7 +623,7 @@ for i_outer in range(num_outer):
             u1[:data_echo_1.size], u1[:data_echo_1.size], u1[data_echo_1.size:]
         ])
 
-    outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}_{i_outer}.npz'
+    outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_r:.1E}_{max_num_iter}_{i_outer}.npz'
 
     if not outfileb.exists():
         max_eig_w_decay = sigpy.app.MaxEig(A.H * A,
