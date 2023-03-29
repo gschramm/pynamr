@@ -27,11 +27,11 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--data_dir',
                     type=str,
                     default='/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16')
-parser.add_argument('--beta_anatomical', type=float, default=1e-2)
 parser.add_argument('--beta_non_anatomical', type=float, default=1e-1)
-parser.add_argument('--beta_r', type=float, default=3e0)
-parser.add_argument('--num_iter_r', type=int, default=50)
-parser.add_argument('--max_num_iter', type=int, default=200)
+parser.add_argument('--beta_anatomical', type=float, default=3e-3)
+parser.add_argument('--beta_r', type=float, default=3e-1)
+parser.add_argument('--num_iter_r', type=int, default=100)
+parser.add_argument('--max_num_iter', type=int, default=1000)
 parser.add_argument('--odir', type=str, default=None)
 parser.add_argument('--matrix_size', type=int, default=128)
 args = parser.parse_args()
@@ -609,7 +609,7 @@ proxfcb = sigpy.prox.Stack([
     sigpy.prox.Conj(proxg)
 ])
 
-num_outer = max_num_iter // 50
+num_outer = max_num_iter // num_iter_r
 
 for i_outer in range(num_outer):
     print(f'outer iteration {i_outer+1} / {num_outer}')
@@ -640,11 +640,11 @@ for i_outer in range(num_outer):
             u=ub,
             tau=1. / (max_eig_w_decay * sigma),
             sigma=sigma,
-            max_iter=50)
+            max_iter=num_iter_r)
 
         print('AGR both echos - "estimated" T2* modeling')
-        for i in range(max_num_iter):
-            print(f'{(i+1):04} / {max_num_iter:04}', end='\r')
+        for i in range(num_iter_r):
+            print(f'{(i+1):04} / {num_iter_r:04}', end='\r')
             algb.update()
         print('')
 
