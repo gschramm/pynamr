@@ -11,9 +11,6 @@ import cupyx.scipy.ndimage as ndimage
 import sigpy
 from pymirc.image_operations import zoom3d
 
-import pymirc.viewer as pv
-import matplotlib.pyplot as plt
-
 from utils import setup_blob_phantom, setup_brainweb_phantom, kb_rolloff
 from utils_sigpy import NUFFTT2starDualEchoModel, projected_gradient_operator
 
