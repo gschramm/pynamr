@@ -18,7 +18,7 @@ from scipy.ndimage import binary_erosion
 #--------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--max_num_iter', type=int, default=1000)
+parser.add_argument('--max_num_iter', type=int, default=1500)
 parser.add_argument('--num_iter_r', type=int, default=100)
 parser.add_argument('--noise_level', type=float, default=1e-2)
 parser.add_argument('--phantom',
@@ -82,8 +82,8 @@ with open('.simulation_config.json', 'r') as f:
     data_root_dir: str = json.load(f)['data_root_dir']
 
 odir = Path(
-    'run_brainweb'
-) / f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_nl_{noise_level:.1E}_s_{seed:03}'
+    data_root_dir
+) / 'run_brainweb' / f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_nl_{noise_level:.1E}_s_{seed:03}'
 odir.mkdir(exist_ok=True, parents=True)
 
 with open(odir / 'config.json', 'w') as f:
@@ -128,7 +128,9 @@ if phantom == 'brainweb':
         csf_na_concentration=1.5,
         gm_na_concentration=0.6,
         wm_na_concentration=0.4,
-        other_na_concentration=0.3)
+        other_na_concentration=0.3,
+        add_anatomical_mismatch=True,
+        add_T2star_bias=True)
 elif phantom == 'blob':
     x, t1_image, T2short_ms, T2long_ms = setup_blob_phantom(sim_shape[0],
                                                             radius=0.65)
