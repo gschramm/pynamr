@@ -189,7 +189,8 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
                            T2short_ms_csf: float = 50.,
                            T2short_ms_gm: float = 8.,
                            T2short_ms_wm: float = 9.,
-                           T2short_ms_other: float = 8.):
+                           T2short_ms_other: float = 8.,
+                           add_anatomical_mismatch: bool = False):
 
     simulation_voxel_size_mm: float = 10 * field_of_view_cm / simulation_matrix_size
 
@@ -261,6 +262,15 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     # add eye contrast
     t1[eye1_inds] *= 0.5
     t1[eye2_inds] *= 0.5
+
+    # add mismatches
+    if add_anatomical_mismatch:
+        R1 = np.sqrt((X - 329)**2 + (Y - 165)**2 + (Z - 200)**2)
+        R2 = np.sqrt((X - 327)**2 + (Y - 262)**2 + (Z - 200)**2)
+        inds1 = np.where((R1 < 10))
+        inds2 = np.where((R2 < 10))
+        img[inds1] = gm_na_concentration
+        t1[inds2] = 0
 
     # extrapolate the all images to the voxel size we need for the data simulation
     img_extrapolated = zoom3d(img, lab_voxelsize / simulation_voxel_size_mm)
