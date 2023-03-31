@@ -83,7 +83,7 @@ with open('.simulation_config.json', 'r') as f:
 
 odir = Path(
     data_root_dir
-) / 'run_brainweb' / f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_nl_{noise_level:.1E}_s_{seed:03}'
+) / 'run_brainweb' / f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_{seed:03}'
 odir.mkdir(exist_ok=True, parents=True)
 
 with open(odir / 'config.json', 'w') as f:
@@ -583,21 +583,23 @@ proxfcb = sigpy.prox.Stack([
 
 num_outer = max_num_iter // num_iter_r
 
-for i_outer in range(num_outer):
-    print(f'outer iteration {i_outer+1} / {num_outer}')
-    # regenerate recon operators with updated estimated ratio for T2* decay modeling
-    recon_operator_1, recon_operator_2 = acq_model.get_operators_w_decay_model(
-        est_ratio)
-    A = sigpy.linop.Vstack([recon_operator_1, recon_operator_2, PG])
+outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_r:.1E}_{max_num_iter}_{num_iter_r}.npz'
+outfile_r = odir / f'est_ratio_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_r:.1E}_{max_num_iter}_{num_iter_r}.npy'
 
-    if i_outer == 0:
-        ub = cp.concatenate([
-            u1[:data_echo_1.size], u1[:data_echo_1.size], u1[data_echo_1.size:]
-        ])
+if not outfileb.exists():
+    for i_outer in range(num_outer):
+        print(f'outer iteration {i_outer+1} / {num_outer}')
+        # regenerate recon operators with updated estimated ratio for T2* decay modeling
+        recon_operator_1, recon_operator_2 = acq_model.get_operators_w_decay_model(
+            est_ratio)
+        A = sigpy.linop.Vstack([recon_operator_1, recon_operator_2, PG])
 
-    outfileb = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_r:.1E}_{max_num_iter}_{i_outer}.npz'
+        if i_outer == 0:
+            ub = cp.concatenate([
+                u1[:data_echo_1.size], u1[:data_echo_1.size],
+                u1[data_echo_1.size:]
+            ])
 
-    if not outfileb.exists():
         max_eig_w_decay = sigpy.app.MaxEig(A.H * A,
                                            dtype=cp.complex128,
                                            device=data_echo_1.device,
@@ -620,26 +622,18 @@ for i_outer in range(num_outer):
             algb.update()
         print('')
 
-        cp.savez(outfileb, x=algb.x, u=ub, max_eig=max_eig_w_decay)
         agr_both_echos_w_decay_model = algb.x
-    else:
-        db = cp.load(outfileb)
-        agr_both_echos_w_decay_model = db['x']
-        ub = db['u']
-        max_eig_w_decay = float(db['max_eig'])
 
-    del A
-    del recon_operator_1
-    del recon_operator_2
+        del A
+        del recon_operator_1
+        del recon_operator_2
 
-    #---------------------------------------------------------------------------------------
-    # optimize the ratio image using gradient descent on data fidelity + prior
-    #---------------------------------------------------------------------------------------
+        #---------------------------------------------------------------------------------------
+        # optimize the ratio image using gradient descent on data fidelity + prior
+        #---------------------------------------------------------------------------------------
 
-    acq_model.x = agr_both_echos_w_decay_model
-    outfile_r = odir / f'est_ratio_{beta_anatomical:.1E}_{beta_r:.1E}_{num_iter_r}_{i_outer}.npy'
+        acq_model.x = agr_both_echos_w_decay_model
 
-    if not outfile_r.exists():
         print('updating ratio image')
         # projected gradient descent on ratio image
         for i in range(num_iter_r):
@@ -652,6 +646,11 @@ for i_outer in range(num_outer):
             est_ratio = cp.clip(est_ratio - step * (grad_df + grad_prior),
                                 1e-2, 1)
 
-        cp.save(outfile_r, est_ratio)
-    else:
-        est_ratio = cp.load(outfile_r)
+    cp.savez(outfileb, x=algb.x, u=ub, max_eig=max_eig_w_decay)
+    cp.save(outfile_r, est_ratio)
+else:
+    db = cp.load(outfileb)
+    agr_both_echos_w_decay_model = db['x']
+    ub = db['u']
+    max_eig_w_decay = float(db['max_eig'])
+    est_ratio = cp.load(outfile_r)
