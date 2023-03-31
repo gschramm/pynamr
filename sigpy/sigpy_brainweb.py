@@ -293,8 +293,8 @@ interpolation_correction_field /= interpolation_correction_field.max()
 ifft1 /= interpolation_correction_field
 ifft2 /= interpolation_correction_field
 
-ifft1_sm = ndimage.gaussian_filter(ifft1, 2.)
-ifft2_sm = ndimage.gaussian_filter(ifft2, 2.)
+ifft1_sm = ndimage.gaussian_filter(ifft1, 1.5)
+ifft2_sm = ndimage.gaussian_filter(ifft2, 1.5)
 
 cp.save(odir / 'ifft1.npy', ifft1)
 cp.save(odir / 'ifft2.npy', ifft2)
