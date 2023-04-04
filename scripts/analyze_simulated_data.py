@@ -86,12 +86,12 @@ df['noise_level'] = df['noise_level'].cat.remove_unused_categories()
 #df['seed'] = df['seed'].cat.remove_unused_categories()
 
 # select a subset of beta values
-beta_recon_chosen = [0.3, 1.]
-beta_gamma_chosen = [10., 30.]
-df = df[df.beta_recon.isin(beta_recon_chosen)]
-df = df[df.beta_gamma.isin(beta_gamma_chosen)]
-df['beta_recon'] = df['beta_recon'].cat.remove_unused_categories()
-df['beta_gamma'] = df['beta_gamma'].cat.remove_unused_categories()
+#beta_recon_chosen = [0.3, 1.]
+#beta_gamma_chosen = [10., 30.]
+#df = df[df.beta_recon.isin(beta_recon_chosen)]
+#df = df[df.beta_gamma.isin(beta_gamma_chosen)]
+#df['beta_recon'] = df['beta_recon'].cat.remove_unused_categories()
+#df['beta_gamma'] = df['beta_gamma'].cat.remove_unused_categories()
 
 # load true simulated na image
 true_na_image = np.load(Path(workdir) / f'brainweb_n28p4dt10g16_23Na_v1{jitter_suffix}' / 'simulated_nufft_data.npz')['na_image']
@@ -308,11 +308,11 @@ for g in range(nb_grad):
     conv_axs.append(temp_ax)
 
 for fig_index in range(nb_grad):
-    for row_index in range(nb_beta_recon):
-        for r in range(nb_beta_gamma):
+    for row_index in range(nb_beta_gamma):
+        for r in range(nb_beta_recon):
 
-            na_axs[fig_index][row_index, r].imshow(agr_na_realiz[fig_index, r, row_index, ..., sl].T, **ims_na)
-            gam_axs[fig_index][row_index, r].imshow(gamma_na_realiz[fig_index, r, row_index, ..., sl].T,
+            na_axs[fig_index][row_index, r].imshow(agr_na_realiz[fig_index, row_index, r, ..., sl].T, **ims_na)
+            gam_axs[fig_index][row_index, r].imshow(gamma_na_realiz[fig_index, row_index, r, ..., sl].T,
                                                     **ims_gam)
             conv_axs[fig_index][row_index, r].imshow(conv_realiz[fig_index, ..., sl].T, **ims_na)
 
@@ -539,12 +539,17 @@ for i,c in enumerate(criteria):
         df_stats[c+' std'] =  100 * df_stats[c+' std'].values / true[c]
         df_stats = df_stats.rename(columns={c+' mean':c+' bias[%]', c+' std':c+' std[%]'})
 
+df_stats_orig = df_stats.copy()
 df_stats = df_stats.rename(columns={'gradient_strength':'readout time'})
+df_stats['recon_type'] = df_stats['recon_type'].cat.rename_categories({'conv':'ifft'})
+
 if load_nodecay:
     df_stats['readout time'] = df_stats['readout time'].cat.rename_categories({'16':'x1','24':'x0.7','32':'x0.5', '16nd':'x1 no decay'})
     df_stats['readout time'] = df_stats['readout time'].cat.reorder_categories(['x1', 'x0.7', 'x0.5', 'x1 no decay'])
 else:
     df_stats['readout time'] = df_stats['readout time'].cat.rename_categories({'16':'x1','24':'x0.7','32':'x0.5'})
+
+df_stats = df_stats.rename(columns={'beta_gamma':r"$\beta_\Gamma$"})
 
 
 for col in criteria:
@@ -552,11 +557,21 @@ for col in criteria:
     grid = sns.relplot(
             data=df_stats, kind="line",
             x=col+' bias[%]', y=col+' std[%]', hue="readout time", style='recon_type',
-            col="beta_gamma", markers={'agr':'.', 'conv':'*'}, markersize=20, legend='brief')
+            col=r"$\beta_\Gamma$", markers={'agr':'.', 'ifft':'*'}, markersize=20, legend='brief')
 
-    for ax in grid.axes.ravel():
+    for i, ax in enumerate(grid.axes.ravel()):
         ax.grid(ls=':')
         ax.plot([0.], [0.], markersize=15, marker='P', color='k')
+
+        # annotate some points with their beta_recon values 
+        temp = df_stats_orig[df_stats_orig['beta_gamma']==df_stats_orig.beta_gamma.cat.categories.to_list()[i]]
+        temp = temp[(temp['beta_recon']==df_stats_orig.beta_recon.cat.categories.to_list()[0]) & (df_stats_orig['recon_type']=='agr') & (df_stats_orig['nofilt']==True) & (temp['gradient_strength']=='24')]
+        temp = temp.iloc[0]
+        ax.annotate(r'$\beta_\rho$='+f"{temp['beta_recon']}", xy=(temp[col+' bias[%]'], temp[col+' std[%]']), fontsize='x-small')
+        temp = df_stats_orig[df_stats_orig['beta_gamma']==df_stats_orig.beta_gamma.cat.categories.to_list()[i]]
+        temp = temp[(temp['beta_recon']==df_stats_orig.beta_recon.cat.categories.to_list()[-1]) & (df_stats_orig['recon_type']=='agr') & (df_stats_orig['nofilt']==True) & (temp['gradient_strength']=='24')]
+        temp = temp.iloc[0]
+        ax.annotate(r'$\beta_\rho$='+f"{temp['beta_recon']}", xy=(temp[col+' bias[%]'], temp[col+' std[%]']), fontsize='x-small' )
 
     grid.fig.show()
     grid.fig.savefig(Path(analysis_results_dir) / f'{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_biasstd_perc_grad.pdf')
