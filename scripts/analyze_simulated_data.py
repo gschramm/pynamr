@@ -23,10 +23,6 @@ start_time = time.time()
 # parameters
 folder = 'abstract'
 jitter_suffix = ''
-#folder = 'nodecay'
-#folder = 'jitter'
-#jitter_suffix = '_jit1'
-
 load_nodecay = False
 smallROI = False
 
@@ -180,8 +176,6 @@ for r in range(df.shape[0]):
     conv_nofilt = np.abs(np.load(run_dir / 'ifft_echo_1_corr.npy'))
     conv = np.abs(np.load(run_dir / 'ifft_echo_1_filtered_corr.npy'))
 
-    #agr_na *= gam_recon**(0.5/4.5)
-
     # AGR
     # for the quantification we have to interpolate the reconstructed
     # image to the 256 grid
@@ -267,8 +261,6 @@ df[cats] = df[cats].astype('category')
 #------------------------------------------------------------------------------
 # visualize single realization for single noise level
 
-#ims_na = dict(origin='lower', vmax=2.5, cmap=plt.cm.Greys_r)
-#ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.Greys_r)
 ims_na = dict(origin='lower', vmax=3., cmap=plt.cm.viridis)
 ims_gam = dict(origin='lower', vmin=0.5, vmax=1, cmap=plt.cm.viridis)
 sl = 128 
@@ -382,146 +374,8 @@ sns.set_context('notebook')
 sns.set(font_scale=1.5)
 sns.set_style('ticks')
 
-# ----------------------------------------------------------------
-# some functions for analysis
-
-# ----------------------------------------------------------------
-# plot mean/stddev over realizations for each quantification criterion
-# does not work anymore because database changed TODO
-def plot_crit_mean_stddev(df: pd.DataFrame):
-    # show criteria statistics one by one
-    for col in criteria:
-        current_data = df[[*params, col]]
-        if '16nd' in current_data['gradient_strength'].cat.categories:
-            current_data['gradient_strength'] = current_data['gradient_strength'].cat.reorder_categories(['16','24','32','16nd'])
-        col_wrap = 4
-        grid = sns.catplot(data=current_data, x="beta_recon", y=col, hue="gradient_strength", col='beta_gamma', kind="point", col_wrap=col_wrap, legend_out=False)
-        grid.add_legend()
-
-        # add limits, truth, criteria for simple (conventional) recon
-        # conventional recon/criteria depend only on the gradient strength
-        col_conv = col+'_conv'
-        conv_data = df[['gradient_strength', col_conv]]
-        min_val = min(min(current_data[col].min(), true[col]), conv_data[col_conv].min())
-        max_val = max(max(current_data[col].max(), true[col]), conv_data[col_conv].max())
-        min_val = min_val - 0.05 * np.abs(min_val)
-        max_val = max_val + 0.05 * np.abs(max_val)
-        legend_once = True
-        for ax in grid.axes.ravel():
-            ax.grid(ls=':')
-            ax.set_ylim(min_val, max_val)
-            ax.axhline(true[col], color='k', lw=2, ls='--', label='true')
-            # plot conventional recon criteria for all gradient strengths
-            # TODO plot them with the same color as for AGR recon, also a bit ugly
-            for grad in conv_data.gradient_strength.cat.categories.to_list():
-                conv_crit_value = conv_data[conv_data['gradient_strength']==grad][col_conv].mean() #.values[0]
-                ls = ('-.' if grad=="16nd" else '--')
-                label_conv = 'conv' if grad=='16' else ''
-                label = ('conv nd' if grad=='16nd' else label_conv)
-                ax.axhline(conv_crit_value, color='tab:gray', lw=2, ls=ls, label=label)
-            if legend_once:
-               ax.legend()
-               legend_once = False
-
-        grid.fig.show()
-        grid.fig.savefig(Path(analysis_results_dir) / f'{folder}_{col}{jitter_suffix}_{nb_realiz}seeds.pdf')
-
-# show  criteria difference wrt the truth one by one
-# does not work anymore because database changed TODO
-def plot_crit_mean_stddev_perc(df: pd.DataFrame):
-
-    for col in criteria:
-        current_data = df[[*params, col]].copy()
-        if '16nd' in current_data['gradient_strength'].cat.categories:
-            current_data['gradient_strength'] = current_data['gradient_strength'].cat.reorder_categories(['16','24','32','16nd'])
-        current_data[col] = 100 * (current_data[col].values - true[col]) / true[col]
-        current_true = 0.
-        col_wrap = 4
-        grid = sns.catplot(data=current_data, x="beta_recon", y=col, hue="gradient_strength", col='beta_gamma', kind="point", col_wrap=col_wrap, legend_out=False)
-        grid.add_legend()
-
-        # add limits, truth, criteria for simple (conventional) recon
-        # conventional recon/criteria depend only on the gradient strength
-        col_conv = col+'_conv'
-        conv_data = df[['gradient_strength', col_conv]].copy()
-        conv_data[col_conv] = 100 * (conv_data[col_conv].values - true[col]) / true[col]
-        min_val = min(min(current_data[col].min(), current_true), conv_data[col_conv].min())
-        max_val = max(max(current_data[col].max(), current_true), conv_data[col_conv].max())
-        min_val = min_val - 5 
-        max_val = max_val + 5
-        legend_once = True
-        for ax in grid.axes.ravel():
-            ax.grid(ls=':')
-            ax.set_ylim(min_val, max_val)
-            ax.axhline(current_true, color='k', lw=2, ls='--', label='true')
-            # plot conventional recon criteria for all gradient strengths
-            # TODO plot them with the same color as for AGR recon, also a bit ugly
-            for grad in conv_data.gradient_strength.cat.categories.to_list():
-                conv_crit_value = conv_data[conv_data['gradient_strength']==grad][col_conv].mean() #.values[0]
-                ls = ('-.' if grad=="16nd" else '--')
-                label_conv = 'conv' if grad=='16' else ''
-                label = ('conv nd' if grad=='16nd' else label_conv)
-                ax.axhline(conv_crit_value, color='tab:gray', lw=2, ls=ls, label=label)
-            if legend_once:
-               ax.legend()
-               legend_once = False
-
-        grid.fig.show()
-        grid.fig.savefig(Path(analysis_results_dir) / f'{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_perc.pdf')
-
-# = percentage bias/std 
-def plot_crit_bias_std_perc(df: pd.DataFrame):
-    # compute statistics (mean,std) for each parameter value combination, over realizations
-    df_stats = df[params + criteria + [c+'_conv' for c in criteria] + [c+'_conv_nofilt' for c in criteria]].copy()
-#    for i,c in enumerate(criteria):
-#        df_stats[c] =  100 * (df_stats[c].values - true[c]) / true[c]
-#        df_stats[c+'_conv'] =  100 * (df_stats[c+'_conv'].values - true[c]) / true[c]
-#        df_stats[c+'_conv_filt'] =  100 * (df_stats[c+'_conv_filt'].values - true[c]) / true[c]
-    # the number of rows for each group should be = number of seeds/realizations 
-    ddf = df_stats.groupby(params)
-    assert(np.all(ddf.count() == nb_realiz))
-    # compute the mean and stddev
-    df_stats = ddf.agg(['mean','std'])
-    # flatten the index multiindex for use with FacetGrid
-    df_stats = df_stats.reset_index()
-    # flatten the columns multiindex for use with FacetGrid
-    df_stats.columns = [' '.join(col).strip() for col in df_stats.columns.values]
-
-    for i,c in enumerate(criteria):
-        df_stats[c+' mean'] =  100 * (df_stats[c+' mean'].values - true[c]) / true[c]
-        df_stats[c+'_conv mean'] =  100 * (df_stats[c+'_conv mean'].values - true[c]) / true[c]
-        df_stats[c+'_conv_nofilt mean'] =  100 * (df_stats[c+'_conv_nofilt mean'].values - true[c]) / true[c]
-        df_stats[c+' std'] =  100 * df_stats[c+' std'].values / true[c]
-        df_stats[c+'_conv std'] =  100 * df_stats[c+'_conv std'].values / true[c]
-        df_stats[c+'_conv_nofilt std'] =  100 * df_stats[c+'_conv_nofilt std'].values / true[c]
-        df_stats = df_stats.rename(columns={c+' mean':c+' bias[%]', c+'_conv mean':c+'_conv bias[%]', c+'_conv_nofilt mean':c+'_conv_nofilt bias[%]'})
-        df_stats = df_stats.rename(columns={c+' std':c+' std[%]', c+'_conv std':c+'_conv std[%]', c+'_conv_nofilt std':c+'_conv_nofilt std[%]'})
-
-
-    for col in criteria:
-        grid = sns.relplot(
-            data=df_stats, kind="line",
-            x=col+' bias[%]', y=col+' std[%]', hue="gradient_strength",
-            col="beta_gamma", marker='.', markersize=10, legend='brief')
-        # conv
-        legend_once = True
-        for i,ax in enumerate(grid.axes.ravel()):
-            #ax.grid(ls=':')
-            ax.set_ylim(0., max(df_stats[col+' std[%]'].max(), df_stats[col+'_conv_nofilt std[%]'].max())*1.2)
-            ax.set_xlim(min(df_stats[col+' bias[%]'].min(), df_stats[col+'_conv bias[%]'].min())-1, max(df_stats[col+' bias[%]'].max(), df_stats[col+'_conv bias[%]'].max())+1)
-            for grad in df_stats.gradient_strength.cat.categories.to_list():
-                df_stats_conv_curr = df_stats[df_stats['gradient_strength']==grad]
-                ax.plot(df_stats_conv_curr[col + '_conv bias[%]'], df_stats_conv_curr[col + '_conv std[%]'], color='k', markersize=10, marker='.', label='conv')
-                ax.plot(df_stats_conv_curr[col + '_conv_nofilt bias[%]'], df_stats_conv_curr[col + '_conv_nofilt std[%]'], color='k', markersize=10, marker='*', label='conv nofilt')
-                if legend_once:
-                    legend_once = False
-                    ax.legend()
-
-        grid.fig.show()
-        grid.fig.savefig(Path(analysis_results_dir) / f'{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_biasstd_beta_perc.pdf')
-
 # -----------------------------------------------------------------------------
-# Compute bias-stddev in percentage
+# Compute and display bias-stddev in percentage
 
 # the number of rows for each group should be = number of seeds/realizations
 df_stats = df[params + ['recon_type','nofilt'] + criteria].copy()
@@ -576,33 +430,6 @@ for col in criteria:
     grid.fig.show()
     grid.fig.savefig(Path(analysis_results_dir) / f'{folder}_{col}{jitter_suffix}_{nb_realiz}seeds_biasstd_perc_grad.pdf')
 
-
-# display bias-stddev over beta parameters
-#df_stats = df[params + ['recon_type','nofilt'] + criteria].copy()
-# normalize to perc and rename criteria
-#for i,c in enumerate(criteria):
-#        df_stats[c] =  100 * df_stats[c].values / true[c]
-#        df_stats = df_stats.rename(columns={c:c+' [%]', c:c+' [%]'})
-#for col in criteria:
-#    # display bias-stddev over beta parameters
-#    col_wrap = 4
-#    grid = sns.catplot(data=df_stats, x="beta_recon", y=col, hue="gradient_strength", col='beta_gamma', kind="point", col_wrap=col_wrap, legend_out=False)
-#    #grid.add_legend()
-#    grid.fig.show()
-
-
-
-# if loaded all the images, show the images of mean/stddev over realizations
-#if load_all_images:
-#    na = dict(cmap=plt.cm.viridis, vmin = 0, vmax = true_na_image.max())
-#    prot = dict(cmap=plt.cm.gray)
-#    ind_grad = df.gradient_strength.cat.categories.to_list().index("24")
-#    agr_mean = np.mean(agr_na_realiz[ind_grad,0,0], axis=0)
-#    agr_std = np.std(agr_na_realiz[ind_grad,0,0], axis=0)
-#    vi = pv.ThreeAxisViewer([agr_mean, true_na_image, t1_image], imshow_kwargs=[na, na, prot])
-#    gamma_mean = np.mean(gamma_na_realiz[ind_grad,0,0], axis=0)
-#    gamma_std = np.std(gamma_na_realiz[ind_grad,0,0], axis=0)
-#    vi1 = pv.ThreeAxisViewer([gamma_mean, gamma_std, true_na_image], imshow_kwargs=[prot, prot, na])
 
 # mean comparison for checking
 mask = gm_256 + wm_256 + csf_256

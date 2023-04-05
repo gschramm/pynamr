@@ -22,7 +22,7 @@ if __name__ == '__main__':
                         default=16,
                         choices=[16, 24, 32, 48])
     parser.add_argument('--no_decay', action='store_true')
-    parser.add_argument('--jitter_truth', action='store_true')
+    parser.add_argument('--jitter_truth', action='store_true', help='modify the true image a bit')
     parser.add_argument('--phantom',
                         choices=['brainweb', 'blob'],
                         default='brainweb')
