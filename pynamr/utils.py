@@ -440,7 +440,7 @@ def n4 (img: np.ndarray) -> np.ndarray:
 
 
 
-def safe_decay(time: float, t2: float | np.ndarray, t2_zero: float) -> float | np.ndarray:
+def safe_decay(time: float, t2: np.ndarray, t2_zero: float) -> np.ndarray:
     """ utility function for computing the T2* decay, with safety net for very low T2* values
 
     Parameters
