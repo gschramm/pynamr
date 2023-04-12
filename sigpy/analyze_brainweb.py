@@ -1,3 +1,9 @@
+#TODO: - voxel-wise noise metric
+#      - analysis for all beta_r
+#      - IFFT scaling
+#      - ROI for single gyrus
+#      - ROI for cerebellum (more signal decay)
+
 import argparse
 import json
 from pathlib import Path
@@ -9,20 +15,31 @@ from scipy.ndimage import binary_erosion, gaussian_filter
 import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--max_num_iter', type=int, default=1000)
-parser.add_argument('--noise_level', type=float, default=2e-2)
+parser.add_argument('--max_num_iter', type=int, default=1500)
+parser.add_argument('--num_iter_r', type=int, default=100)
+parser.add_argument('--noise_level', type=float, default=1e-2)
 parser.add_argument('--phantom',
                     type=str,
                     default='brainweb',
                     choices=['brainweb', 'blob'])
 parser.add_argument('--no_decay', action='store_true')
+parser.add_argument('--regularization_norm_anatomical',
+                    type=str,
+                    default='L1',
+                    choices=['L1', 'L2'])
+parser.add_argument('--regularization_norm_non_anatomical',
+                    type=str,
+                    default='L2',
+                    choices=['L1', 'L2'])
 args = parser.parse_args()
 
 max_num_iter = args.max_num_iter
+num_iter_r = args.num_iter_r
 noise_level = args.noise_level
 phantom = args.phantom
 no_decay = args.no_decay
-
+regularization_norm_anatomical = args.regularization_norm_anatomical
+regularization_norm_non_anatomical = args.regularization_norm_non_anatomical
 #-----------------------------------------------------------------------
 
 sim_shape = (160, 160, 160)
@@ -31,18 +48,23 @@ grid_shape = (64, 64, 64)
 
 field_of_view_cm: float = 22.
 
-odirs = sorted(
-    list(
-        Path('run_brainweb').glob(
-            f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_nl_{noise_level:.1E}_s_*'
-        )))
-
-#-----------------------------------------------------------------------
-# load the brainweb label array
-
+# read the data root directory from the config file
 with open('.simulation_config.json', 'r') as f:
     data_root_dir: str = json.load(f)['data_root_dir']
 
+odirs = sorted(list((Path(
+    data_root_dir
+) / 'run_brainweb').glob(f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_*')))
+
+odirs = odirs[:20]
+
+#-----------------------------------------------------------------------
+# load the ground truth
+gt = np.abs(np.load(odirs[0] / 'na_gt.npy'))
+gt = zoom3d(gt, 440 / gt.shape[0])
+
+
+# load the brainweb label array
 phantom_data_path: Path = Path(data_root_dir) / 'brainweb54'
 
 label_nii = nib.as_closest_canonical(
@@ -58,34 +80,33 @@ pad_size_220 = ((pad_size_220[0], pad_size_220[0]),
                                                      pad_size_220[2]))
 lab = np.pad(lab, pad_size_220, 'constant')
 
+# create a GM mask
+gm_mask = (lab==2).astype(np.uint8)
+wm_mask = (lab==3).astype(np.uint8)
+csf_mask = (lab==1).astype(np.uint8)
+
 # load the aparc parcelation
 aparc_nii = nib.as_closest_canonical(
     nib.load(phantom_data_path / 'aparc.DKTatlas+aseg_native.nii.gz'))
 aparc = np.pad(np.asanyarray(aparc_nii.dataobj), pad_size_220, 'constant')
 
 roi_inds = {}
-roi_inds['cortical_gm'] = np.where(aparc >= 1000)
+roi_inds['cortical_gm'] = np.where((aparc*gm_mask) >= 1000)
 roi_inds['eroded_cortical_gm'] = np.where(
-    binary_erosion(aparc >= 1000, iterations=3))
-roi_inds['putamen'] = np.where(np.isin(aparc, [12, 51]))
+    binary_erosion((aparc*gm_mask) >= 1000, iterations=3))
+roi_inds['putamen'] = np.where(np.isin((aparc*gm_mask), [12, 51]))
 roi_inds['eroded_putamen'] = np.where(
-    binary_erosion(np.isin(aparc, [12, 51]), iterations=5))
-roi_inds['wm'] = np.where(np.isin(aparc, [2, 41]))
+    binary_erosion(np.isin((aparc*gm_mask), [12, 51]), iterations=5))
+roi_inds['wm'] = np.where(np.isin((aparc*wm_mask), [2, 41]))
 roi_inds['eroded_wm'] = np.where(
-    binary_erosion(np.isin(aparc, [2, 41]), iterations=5))
-roi_inds['ventricles'] = np.where(np.isin(aparc, [4, 43]))
+    binary_erosion(np.isin((aparc*wm_mask), [2, 41]), iterations=5))
+roi_inds['ventricles'] = np.where(np.isin((aparc*csf_mask), [4, 43]))
 roi_inds['eroded_ventricles'] = np.where(
-    binary_erosion(np.isin(aparc, [4, 43]), iterations=5))
+    binary_erosion(np.isin((aparc*csf_mask), [4, 43]), iterations=5))
 #-----------------------------------------------------------------------
 
-# load the ground truth
-gt = np.abs(np.load(odirs[0] / 'na_gt.npy'))
-gt = zoom3d(gt, 440 / gt.shape[0])
-
-norm_non_anatomical = 'L2'
-norm_anatomical = 'L1'
-betas_non_anatomical = [3e-3, 1e-2, 3e-2, 1e-1, 3e-1]
-betas_anatomical = [3e-3, 1e-2, 3e-2, 1e-1]
+betas_non_anatomical = [1e-2, 3e-2, 1e-1]
+betas_anatomical = [3e-4, 1e-3, 3e-3]
 
 sm_fwhms_mm = [0.1, 4., 6., 8., 10.]
 
@@ -110,7 +131,7 @@ ifft1_roi_means = {}
 sl = 200
 
 for i, odir in enumerate(odirs):
-    print(odir)
+    print('loading IFFTs', odir)
     # load IFFT of first echo
     ifft = ifft_scale_fac * np.load(odir / 'ifft1.npy')
     ifft_voxsize = 220 / ifft.shape[0]
@@ -131,13 +152,19 @@ ifft1s_0 = ifft1s[0, ..., sl].copy()
 
 del ifft1s
 
+# load the image scale factor
+with open(odirs[0] / 'scaling_factors.json', 'r') as f:
+    image_scale = json.load(f)['image_scale']
+
 for i, odir in enumerate(odirs):
-    print(odir)
+    print('loading iterative no decay model', odir)
+
+
     # load iterative recons of first echo with non-anatomical prior
     for ib, beta_non_anatomical in enumerate(betas_non_anatomical):
-        ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{norm_non_anatomical}_{beta_non_anatomical:.2E}.npz'
+        ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{regularization_norm_non_anatomical}_{beta_non_anatomical:.1E}_{max_num_iter}.npz'
         d = np.load(ofile_e1_no_decay)
-        recons_e1_no_decay[i, ib, ...] = zoom3d(np.abs(d['x']),
+        recons_e1_no_decay[i, ib, ...] = zoom3d(np.abs(d['x'] / image_scale),
                                                 440 / iter_shape[0])
 
 for key, inds in roi_inds.items():
@@ -151,12 +178,12 @@ recons_e1_no_decay_0 = recons_e1_no_decay[0, ..., sl].copy()
 del recons_e1_no_decay
 
 for i, odir in enumerate(odirs):
-    print(odir)
+    print('loading AGR no decay model', odir)
     # load AGR of first echo with out decay model
     for ib, beta_anatomical in enumerate(betas_anatomical):
-        ofile_e1_no_decay_agr = odir / 'agr' / f'agr_echo_1_no_decay_model_{norm_anatomical}_{beta_anatomical:.2E}.npz'
+        ofile_e1_no_decay_agr = odir / f'agr_echo_1_no_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
         d = np.load(ofile_e1_no_decay_agr)
-        agrs_e1_no_decay[i, ib, ...] = zoom3d(np.abs(d['x']),
+        agrs_e1_no_decay[i, ib, ...] = zoom3d(np.abs(d['x'] / image_scale),
                                               440 / iter_shape[0])
 
 for key, inds in roi_inds.items():
@@ -169,13 +196,15 @@ agrs_e1_no_decay_0 = agrs_e1_no_decay[0, ..., sl].copy()
 
 del agrs_e1_no_decay
 
+beta_r = 3e-2
+
 for i, odir in enumerate(odirs):
-    print(odir)
+    print('loading AGR w decay model', odir)
     # load AGR of borhs echos with decay model
     for ib, beta_anatomical in enumerate(betas_anatomical):
-        ofile_both_echos_agr = odir / 'agr' / f'agr_both_echos_w_decay_model_{norm_anatomical}_{beta_anatomical:.2E}.npz'
+        ofile_both_echos_agr = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_r:.1E}_{max_num_iter}_{num_iter_r}.npz'
         d = np.load(ofile_both_echos_agr)
-        agrs_both_echos_w_decay[i, ib, ...] = zoom3d(np.abs(d['x']),
+        agrs_both_echos_w_decay[i, ib, ...] = zoom3d(np.abs(d['x'] / image_scale),
                                                      440 / iter_shape[0])
 
 for key, inds in roi_inds.items():
@@ -197,15 +226,15 @@ fig, ax = plt.subplots(num_rows,
                        num_cols,
                        figsize=(4 * num_cols, 4 * num_rows))
 
-for i, (roi, vals) in enumerate(ifft1_roi_means.items()):
-    x = vals.std(0)
-    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    ax.ravel()[i].plot(x, y, 'x-', label='IFFT')
-
-    for j in range(len(x)):
-        ax.ravel()[i].annotate(f'{sm_fwhms_mm[j]:.1f}mm', (x[j], y[j]),
-                               horizontalalignment='center',
-                               verticalalignment='bottom')
+#for i, (roi, vals) in enumerate(ifft1_roi_means.items()):
+#    x = vals.std(0)
+#    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+#    ax.ravel()[i].plot(x, y, 'x-', label='IFFT')
+#
+#    for j in range(len(x)):
+#        ax.ravel()[i].annotate(f'{sm_fwhms_mm[j]:.1f}mm', (x[j], y[j]),
+#                               horizontalalignment='center',
+#                               verticalalignment='bottom')
 
 for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
     x = vals.std(0)
@@ -270,7 +299,7 @@ for i in range(num_cols2):
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
-                     vmax=3.5)
+                     vmax=2)
     ax2[1, i].imshow(recons_e1_no_decay_mean[i, ...].T - gt[:, :, sl].T,
                      origin='lower',
                      cmap='seismic',
@@ -308,7 +337,7 @@ for i in range(num_cols3):
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
-                     vmax=3.5)
+                     vmax=2)
     ax3[1, i].imshow(ifft1s_mean[i, ...].T - gt[:, :, sl].T,
                      origin='lower',
                      cmap='seismic',
@@ -346,7 +375,7 @@ for i in range(num_cols4):
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
-                     vmax=3.5)
+                     vmax=2)
     ax4[1, i].imshow(agrs_e1_no_decay_mean[i, ...].T - gt[:, :, sl].T,
                      origin='lower',
                      cmap='seismic',
@@ -384,7 +413,7 @@ for i in range(num_cols5):
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
-                     vmax=3.5)
+                     vmax=2)
     ax5[1, i].imshow(agrs_both_echos_w_decay_mean[i, ...].T - gt[:, :, sl].T,
                      origin='lower',
                      cmap='seismic',
