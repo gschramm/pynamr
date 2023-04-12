@@ -10,8 +10,7 @@ from pathlib import Path
 import numpy as np
 import pymirc.viewer as pv
 import nibabel as nib
-from pymirc.image_operations import zoom3d
-from scipy.ndimage import binary_erosion, gaussian_filter
+from scipy.ndimage import binary_erosion, gaussian_filter, zoom
 import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser()
@@ -42,7 +41,6 @@ regularization_norm_anatomical = args.regularization_norm_anatomical
 regularization_norm_non_anatomical = args.regularization_norm_non_anatomical
 #-----------------------------------------------------------------------
 
-sim_shape = (160, 160, 160)
 iter_shape = (128, 128, 128)
 grid_shape = (64, 64, 64)
 
@@ -56,13 +54,12 @@ odirs = sorted(list((Path(
     data_root_dir
 ) / 'run_brainweb').glob(f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_*')))
 
-odirs = odirs[:20]
+odirs = odirs[:28]
 
 #-----------------------------------------------------------------------
 # load the ground truth
 gt = np.abs(np.load(odirs[0] / 'na_gt.npy'))
-gt = zoom3d(gt, 440 / gt.shape[0])
-
+sim_shape = gt.shape
 
 # load the brainweb label array
 phantom_data_path: Path = Path(data_root_dir) / 'brainweb54'
@@ -72,13 +69,15 @@ label_nii = nib.as_closest_canonical(
 
 # pad to 220mm FOV
 lab_voxelsize = label_nii.header['pixdim'][1]
-lab = label_nii.get_fdata()
+lab = np.asanyarray(label_nii.dataobj)
 pad_size_220 = ((220 - np.array(lab.shape) * lab_voxelsize) / lab_voxelsize /
                 2).astype(int)
 pad_size_220 = ((pad_size_220[0], pad_size_220[0]),
                 (pad_size_220[1], pad_size_220[1]), (pad_size_220[2],
                                                      pad_size_220[2]))
 lab = np.pad(lab, pad_size_220, 'constant')
+
+lab = zoom(lab, sim_shape[0]/lab.shape[0], order = 0, prefilter=False)
 
 # create a GM mask
 gm_mask = (lab==2).astype(np.uint8)
@@ -90,19 +89,27 @@ aparc_nii = nib.as_closest_canonical(
     nib.load(phantom_data_path / 'aparc.DKTatlas+aseg_native.nii.gz'))
 aparc = np.pad(np.asanyarray(aparc_nii.dataobj), pad_size_220, 'constant')
 
+aparc = zoom(aparc, sim_shape[0]/aparc.shape[0], order = 0, prefilter=False)
+
 roi_inds = {}
 roi_inds['cortical_gm'] = np.where((aparc*gm_mask) >= 1000)
 roi_inds['eroded_cortical_gm'] = np.where(
-    binary_erosion((aparc*gm_mask) >= 1000, iterations=3))
+    binary_erosion((aparc*gm_mask) >= 1000, iterations=1))
 roi_inds['putamen'] = np.where(np.isin((aparc*gm_mask), [12, 51]))
 roi_inds['eroded_putamen'] = np.where(
-    binary_erosion(np.isin((aparc*gm_mask), [12, 51]), iterations=5))
+    binary_erosion(np.isin((aparc*gm_mask), [12, 51]), iterations=2))
 roi_inds['wm'] = np.where(np.isin((aparc*wm_mask), [2, 41]))
 roi_inds['eroded_wm'] = np.where(
-    binary_erosion(np.isin((aparc*wm_mask), [2, 41]), iterations=5))
+    binary_erosion(np.isin((aparc*wm_mask), [2, 41]), iterations=3))
 roi_inds['ventricles'] = np.where(np.isin((aparc*csf_mask), [4, 43]))
 roi_inds['eroded_ventricles'] = np.where(
-    binary_erosion(np.isin((aparc*csf_mask), [4, 43]), iterations=5))
+    binary_erosion(np.isin((aparc*csf_mask), [4, 43]), iterations=2))
+roi_inds['cerebellum'] = np.where(np.isin((aparc*csf_mask), [8, 15]))
+roi_inds['eroded_cerebellum'] = np.where(
+    binary_erosion(np.isin((aparc*csf_mask), [8, 15]), iterations=1))
+roi_inds['frontal'] = np.where(np.isin((aparc*gm_mask), [1028]))
+roi_inds['eroded_frontal'] = np.where(
+    binary_erosion(np.isin((aparc*gm_mask), [1028]), iterations=1))
 #-----------------------------------------------------------------------
 
 betas_non_anatomical = [1e-2, 3e-2, 1e-1]
@@ -111,13 +118,13 @@ betas_anatomical = [3e-4, 1e-3, 3e-3]
 sm_fwhms_mm = [0.1, 4., 6., 8., 10.]
 
 recons_e1_no_decay = np.zeros(
-    (len(odirs), len(betas_non_anatomical), 440, 440, 440))
-agrs_e1_no_decay = np.zeros((len(odirs), len(betas_anatomical), 440, 440, 440))
+    (len(odirs), len(betas_non_anatomical),) + sim_shape)
+agrs_e1_no_decay = np.zeros((len(odirs), len(betas_anatomical),) + sim_shape)
 
 agrs_both_echos_w_decay = np.zeros(
-    (len(odirs), len(betas_anatomical), 440, 440, 440))
+    (len(odirs), len(betas_anatomical),) + sim_shape)
 
-ifft1s = np.zeros((len(odirs), len(sm_fwhms_mm), 440, 440, 440))
+ifft1s = np.zeros((len(odirs), len(sm_fwhms_mm),) + sim_shape)
 
 ifft_scale_fac = 1.
 
@@ -128,7 +135,12 @@ agr_e1_no_decay_roi_means = {}
 agr_both_echos_w_decay_roi_means = {}
 ifft1_roi_means = {}
 
-sl = 200
+sl = 73
+
+for key, inds in roi_inds.items():
+    true_means[key] = gt[inds].mean()
+    ifft1_roi_means[key] = np.array([[x[inds].mean() for x in y]
+                                     for y in ifft1s])
 
 for i, odir in enumerate(odirs):
     print('loading IFFTs', odir)
@@ -137,20 +149,15 @@ for i, odir in enumerate(odirs):
     ifft_voxsize = 220 / ifft.shape[0]
 
     for j, sm_fwhm_mm in enumerate(sm_fwhms_mm):
-        ifft1s[i, j, ...] = zoom3d(
+        ifft1s[i, j, ...] = zoom(
             np.abs(gaussian_filter(ifft, sm_fwhm_mm / (2.35 * ifft_voxsize))),
-            440 / ifft.shape[0])
+            sim_shape[0] / ifft.shape[0], order = 1, prefilter = False)
 
-for key, inds in roi_inds.items():
-    true_means[key] = gt[inds].mean()
-    ifft1_roi_means[key] = np.array([[x[inds].mean() for x in y]
-                                     for y in ifft1s])
+ifft1s_mean = ifft1s.mean(axis=0)
+ifft1s_std = ifft1s.std(axis=0)
+ifft1s_0 = ifft1s[0, ...].copy()
 
-ifft1s_mean = ifft1s[..., sl].mean(axis=0)
-ifft1s_std = ifft1s[..., sl].std(axis=0)
-ifft1s_0 = ifft1s[0, ..., sl].copy()
-
-del ifft1s
+##del ifft1s
 
 # load the image scale factor
 with open(odirs[0] / 'scaling_factors.json', 'r') as f:
@@ -164,18 +171,18 @@ for i, odir in enumerate(odirs):
     for ib, beta_non_anatomical in enumerate(betas_non_anatomical):
         ofile_e1_no_decay = odir / f'recon_echo_1_no_decay_model_{regularization_norm_non_anatomical}_{beta_non_anatomical:.1E}_{max_num_iter}.npz'
         d = np.load(ofile_e1_no_decay)
-        recons_e1_no_decay[i, ib, ...] = zoom3d(np.abs(d['x'] / image_scale),
-                                                440 / iter_shape[0])
+        recons_e1_no_decay[i, ib, ...] = zoom(np.abs(d['x'] / image_scale),
+                                                sim_shape[0] / iter_shape[0], order = 1, prefilter = False)
 
 for key, inds in roi_inds.items():
     recon_e1_no_decay_roi_means[key] = np.array([[x[inds].mean() for x in y]
                                                  for y in recons_e1_no_decay])
 
-recons_e1_no_decay_mean = recons_e1_no_decay[..., sl].mean(axis=0)
-recons_e1_no_decay_std = recons_e1_no_decay[..., sl].std(axis=0)
-recons_e1_no_decay_0 = recons_e1_no_decay[0, ..., sl].copy()
+recons_e1_no_decay_mean = recons_e1_no_decay.mean(axis=0)
+recons_e1_no_decay_std = recons_e1_no_decay.std(axis=0)
+recons_e1_no_decay_0 = recons_e1_no_decay[0, ...].copy()
 
-del recons_e1_no_decay
+##del recons_e1_no_decay
 
 for i, odir in enumerate(odirs):
     print('loading AGR no decay model', odir)
@@ -183,20 +190,20 @@ for i, odir in enumerate(odirs):
     for ib, beta_anatomical in enumerate(betas_anatomical):
         ofile_e1_no_decay_agr = odir / f'agr_echo_1_no_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.npz'
         d = np.load(ofile_e1_no_decay_agr)
-        agrs_e1_no_decay[i, ib, ...] = zoom3d(np.abs(d['x'] / image_scale),
-                                              440 / iter_shape[0])
+        agrs_e1_no_decay[i, ib, ...] = zoom(np.abs(d['x'] / image_scale),
+                                              sim_shape[0] / iter_shape[0], order = 1, prefilter = False)
 
 for key, inds in roi_inds.items():
     agr_e1_no_decay_roi_means[key] = np.array([[x[inds].mean() for x in y]
                                                for y in agrs_e1_no_decay])
 
-agrs_e1_no_decay_mean = agrs_e1_no_decay[..., sl].mean(axis=0)
-agrs_e1_no_decay_std = agrs_e1_no_decay[..., sl].std(axis=0)
-agrs_e1_no_decay_0 = agrs_e1_no_decay[0, ..., sl].copy()
+agrs_e1_no_decay_mean = agrs_e1_no_decay.mean(axis=0)
+agrs_e1_no_decay_std = agrs_e1_no_decay.std(axis=0)
+agrs_e1_no_decay_0 = agrs_e1_no_decay[0, ...].copy()
 
-del agrs_e1_no_decay
+##del agrs_e1_no_decay
 
-beta_r = 3e-2
+beta_r = 1e-1
 
 for i, odir in enumerate(odirs):
     print('loading AGR w decay model', odir)
@@ -204,18 +211,18 @@ for i, odir in enumerate(odirs):
     for ib, beta_anatomical in enumerate(betas_anatomical):
         ofile_both_echos_agr = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_r:.1E}_{max_num_iter}_{num_iter_r}.npz'
         d = np.load(ofile_both_echos_agr)
-        agrs_both_echos_w_decay[i, ib, ...] = zoom3d(np.abs(d['x'] / image_scale),
-                                                     440 / iter_shape[0])
+        agrs_both_echos_w_decay[i, ib, ...] = zoom(np.abs(d['x'] / image_scale),
+                                                     sim_shape[0] / iter_shape[0], order = 1, prefilter = False)
 
 for key, inds in roi_inds.items():
     agr_both_echos_w_decay_roi_means[key] = np.array(
         [[x[inds].mean() for x in y] for y in agrs_both_echos_w_decay])
 
-agrs_both_echos_w_decay_mean = agrs_both_echos_w_decay[..., sl].mean(axis=0)
-agrs_both_echos_w_decay_std = agrs_both_echos_w_decay[..., sl].std(axis=0)
-agrs_both_echos_w_decay_0 = agrs_both_echos_w_decay[0, ..., sl].copy()
+agrs_both_echos_w_decay_mean = agrs_both_echos_w_decay.mean(axis=0)
+agrs_both_echos_w_decay_std = agrs_both_echos_w_decay.std(axis=0)
+agrs_both_echos_w_decay_0 = agrs_both_echos_w_decay[0, ...].copy()
 
-del agrs_both_echos_w_decay
+##del agrs_both_echos_w_decay
 
 #--------------------------------------------------------------------------------
 # bias noise plots
@@ -295,17 +302,17 @@ fig2, ax2 = plt.subplots(num_rows2,
                          figsize=(3 * num_cols2, 3 * num_rows2))
 
 for i in range(num_cols2):
-    ax2[0, i].imshow(recons_e1_no_decay_0[i, ...].T,
+    ax2[0, i].imshow(recons_e1_no_decay_0[i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
                      vmax=2)
-    ax2[1, i].imshow(recons_e1_no_decay_mean[i, ...].T - gt[:, :, sl].T,
+    ax2[1, i].imshow(recons_e1_no_decay_mean[i, ..., sl].T - gt[:, :, sl].T,
                      origin='lower',
                      cmap='seismic',
                      vmin=-1,
                      vmax=1)
-    ax2[2, i].imshow(recons_e1_no_decay_std[i, ...].T,
+    ax2[2, i].imshow(recons_e1_no_decay_std[i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
@@ -333,17 +340,17 @@ fig3, ax3 = plt.subplots(num_rows3,
                          figsize=(3 * num_cols3, 3 * num_rows3))
 
 for i in range(num_cols3):
-    ax3[0, i].imshow(ifft1s_0[i, ...].T,
+    ax3[0, i].imshow(ifft1s_0[i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
                      vmax=2)
-    ax3[1, i].imshow(ifft1s_mean[i, ...].T - gt[:, :, sl].T,
+    ax3[1, i].imshow(ifft1s_mean[i, ..., sl].T - gt[:, :, sl].T,
                      origin='lower',
                      cmap='seismic',
                      vmin=-1,
                      vmax=1)
-    ax3[2, i].imshow(ifft1s_std[i, ...].T,
+    ax3[2, i].imshow(ifft1s_std[i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
@@ -371,17 +378,17 @@ fig4, ax4 = plt.subplots(num_rows4,
                          figsize=(3 * num_cols4, 3 * num_rows4))
 
 for i in range(num_cols4):
-    ax4[0, i].imshow(agrs_e1_no_decay_0[i, ...].T,
+    ax4[0, i].imshow(agrs_e1_no_decay_0[i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
                      vmax=2)
-    ax4[1, i].imshow(agrs_e1_no_decay_mean[i, ...].T - gt[:, :, sl].T,
+    ax4[1, i].imshow(agrs_e1_no_decay_mean[i, ..., sl].T - gt[:, :, sl].T,
                      origin='lower',
                      cmap='seismic',
                      vmin=-1,
                      vmax=1)
-    ax4[2, i].imshow(agrs_e1_no_decay_std[i, ...].T,
+    ax4[2, i].imshow(agrs_e1_no_decay_std[i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
@@ -409,17 +416,17 @@ fig5, ax5 = plt.subplots(num_rows5,
                          figsize=(3 * num_cols5, 3 * num_rows5))
 
 for i in range(num_cols5):
-    ax5[0, i].imshow(agrs_both_echos_w_decay_0[i, ...].T,
+    ax5[0, i].imshow(agrs_both_echos_w_decay_0[i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
                      vmax=2)
-    ax5[1, i].imshow(agrs_both_echos_w_decay_mean[i, ...].T - gt[:, :, sl].T,
+    ax5[1, i].imshow(agrs_both_echos_w_decay_mean[i, ..., sl].T - gt[:, :, sl].T,
                      origin='lower',
                      cmap='seismic',
                      vmin=-1,
                      vmax=1)
-    ax5[2, i].imshow(agrs_both_echos_w_decay_std[i, ...].T,
+    ax5[2, i].imshow(agrs_both_echos_w_decay_std[i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
