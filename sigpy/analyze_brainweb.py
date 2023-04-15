@@ -1,6 +1,4 @@
 #TODO: - voxel-wise noise metric
-#      - analysis for all beta_r
-#      - IFFT scaling
 
 import argparse
 import json
@@ -39,6 +37,7 @@ regularization_norm_anatomical = args.regularization_norm_anatomical
 regularization_norm_non_anatomical = args.regularization_norm_non_anatomical
 
 beta_rs = [3e-2, 1e-1, 3e-1]
+noise_metric = 1
 #-----------------------------------------------------------------------
 
 iter_shape = (128, 128, 128)
@@ -142,12 +141,27 @@ agrs_both_echos_w_decay2 = np.zeros((
     len(betas_anatomical),
 ) + sim_shape)
 
-ifft1s = np.zeros((
+r0s = np.zeros((
     len(odirs),
-    len(sm_fwhms_mm),
+    len(betas_anatomical),
 ) + sim_shape)
 
-ifft_scale_fac = 1.
+r1s = np.zeros((
+    len(odirs),
+    len(betas_anatomical),
+) + sim_shape)
+
+r2s = np.zeros((
+    len(odirs),
+    len(betas_anatomical),
+) + sim_shape)
+
+#ifft1s = np.zeros((
+#    len(odirs),
+#    len(sm_fwhms_mm),
+#) + sim_shape)
+#
+#ifft_scale_fac = 1.
 
 # calculate the ROI averages
 true_means = {}
@@ -166,29 +180,27 @@ agr_both_echos_w_decay2_roi_stds = {}
 ifft1_roi_means = {}
 sl = 73
 
+# calculate the true means
 for key, inds in roi_inds.items():
     true_means[key] = gt[inds].mean()
-    ifft1_roi_means[key] = np.array([[x[inds].mean() for x in y]
-                                     for y in ifft1s])
+#    ifft1_roi_means[key] = np.array([[x[inds].mean() for x in y]
+#                                     for y in ifft1s])
 
-for i, odir in enumerate(odirs):
-    print('loading IFFTs', odir)
-    # load IFFT of first echo
-    ifft = ifft_scale_fac * np.load(odir / 'ifft1.npy')
-    ifft_voxsize = 220 / ifft.shape[0]
-
-    for j, sm_fwhm_mm in enumerate(sm_fwhms_mm):
-        ifft1s[i, j, ...] = zoom(np.abs(
-            gaussian_filter(ifft, sm_fwhm_mm / (2.35 * ifft_voxsize))),
-                                 sim_shape[0] / ifft.shape[0],
-                                 order=1,
-                                 prefilter=False)
-
-ifft1s_mean = ifft1s.mean(axis=0)
-ifft1s_std = ifft1s.std(axis=0)
-ifft1s_0 = ifft1s[0, ...].copy()
-
-##del ifft1s
+#for i, odir in enumerate(odirs):
+#    print('loading IFFTs', odir)
+#    # load IFFT of first echo
+#    ifft = ifft_scale_fac * np.load(odir / 'ifft1.npy')
+#    ifft_voxsize = 220 / ifft.shape[0]
+#
+#    for j, sm_fwhm_mm in enumerate(sm_fwhms_mm):
+#        ifft1s[i, j, ...] = zoom(np.abs(
+#            gaussian_filter(ifft, sm_fwhm_mm / (2.35 * ifft_voxsize))),
+#                                 sim_shape[0] / ifft.shape[0],
+#                                 order=1,
+#                                 prefilter=False)
+#
+#ifft1s_mean = ifft1s.mean(axis=0)
+#ifft1s_std = ifft1s.std(axis=0)
 
 # load the image scale factor
 with open(odirs[0] / 'scaling_factors.json', 'r') as f:
@@ -212,13 +224,10 @@ for key, inds in roi_inds.items():
 
 recons_e1_no_decay_mean = recons_e1_no_decay.mean(axis=0)
 recons_e1_no_decay_std = recons_e1_no_decay.std(axis=0)
-recons_e1_no_decay_0 = recons_e1_no_decay[0, ...].copy()
 
 for key, inds in roi_inds.items():
     recon_e1_no_decay_roi_stds[key] = np.array(
         [x[inds].mean() for x in recons_e1_no_decay_std])
-
-##del recons_e1_no_decay
 
 for i, odir in enumerate(odirs):
     print('loading AGR no decay model', odir)
@@ -237,9 +246,6 @@ for key, inds in roi_inds.items():
 
 agrs_e1_no_decay_mean = agrs_e1_no_decay.mean(axis=0)
 agrs_e1_no_decay_std = agrs_e1_no_decay.std(axis=0)
-agrs_e1_no_decay_0 = agrs_e1_no_decay[0, ...].copy()
-
-##del agrs_e1_no_decay
 
 for i, odir in enumerate(odirs):
     print('loading AGR w decay model', odir)
@@ -248,6 +254,10 @@ for i, odir in enumerate(odirs):
         ofile_both_echos_agr0 = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[0]:.1E}_{max_num_iter}_{num_iter_r}.npz'
         ofile_both_echos_agr1 = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[1]:.1E}_{max_num_iter}_{num_iter_r}.npz'
         ofile_both_echos_agr2 = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[2]:.1E}_{max_num_iter}_{num_iter_r}.npz'
+
+        outfile_r0 = odir / f'est_ratio_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[0]:.1E}_{max_num_iter}_{num_iter_r}.npy'
+        outfile_r1 = odir / f'est_ratio_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[1]:.1E}_{max_num_iter}_{num_iter_r}.npy'
+        outfile_r2 = odir / f'est_ratio_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[2]:.1E}_{max_num_iter}_{num_iter_r}.npy'
 
         d0 = np.load(ofile_both_echos_agr0)
         d1 = np.load(ofile_both_echos_agr1)
@@ -269,6 +279,21 @@ for i, odir in enumerate(odirs):
                                              order=1,
                                              prefilter=False)
 
+        r0s[i, ib, ...] = zoom(np.load(outfile_r0),
+                               sim_shape[0] / iter_shape[0],
+                               order=1,
+                               prefilter=False)
+
+        r1s[i, ib, ...] = zoom(np.load(outfile_r1),
+                               sim_shape[0] / iter_shape[0],
+                               order=1,
+                               prefilter=False)
+
+        r2s[i, ib, ...] = zoom(np.load(outfile_r2),
+                               sim_shape[0] / iter_shape[0],
+                               order=1,
+                               prefilter=False)
+
 for key, inds in roi_inds.items():
     agr_both_echos_w_decay0_roi_means[key] = np.array(
         [[x[inds].mean() for x in y] for y in agrs_both_echos_w_decay0])
@@ -284,12 +309,6 @@ agrs_both_echos_w_decay2_mean = agrs_both_echos_w_decay2.mean(axis=0)
 agrs_both_echos_w_decay0_std = agrs_both_echos_w_decay0.std(axis=0)
 agrs_both_echos_w_decay1_std = agrs_both_echos_w_decay1.std(axis=0)
 agrs_both_echos_w_decay2_std = agrs_both_echos_w_decay2.std(axis=0)
-
-agrs_both_echos_w_decay0_0 = agrs_both_echos_w_decay0[0, ...].copy()
-agrs_both_echos_w_decay1_0 = agrs_both_echos_w_decay1[0, ...].copy()
-agrs_both_echos_w_decay2_0 = agrs_both_echos_w_decay2[0, ...].copy()
-
-##del agrs_both_echos_w_decay
 
 #--------------------------------------------------------------------------------
 # bias noise plots
@@ -312,7 +331,11 @@ fig, ax = plt.subplots(num_rows,
 #                               verticalalignment='bottom')
 
 for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
-    x = vals.std(0)
+    if noise_metric == 1:
+        x = vals.std(0)
+    else:
+        x = np.array([z[roi_inds[roi]].mean() for z in recons_e1_no_decay_std])
+
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
     ax.ravel()[i].plot(x, y, 'o-', label='iter quad. prior')
 
@@ -323,7 +346,11 @@ for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
                                fontsize='x-small')
 
 for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
-    x = vals.std(0)
+    if noise_metric == 1:
+        x = vals.std(0)
+    else:
+        x = np.array([z[roi_inds[roi]].mean() for z in agrs_e1_no_decay_std])
+
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
     ax.ravel()[i].plot(x, y, 'o-', label='AGR wo decay m.')
 
@@ -334,7 +361,11 @@ for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
                                fontsize='x-small')
 
 for i, (roi, vals) in enumerate(agr_both_echos_w_decay0_roi_means.items()):
-    x = vals.std(0)
+    if noise_metric == 1:
+        x = vals.std(0)
+    else:
+        x = np.array(
+            [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay0_std])
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
     ax.ravel()[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[0]:.1E}')
 
@@ -345,18 +376,29 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay0_roi_means.items()):
                                fontsize='x-small')
 
 for i, (roi, vals) in enumerate(agr_both_echos_w_decay1_roi_means.items()):
-    x = vals.std(0)
+    if noise_metric == 1:
+        x = vals.std(0)
+    else:
+        x = np.array(
+            [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay1_std])
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
     ax.ravel()[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[1]:.1E}')
 
 for i, (roi, vals) in enumerate(agr_both_echos_w_decay2_roi_means.items()):
-    x = vals.std(0)
+    if noise_metric == 1:
+        x = vals.std(0)
+    else:
+        x = np.array(
+            [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay2_std])
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
     ax.ravel()[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[2]:.1E}')
 
     ax.ravel()[i].set_title(roi)
     ax.ravel()[i].grid(ls=':')
-    ax.ravel()[i].set_xlabel('std.dev. of ROI mean')
+    if noise_metric == 1:
+        ax.ravel()[i].set_xlabel('std.dev. of ROI mean')
+    else:
+        ax.ravel()[i].set_xlabel('ROI averaged std.dev.')
     ax.ravel()[i].axhline(0, color='k')
 
     ## get y-axis limits of the plot
@@ -383,7 +425,7 @@ fig2, ax2 = plt.subplots(num_rows2,
                          figsize=(3 * num_cols2, 3 * num_rows2))
 
 for i in range(num_cols2):
-    ax2[0, i].imshow(recons_e1_no_decay_0[i, ..., sl].T,
+    ax2[0, i].imshow(recons_e1_no_decay[0, i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
@@ -421,7 +463,7 @@ fig2.show()
 #                         figsize=(3 * num_cols3, 3 * num_rows3))
 #
 #for i in range(num_cols3):
-#    ax3[0, i].imshow(ifft1s_0[i, ..., sl].T,
+#    ax3[0, i].imshow(ifft1s[0,i, ..., sl].T,
 #                     origin='lower',
 #                     cmap='Greys_r',
 #                     vmin=0,
@@ -459,7 +501,7 @@ fig4, ax4 = plt.subplots(num_rows4,
                          figsize=(3 * num_cols4, 3 * num_rows4))
 
 for i in range(num_cols4):
-    ax4[0, i].imshow(agrs_e1_no_decay_0[i, ..., sl].T,
+    ax4[0, i].imshow(agrs_e1_no_decay[0, i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
@@ -497,7 +539,7 @@ fig5, ax5 = plt.subplots(num_rows5,
                          figsize=(3 * num_cols5, 3 * num_rows5))
 
 for i in range(num_cols5):
-    ax5[0, i].imshow(agrs_both_echos_w_decay0_0[i, ..., sl].T,
+    ax5[0, i].imshow(agrs_both_echos_w_decay0[0, i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
@@ -534,7 +576,7 @@ fig6, ax6 = plt.subplots(num_rows5,
                          figsize=(3 * num_cols5, 3 * num_rows5))
 
 for i in range(num_cols5):
-    ax6[0, i].imshow(agrs_both_echos_w_decay1_0[i, ..., sl].T,
+    ax6[0, i].imshow(agrs_both_echos_w_decay1[0, i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
@@ -571,7 +613,7 @@ fig7, ax7 = plt.subplots(num_rows5,
                          figsize=(3 * num_cols5, 3 * num_rows5))
 
 for i in range(num_cols5):
-    ax7[0, i].imshow(agrs_both_echos_w_decay2_0[i, ..., sl].T,
+    ax7[0, i].imshow(agrs_both_echos_w_decay2[0, i, ..., sl].T,
                      origin='lower',
                      cmap='Greys_r',
                      vmin=0,
