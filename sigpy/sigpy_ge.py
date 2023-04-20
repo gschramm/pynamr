@@ -348,9 +348,9 @@ proxfc1 = sigpy.prox.Stack([
 ])
 u1 = cp.zeros(A.oshape, dtype=data_echo_1.dtype)
 
-outfile1 = odir / f'recon_echo_1_no_decay_model_{regularization_norm_non_anatomical}_{beta_non_anatomical:.1E}_{max_num_iter}.npz'
+outfile1na = odir / f'recon_echo_1_no_decay_model_{regularization_norm_non_anatomical}_{beta_non_anatomical:.1E}_{max_num_iter}.npz'
 
-if not outfile1.exists():
+if not outfile1na.exists():
     max_eig_wo_decay = sigpy.app.MaxEig(A.H * A,
                                         dtype=cp.complex128,
                                         device=data_echo_1.device,
@@ -372,10 +372,10 @@ if not outfile1.exists():
         alg1.update()
     print('')
 
-    cp.savez(outfile1, x=alg1.x, u=u1, max_eig=max_eig_wo_decay)
+    cp.savez(outfile1na, x=alg1.x, u=u1, max_eig=max_eig_wo_decay)
     recon_echo_1_wo_decay_model = alg1.x
 else:
-    d1 = cp.load(outfile1)
+    d1 = cp.load(outfile1na)
     recon_echo_1_wo_decay_model = d1['x']
     u1 = d1['u']
     max_eig_wo_decay = float(d1['max_eig'])
@@ -712,25 +712,20 @@ d = np.flip(d, (0, 1))
 e = np.flip(e, (0, 1))
 f = np.flip(f, (0, 1))
 
-ims1 = 2 * [dict(vmin=0, vmax=5., cmap='Greys_r')] + [
+ims1 = 2 * [dict(vmin=0, vmax=1.6, cmap='Greys_r')] + [
     dict(cmap='Greys_r', vmin=0, vmax=1)
 ]
 vi1 = pv.ThreeAxisViewer([
     a,
     b,
     c,
-], imshow_kwargs=ims1)
-vi1.fig.savefig(
-    odir /
-    f'figure_1_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{max_num_iter}.png',
-    dpi=300)
+], imshow_kwargs=ims1, sl_z=76)
+vi1.fig.savefig(outfileb.with_suffix('.png'), dpi=300)
 
-ims2 = 2 * [dict(vmin=0, vmax=5., cmap='Greys_r')] + [dict(cmap='Greys_r')]
+ims2 = 2 * [dict(vmin=0, vmax=1.6, cmap='Greys_r')] + [dict(cmap='Greys_r')]
 vi2 = pv.ThreeAxisViewer([
     d,
     e,
     f,
-], imshow_kwargs=ims2)
-vi2.fig.savefig(odir /
-                f'figure_2_{beta_non_anatomical:.1E}_{max_num_iter}.png',
-                dpi=300)
+], imshow_kwargs=ims2, sl_z=76)
+vi2.fig.savefig(outfile1na.with_suffix('.png'), dpi=300)
