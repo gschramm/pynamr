@@ -22,6 +22,7 @@ if __name__ == '__main__':
                         default=16,
                         choices=[16, 24, 32, 48])
     parser.add_argument('--no_decay', action='store_true')
+    parser.add_argument('--jitter_truth', action='store_true', help='modify the true image a bit')
     parser.add_argument('--phantom',
                         choices=['brainweb', 'blob'],
                         default='brainweb')
@@ -34,6 +35,10 @@ if __name__ == '__main__':
     gradient_strength = args.gradient_strength
     no_decay = args.no_decay
     phantom = args.phantom
+    jitter_truth = args.jitter_truth
+
+    # jitter truth suffix
+    jitter_suffix = '_jit1' if jitter_truth else ''
 
     simulation_matrix_size: int = 256
     field_of_view_cm: float = 22.
@@ -71,12 +76,20 @@ if __name__ == '__main__':
         T2short_ms_wm: float = 1e7
     else:
         decay_suffix = ''
-        T2long_ms_csf: float = 50.
-        T2long_ms_gm: float = 15.
-        T2long_ms_wm: float = 18.
-        T2short_ms_csf: float = 50.
-        T2short_ms_gm: float = 8.
-        T2short_ms_wm: float = 9.
+        if jitter_truth:
+            T2long_ms_csf: float = 51.
+            T2long_ms_gm: float = 18.
+            T2long_ms_wm: float = 20.
+            T2short_ms_csf: float = 51.
+            T2short_ms_gm: float = 5.
+            T2short_ms_wm: float = 6.
+        else:
+            T2long_ms_csf: float = 50.
+            T2long_ms_gm: float = 15.
+            T2long_ms_wm: float = 18.
+            T2short_ms_csf: float = 50.
+            T2short_ms_gm: float = 8.
+            T2short_ms_wm: float = 9.
 
     #---------------------------------------------------------------------
     #---------------------------------------------------------------------
@@ -84,7 +97,22 @@ if __name__ == '__main__':
 
     # (1) setup the brainweb phantom with the given simulation matrix size
     if phantom == 'brainweb':
-        na_image, t1_image, T2short_ms, T2long_ms = setup_brainweb_phantom(
+        if jitter_truth:
+            na_image, t1_image, T2short_ms, T2long_ms = setup_brainweb_phantom(
+            simulation_matrix_size,
+            phantom_data_path,
+            field_of_view_cm=field_of_view_cm,
+            csf_na_concentration=3.,
+            gm_na_concentration=1.4,
+            wm_na_concentration=1.1,
+            T2long_ms_csf=T2long_ms_csf,
+            T2long_ms_gm=T2long_ms_gm,
+            T2long_ms_wm=T2long_ms_wm,
+            T2short_ms_csf=T2short_ms_csf,
+            T2short_ms_gm=T2short_ms_gm,
+            T2short_ms_wm=T2short_ms_wm)
+        else:
+            na_image, t1_image, T2short_ms, T2long_ms = setup_brainweb_phantom(
             simulation_matrix_size,
             phantom_data_path,
             field_of_view_cm=field_of_view_cm,
@@ -101,7 +129,7 @@ if __name__ == '__main__':
         raise ValueError
 
     output_path = Path(
-        data_root_dir) / f'{phantom}_{Path(gradient_file).name}{decay_suffix}'
+        data_root_dir) / f'{phantom}_{Path(gradient_file).name}{decay_suffix}{jitter_suffix}'
     output_path.mkdir(exist_ok=True)
 
     #---------------------------------------------------------------------

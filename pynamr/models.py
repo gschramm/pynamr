@@ -127,7 +127,7 @@ class DualTESodiumAcqModel(abc.ABC):
     def t2_zero(self) -> float:
         return self._t2_zero
 
-    def safe_decay(self, time: float, t2: float | XpArray) -> float | XpArray:
+    def safe_decay(self, time: float, t2: XpArray) -> XpArray:
         """ utility function for computing the T2* decay, with safety net for very low T2* values
 
         Parameters
@@ -198,12 +198,12 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         te1: float,
         readout_time: typing.Callable[[np.ndarray], np.ndarray],
         kspace_part: RadialKSpacePartitioner,
-        T2star_free_short: float | np.ndarray,
-        T2star_free_long: float | np.ndarray,
-        T2star_bound_short: float | np.ndarray,
-        T2star_bound_long: float | np.ndarray,
-        free_long_frac: float | np.ndarray,
-        bound_long_frac: float | np.ndarray,
+        T2star_free_short: np.ndarray,
+        T2star_free_long: np.ndarray,
+        T2star_bound_short: np.ndarray,
+        T2star_bound_long: np.ndarray,
+        free_long_frac: np.ndarray,
+        bound_long_frac: np.ndarray,
     ) -> None:
         """ two compartment dual echo sodium acquisition model with fixed T2star times
 

@@ -112,3 +112,4 @@ run*.bat
 wip/*
 data/*
 data
+*/*config.json

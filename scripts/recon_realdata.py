@@ -171,24 +171,24 @@ def save_results():
 # input folders and specific parameters
 if pathology=='TBI':
     casedir = f"TBI-0{args.case}"
-    sdir1 = os.path.join(args.sdir, casedir, 'TE03', 'DeNoise')
-    sdir2 = os.path.join(args.sdir, casedir, 'TE5', 'DeNoise')
+    sdir1 = os.path.join(args.sdir, casedir, 'TE03', 'raw')
+    sdir2 = os.path.join(args.sdir, casedir, 'TE5', 'raw')
     fpattern = '*.c?'
     ncoils = 8
     data_n = 64
     te1 = 0.3
     delta_t = 4.7
-    fov = 220.
+    fov = 220. ## mm
 elif pathology=='CSF':
     casedir = f"CSF_H0{args.case}b1_birdcage"
-    sdir1 = os.path.join(args.sdir, casedir, 'TE05','DeNoise')
-    sdir2 = os.path.join(args.sdir, casedir, 'TE5', 'DeNoise')
+    sdir1 = os.path.join(args.sdir, casedir, 'TE05','raw')
+    sdir2 = os.path.join(args.sdir, casedir, 'TE5', 'raw')
     fpattern = '*.c?'
     ncoils  = 1
     data_n = 64
     te1 = 0.5
     delta_t = 4.5
-    fov = 220. # TODO check if true
+    fov = 220. # mm TODO check if true
 
 # find files
 fnames1 = sorted(glob(os.path.join(sdir1, fpattern)))
@@ -237,7 +237,26 @@ sens           = np.zeros((ncoils,) + recon_shape,  dtype = np.complex64)
 k = np.fft.fftfreq(recon_shape[0])
 k0,k1,k2 = np.meshgrid(k, k, k, indexing = 'ij')
 abs_k    = np.sqrt(k0**2 + k1**2 + k2**2)
-filt     =  np.exp(-(abs_k**2)/(2*0.02**2))
+abs_k_fft    = np.fft.fftshift(np.sqrt(k0**2 + k1**2 + k2**2))
+#filt     =  np.exp(-(abs_k**2)/(2*0.02**2))
+
+k_fft = np.fft.fftfreq(recon_n,
+                       d= (fov/10.) / recon_n) # fov converted to cm
+K0_fft, K1_fft, K2_fft = np.meshgrid(k_fft, k_fft, k_fft, indexing='ij')
+K_abs_fft = np.sqrt(K0_fft**2 + K1_fft**2 + K2_fft**2)
+
+half_data_n = data_n//2
+h_win = interp1d(np.arange(half_data_n),
+                 np.hanning(data_n)[half_data_n:],
+                 fill_value=0,
+                 bounds_error=False)
+# abs_k was scaled to have the k edge at 32, we have to revert that for the han window
+k_max = half_data_n /  (fov/10.)
+hmask = h_win(K_abs_fft.ravel() * half_data_n / k_max).reshape(K_abs_fft.shape)
+
+
+
+
 
 # factor for compensating the difference in fft normalization factors
 # when going back and forth between ffts with different N, given norm='ortho'
@@ -263,6 +282,9 @@ for i in range(ncoils):
   data_pad[i,1] = np.fft.fftshift(np.pad(np.fft.fftshift(data[i,1]), (recon_shape[0] - data_shape[0])//2))
   # compensate the difference in fft normalization factors for data and padded data resolutions
   data_pad[i,1] *= factor_fft_diff_res 
+
+ifft_echo_1_filtered = np.fft.ifftn(hmask * data_pad[0,0],
+                                    norm='ortho')
 
 # calculate the sum of square image
 sos_te1_for_sens = pynamr.sum_of_squares_reconstruction(data_pad[:,0]*filt, complex_format=True)
