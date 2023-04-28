@@ -37,7 +37,7 @@ regularization_norm_anatomical = args.regularization_norm_anatomical
 regularization_norm_non_anatomical = args.regularization_norm_non_anatomical
 
 beta_rs = [3e-2, 1e-1, 3e-1]
-noise_metric = 1
+noise_metric = 2
 #-----------------------------------------------------------------------
 
 iter_shape = (128, 128, 128)
@@ -95,22 +95,33 @@ roi_inds = {}
 roi_inds['cortical_gm'] = np.where((aparc * gm_mask) >= 1000)
 roi_inds['eroded_cortical_gm'] = np.where(
     binary_erosion((aparc * gm_mask) >= 1000, iterations=1))
+roi_inds['frontal'] = np.where(np.isin((aparc * gm_mask), [1028, 2028]))
+roi_inds['eroded_frontal'] = np.where(
+    binary_erosion(np.isin((aparc * gm_mask), [1028, 2028]), iterations=1))
+roi_inds['temporal'] = np.where(
+    np.isin((aparc * gm_mask), [1009, 1015, 1030, 1009, 1015, 1030]))
+roi_inds['eroded_temporal'] = np.where(
+    binary_erosion(np.isin((aparc * gm_mask),
+                           [1009, 1015, 1030, 2009, 2015, 2030]),
+                   iterations=1))
 roi_inds['putamen'] = np.where(np.isin((aparc * gm_mask), [12, 51]))
 roi_inds['eroded_putamen'] = np.where(
     binary_erosion(np.isin((aparc * gm_mask), [12, 51]), iterations=2))
-roi_inds['wm'] = np.where(np.isin((aparc * wm_mask), [2, 41]))
-roi_inds['eroded_wm'] = np.where(
-    binary_erosion(np.isin((aparc * wm_mask), [2, 41]), iterations=3))
 roi_inds['ventricles'] = np.where(np.isin((aparc * csf_mask), [4, 43]))
 roi_inds['eroded_ventricles'] = np.where(
     binary_erosion(np.isin((aparc * csf_mask), [4, 43]), iterations=2))
 roi_inds['cerebellum'] = np.where(np.isin((aparc * csf_mask), [8, 15]))
 roi_inds['eroded_cerebellum'] = np.where(
     binary_erosion(np.isin((aparc * csf_mask), [8, 15]), iterations=1))
-roi_inds['frontal'] = np.where(np.isin((aparc * gm_mask), [1028]))
-roi_inds['eroded_frontal'] = np.where(
-    binary_erosion(np.isin((aparc * gm_mask), [1028]), iterations=1))
-#-----------------------------------------------------------------------
+roi_inds['wm'] = np.where(np.isin((aparc * wm_mask), [2, 41]))
+roi_inds['eroded_wm'] = np.where(
+    binary_erosion(np.isin((aparc * wm_mask), [2, 41]), iterations=3))
+wm_border = np.zeros(sim_shape, dtype=np.uint8)
+wm_border[np.isin((aparc * wm_mask), [2, 41])] = 1
+wm_b1 = wm_border - binary_erosion(wm_border, iterations=1)
+wm_b2 = wm_border - binary_erosion(wm_border, iterations=2)
+roi_inds['wm_border1'] = np.where(wm_b1)
+roi_inds['wm_border2'] = np.where(wm_b2)
 
 betas_non_anatomical = [1e-2, 3e-2, 1e-1]
 betas_anatomical = [3e-4, 1e-3, 3e-3]
