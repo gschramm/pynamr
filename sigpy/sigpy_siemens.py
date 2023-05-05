@@ -34,6 +34,7 @@ parser.add_argument('--num_iter_r', type=int, default=100)
 parser.add_argument('--max_num_iter', type=int, default=1000)
 parser.add_argument('--odir', type=str, default=None)
 parser.add_argument('--matrix_size', type=int, default=128)
+parser.add_argument('--eta', type=float, default=0.005)
 args = parser.parse_args()
 
 #--------------------------------------------------------------------
@@ -46,6 +47,7 @@ max_num_iter = args.max_num_iter
 beta_r = args.beta_r
 num_iter_r = args.num_iter_r
 matrix_size = args.matrix_size
+eta = args.eta
 
 #--------------------------------------------------------------------
 # fixed parameters
@@ -453,7 +455,8 @@ t1_origin = t1_affine[:-1, -1]
 #else:
 #    raise ValueError('unknown rotation value')
 
-t1_reoriented = np.flip(t1, 2)
+#t1_reoriented = np.flip(t1, 2)
+t1_reoriented = np.flip(t1, (0, 2))
 
 na_voxsize = 10 * field_of_view_cm / np.array(ishape)
 na_origin = t1_origin.copy()
@@ -490,8 +493,7 @@ vi = pv.ThreeAxisViewer([
                         imshow_kwargs=ims)
 
 # projected gradient operator that we need for DTV
-
-PG = projected_gradient_operator(ishape, t1_aligned, eta=0.)
+PG = projected_gradient_operator(ishape, t1_aligned, eta=eta)
 
 #----------------------------------------------------------------------
 #----------------------------------------------------------------------
