@@ -28,8 +28,8 @@ class DualTESodiumAcqModel(abc.ABC):
     """ abstract base class for decay models for dual TE Na MR data """
 
     def __init__(self,
-                 ds: int,
-                 sens: XpArray,
+                 dim_info: dict,
+                 sens: np.ndarray,
                  dt: float,
                  te1: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
@@ -39,9 +39,9 @@ class DualTESodiumAcqModel(abc.ABC):
 
         Parameters
         ----------
-        ds : int
-            downsample factor (image shape / data shape)
-        sens : XpArray
+        dim_info: dict
+            dimension/resolution info
+        sens : np.ndarray
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
@@ -54,8 +54,8 @@ class DualTESodiumAcqModel(abc.ABC):
             into radial shells of "same" readout time
         """
 
-        # downsampling factor
-        self._ds = ds
+        # dimension/resolution info
+        self._dim_info = dim_info
         # sensitivity "image" for each coil in downsampled data space
         self._sens = sens
         # number coils
@@ -79,23 +79,20 @@ class DualTESodiumAcqModel(abc.ABC):
 
         # object that partions cartesian k-space into radial shells
         self._kspace_part = kspace_part
-        # shape of the data
-        self._data_shape = self._kspace_part._data_shape
 
         # readout time of every shell
         self._tr = self._readout_time(self._kspace_part.k)
 
-
-    @property
-    def data_shape(self) -> tuple[int, int, int]:
-        return self._data_shape
+        # T2* value below which we can assume that the signal is completely lost
+        # for this pulse sequence
+        self._t2_zero = self._te1 * 0.1
 
     @property
     def num_coils(self) -> int:
         return self._num_coils
 
     @property
-    def sens(self) -> XpArray:
+    def sens(self) -> np.ndarray:
         return self._sens
 
     @property
@@ -108,31 +105,48 @@ class DualTESodiumAcqModel(abc.ABC):
 
     @property
     def n_readout_bins(self) -> int:
-        return self._kspace_part.n_readout_bins
+        return self._kspace_part.n_bins
 
     @property
     def readout_inds(self) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-        return self._kspace_part.readout_inds
+        return self._kspace_part.k_inds
 
     @property
     def tr(self) -> float:
         return self._tr
 
     @property
-    def k_edge(self) -> float:
-        return self._kspace_part.k_edge
-
-    @property
-    def kmask(self) -> np.ndarray:
-        return self._kspace_part.kmask
-
-    @property
     def y_shape_complex(self) -> tuple[int, int, int, int, int]:
-        return (self.num_coils, ) + (2, ) + self.data_shape
+        return (self.num_coils, ) + (2, ) + self._dim_info['data_shape']
 
     @property
     def y_shape_real(self) -> tuple[int, int, int, int, int, int]:
         return self.y_shape_complex + (2, )
+
+    @property
+    def t2_zero(self) -> float:
+        return self._t2_zero
+
+    def safe_decay(self, time: float, t2: XpArray) -> XpArray:
+        """ utility function for computing the T2* decay, with safety net for very low T2* values
+
+        Parameters
+        ----------
+        time : decay time
+        t2 : T2* relaxation time, either scalar or spatial map
+
+        Returns
+        -------
+        float or XpArray
+            the multiplicative factor that represents the exponential decay
+        """
+        if self._xp.isscalar(t2):
+            temp = self._xp.exp( -time / t2) if t2 > self._t2_zero else 0.
+        else:
+            temp = self._xp.zeros(t2.shape, self._xp.float64)
+            temp[t2 > self._t2_zero] = self._xp.exp( -time / t2[t2 > self._t2_zero])
+        return temp
+
 
     @abc.abstractmethod
     def forward(self, var_dict: dict[VarName,Var]) -> np.ndarray:
@@ -178,26 +192,26 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
     def __init__(
         self,
-        ds: int,
-        sens: XpArray,
+        dim_info: dict,
+        sens: np.ndarray,
         dt: float,
         te1: float,
         readout_time: typing.Callable[[np.ndarray], np.ndarray],
         kspace_part: RadialKSpacePartitioner,
-        T2star_free_short: float,
-        T2star_free_long: float,
-        T2star_bound_short: float,
-        T2star_bound_long: float,
-        free_long_frac: float,
-        bound_long_frac: float,
+        T2star_free_short: np.ndarray,
+        T2star_free_long: np.ndarray,
+        T2star_bound_short: np.ndarray,
+        T2star_bound_long: np.ndarray,
+        free_long_frac: np.ndarray,
+        bound_long_frac: np.ndarray,
     ) -> None:
         """ two compartment dual echo sodium acquisition model with fixed T2star times
 
         Parameters
         ----------
-        ds : int
-            downsample factor (image shape / data shape)
-        sens : XpArray
+        dim_info : dict
+            dimension/resolution info
+        sens :np.ndarray 
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
@@ -208,69 +222,48 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         kspace_part : RadialKSpacePartitioner
             RadialKSpacePartioner that partitions cartesian k-space volume
             into radial shells of "same" readout time
-        T2star_free_short : float
-            short T2start time of free compartment
-        T2star_free_long : float
-            long T2start time of free compartment
-        T2star_bound_short : float
-            short T2start time of bound compartment
-        T2star_bound_long : float
-            long T2start time of bound compartment
-        free_long_frac : float
-            fraction of free compartment undergoing long/slow decay
-        bound_long_frac : float
-            fraction of bound compartment undergoing long/slow decay
+        T2star_free_short : float | np.ndarray
+            short T2start time of free compartment, either scalar or spatial map
+        T2star_free_long : float | np.ndarray
+            long T2start time of free compartment, either scalar or spatial map
+        T2star_bound_short : float | np.ndarray
+            short T2start time of bound compartment, either scalar or spatial map
+        T2star_bound_long : float | np.ndarray
+            long T2start time of bound compartment, either scalar or spatial map
+        free_long_frac : float | np.ndarray
+            fraction of free compartment undergoing long/slow decay, either scalar or spatial map
+        bound_long_frac : float | np.ndarray
+            fraction of bound compartment undergoing long/slow decay, either scalar or spatial map
         """
 
-        super().__init__(ds,
+        super().__init__(dim_info,
                          sens,
                          dt,
                          te1,
                          readout_time,
                          kspace_part)
 
-        self._T2star_free_short = T2star_free_short
-        self._T2star_free_long = T2star_free_long
-        self._T2star_bound_short = T2star_bound_short
-        self._T2star_bound_long = T2star_bound_long
+        # if T2* spatial maps and using cupy, convert immediately for convenience to cupy arrays
+        if self._xp.__name__ == 'cupy' and not self._xp.isscalar(T2star_bound_short):
+            self._T2star_free_short = self._xp.asarray(T2star_free_short)
+            self._T2star_free_long = self._xp.asarray(T2star_free_long)
+            self._T2star_bound_short = self._xp.asarray(T2star_bound_short)
+            self._T2star_bound_long = self._xp.asarray(T2star_bound_long)
 
-        self._free_long_frac = free_long_frac
-        self._bound_long_frac = bound_long_frac
+            self._free_long_frac = self._xp.asarray(free_long_frac)
+            self._bound_long_frac = self._xp.asarray(bound_long_frac)
+        else:
+            self._T2star_free_short = T2star_free_short
+            self._T2star_free_long = T2star_free_long
+            self._T2star_bound_short = T2star_bound_short
+            self._T2star_bound_long = T2star_bound_long
+
+            self._free_long_frac = free_long_frac
+            self._bound_long_frac = bound_long_frac
 
         self._free_short_frac = 1 - self._free_long_frac
         self._bound_short_frac = 1 - self._bound_long_frac 
 
-    @property
-    def T2star_free_short(self) -> float:
-        return self._T2star_free_short
-
-    @property
-    def T2star_free_long(self) -> float:
-        return self._T2star_free_long
-
-    @property
-    def T2star_bound_short(self) -> float:
-        return self._T2star_bound_short
-
-    @property
-    def T2star_bound_long(self) -> float:
-        return self._T2star_bound_long
-
-    @property
-    def free_long_frac(self) -> float:
-        return self._free_long_frac
-
-    @property
-    def bound_long_frac(self) -> float:
-        return self._bound_long_frac
-
-    @property
-    def free_short_frac(self) -> float:
-        return self._free_short_frac
-
-    @property
-    def bound_short_frac(self) -> float:
-        return self._bound_short_frac
 
     def forward(self, var_dict: dict[VarName,Var]) -> np.ndarray:
         """ forward step that calculates expected signal
@@ -294,81 +287,111 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         #----------------------
         # send f and gam to GPU
         if self._xp.__name__ == 'cupy':
-            x = self._xp.asarray(x)
-
-        # downsample the image along the spatial dimensions
-        x_ds = downsample(downsample(downsample(x, self._ds, axis=1),
-                                     self._ds,
-                                     axis=2),
-                          self._ds,
-                          axis=3)
+            x = self._xp.asarray(x) 
 
         y = self._xp.zeros(self.y_shape_complex, dtype=self._xp.complex128)
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
-                if self._bound_long_frac > 0:
                     # first echo - bound compartment - long
+                    temp = self._bound_long_frac * self.sens[i_sens, ...] \
+                            * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_long) \
+                            * x[0, ...]
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            temp = downsample(temp, self._dim_info['ds'], axis=s)
+
                     y[i_sens, 0, ...][self.readout_inds[
-                        it]] += self._bound_long_frac * self._xp.fft.fftn(
-                            self.sens[i_sens, ...] * self._xp.exp(
-                                - (self._tr[it] + self._te1) / self._T2star_bound_long) *
-                            x_ds[0, ...],
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - bound compartment - long
+                    temp = self._bound_long_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_long) \
+                    * x[0, ...]
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            temp = downsample(temp, self._dim_info['ds'], axis=s)
+
                     y[i_sens, 1, ...][self.readout_inds[
-                        it]] += self._bound_long_frac * self._xp.fft.fftn(
-                            self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1 + self._dt) /
-                                self._T2star_bound_long) * x_ds[0, ...],
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
 
-                if self._bound_short_frac > 0:
                     # first echo - bound compartment - short
+                    temp = self._bound_short_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_short) \
+                    * x[0, ...]
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            temp = downsample(temp, self._dim_info['ds'], axis=s)
+
                     y[i_sens, 0, ...][self.readout_inds[
-                        it]] += self._bound_short_frac * self._xp.fft.fftn(
-                            self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1) / self._T2star_bound_short) *
-                            x_ds[0, ...],
-                            norm='ortho')[self.readout_inds[it]]
+                        it]] += self._xp.fft.fftn(temp,
+                                norm='ortho')[self.readout_inds[it]]
                     # second echo - bound compartment - short
+                    temp = self._bound_short_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_short) \
+                    * x[0, ...]
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            temp = downsample(temp, self._dim_info['ds'], axis=s)
+
                     y[i_sens, 1, ...][self.readout_inds[
-                        it]] += self._bound_short_frac * self._xp.fft.fftn(
-                            self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1 + self._dt) /
-                                self._T2star_bound_short) * x_ds[0, ...],
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
 
-                if self._free_long_frac > 0:
                     # first echo - free compartment - long
+                    temp = self._free_long_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_long) \
+                    * x[1, ...]
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            temp = downsample(temp, self._dim_info['ds'], axis=s)
+
                     y[i_sens, 0, ...][self.readout_inds[
-                        it]] += self._free_long_frac * self._xp.fft.fftn(
-                            self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1) / self._T2star_free_long) *
-                            x_ds[1, ...],
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - free compartment - long
+                    temp = self._free_long_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_long) \
+                    * x[1, ...]
+
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            temp = downsample(temp, self._dim_info['ds'], axis=s)
+
                     y[i_sens, 1, ...][self.readout_inds[
-                        it]] += self._free_long_frac * self._xp.fft.fftn(
-                            self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1 + self._dt) /
-                                self._T2star_free_long) * x_ds[1, ...],
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
 
-                if self._free_short_frac > 0:
                     # first echo - free compartment - short
+                    temp = self._free_short_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_short) \
+                    * x[1, ...]
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            temp = downsample(temp, self._dim_info['ds'], axis=s)
+
                     y[i_sens, 0, ...][self.readout_inds[
-                        it]] += self._free_short_frac * self._xp.fft.fftn(
-                            self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1) / self._T2star_free_short) *
-                            x_ds[1, ...],
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
                     # second echo - free compartment - short
+                    temp = self._free_short_frac * self.sens[i_sens, ...] \
+                    * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_short) \
+                    * x[1, ...]
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            temp = downsample(temp, self._dim_info['ds'], axis=s)
+
                     y[i_sens, 1, ...][self.readout_inds[
-                        it]] += self._free_short_frac * self._xp.fft.fftn(
-                            self.sens[i_sens, ...] * self._xp.exp(
-                                -(self._tr[it] + self._te1 + self._dt) /
-                                self._T2star_free_short) * x_ds[1, ...],
+                        it]] += self._xp.fft.fftn(temp,
                             norm='ortho')[self.readout_inds[it]]
 
         # get y back from GPU
@@ -407,104 +430,118 @@ class TwoCompartmentBiExpDualTESodiumAcqModel(DualTESodiumAcqModel):
         if self._xp.__name__ == 'cupy':
             y = self._xp.asarray(y)
 
-        x_ds = self._xp.zeros((var_dict[VarName.PARAM].nb_comp,) + self._data_shape, dtype=y.dtype)
+        x = self._xp.zeros(var_dict[VarName.PARAM].complex_shape, dtype=y.dtype)
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
-                if self._bound_long_frac > 0:
                     # first echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
                                          dtype=y.dtype)
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
-                    x_ds[0, ...] += self._bound_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1) /
-                        self._T2star_bound_long)) * self._xp.conj(
-                            self.sens[i_sens]) * self._xp.fft.ifftn(
-                                tmp, norm='ortho')
+
+                    tmp = self._xp.fft.ifftn(tmp, norm='ortho')
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
+
+                    x[0, ...] += self._bound_long_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_long) \
+                                * self._xp.conj(self.sens[i_sens]) * tmp
                     # second echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
                                          dtype=y.dtype)
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
-                    x_ds[0, ...] += self._bound_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1 + self._dt) /
-                        self._T2star_bound_long)) * self._xp.conj(
-                            self.sens[i_sens]) * self._xp.fft.ifftn(
-                                tmp, norm='ortho')
+                    tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
-                if self._bound_short_frac > 0:
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
+
+                    x[0, ...] += self._bound_long_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_long) \
+                                * self._xp.conj(self.sens[i_sens]) * tmp
+
                     # first echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
                                          dtype=y.dtype)
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
-                    x_ds[0, ...] += self._bound_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1)/
-                        self._T2star_bound_short)) * self._xp.conj(
-                            self.sens[i_sens]) * self._xp.fft.ifftn(
-                                tmp, norm='ortho')
+                    tmp = self._xp.fft.ifftn(tmp, norm='ortho')
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
+
+                    x[0, ...] += self._bound_short_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_bound_short) \
+                                * self._xp.conj(self.sens[i_sens]) * tmp
                     # second echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
                                          dtype=y.dtype)
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
-                    x_ds[0, ...] += self._bound_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1 + self._dt) /
-                        self._T2star_bound_short)) * self._xp.conj(
-                            self.sens[i_sens]) * self._xp.fft.ifftn(
-                                tmp, norm='ortho')
+                    tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
-                if self._free_long_frac > 0:
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
+
+                    x[0, ...] += self._bound_short_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_bound_short) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
+
                     # first echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
                                          dtype=y.dtype)
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
-                    x_ds[1, ...] += self._free_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1)/
-                        self._T2star_free_long)) * self._xp.conj(
-                            self.sens[i_sens]) * self._xp.fft.ifftn(
-                                tmp, norm='ortho')
+                    tmp = self._xp.fft.ifftn(tmp, norm='ortho')
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
+
+                    x[1, ...] += self._free_long_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_long) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
                     # second echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
                                          dtype=y.dtype)
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
-                    x_ds[1, ...] += self._free_long_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1 + self._dt) /
-                        self._T2star_free_long)) * self._xp.conj(
-                            self.sens[i_sens]) * self._xp.fft.ifftn(
-                                tmp, norm='ortho')
+                    tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
-                if self._free_short_frac > 0:
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
+
+                    x[1, ...] += self._free_long_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_long) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
+
                     # first echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 0, ...].shape,
                                          dtype=y.dtype)
                     tmp[self.readout_inds[it]] = y[i_sens, 0,
                                                    ...][self.readout_inds[it]]
-                    x_ds[1, ...] += self._free_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1)/
-                        self._T2star_free_short)) * self._xp.conj(
-                            self.sens[i_sens]) * self._xp.fft.ifftn(
-                                tmp, norm='ortho')
+                    tmp = self._xp.fft.ifftn(tmp, norm='ortho')
+
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
+
+                    x[1, ...] += self._free_short_frac * self.safe_decay( self._tr[it] + self._te1, self._T2star_free_short) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
                     # second echo - bound compartment - long
                     tmp = self._xp.zeros(y[i_sens, 1, ...].shape,
                                          dtype=y.dtype)
                     tmp[self.readout_inds[it]] = y[i_sens, 1,
                                                    ...][self.readout_inds[it]]
-                    x_ds[1, ...] += self._free_short_frac * (self._xp.exp(
-                        -(self._tr[it] + self._te1 + self._dt) /
-                        self._T2star_free_short)) * self._xp.conj(
-                            self.sens[i_sens]) * self._xp.fft.ifftn(
-                                tmp, norm='ortho')
+                    tmp = self._xp.fft.ifftn(tmp, norm='ortho')
 
-        # apply transpose of downsample x
-        x = downsample_transpose(downsample_transpose(downsample_transpose(x_ds, self._ds, axis=1),
-                              self._ds,
-                              axis=2),
-                     self._ds,
-                     axis=3)
+                    if self._dim_info['ds_mode'] == 'image':
+                        for s in range(self._dim_info['spatial_n']):
+                            tmp = downsample_transpose(tmp, self._dim_info['ds'], axis=s)
+
+                    x[1, ...] += self._free_short_frac * self.safe_decay( self._tr[it] + self._te1 + self._dt, self._T2star_free_short) \
+                                    * self._xp.conj(self.sens[i_sens]) * tmp
 
         # get x gam back from GPU
         if self._xp.__name__ == 'cupy':
@@ -528,8 +565,8 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
     """ mono exponential dual TE sodium acquisition model assuming one compartment """
 
     def __init__(self,
-                 ds: int,
-                 sens: XpArray,
+                 dim_info: dict,
+                 sens: np.ndarray,
                  dt: float,
                  te1: float,
                  readout_time: typing.Callable[[np.ndarray], np.ndarray],
@@ -538,9 +575,9 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
 
         Parameters
         ----------
-        ds : int
-            downsample factor (image shape / data shape)
-        sens : XpArray
+        dim_info : dict
+            dimension/resolution info
+        sens : np.ndarray
             complex array with coil sensitivities with shape (num_coils, data_shape)
         dt : float
             difference time between the two echos
@@ -552,7 +589,7 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             RadialKSpacePartioner that partitions cartesian k-space volume
             into radial shells of "same" readout time
         """
-        super().__init__(ds,
+        super().__init__(dim_info,
                          sens,
                          dt,
                          te1,
@@ -586,31 +623,26 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             x = self._xp.asarray(x)
             gam = self._xp.asarray(gam)
 
-        # downsample x and gamma
-        x_ds = downsample(downsample(downsample(x, self._ds, axis=0),
-                                     self._ds,
-                                     axis=1),
-                          self._ds,
-                          axis=2)
-        gam_ds = downsample(downsample(downsample(gam, self._ds, axis=0),
-                                       self._ds,
-                                       axis=1),
-                            self._ds,
-                            axis=2)
-
         y = self._xp.zeros(self.y_shape_complex, dtype=self._xp.complex128)
 
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
-                y[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(
-                    self.sens[i_sens, ...] *
-                    gam_ds**((self._tr[it] + self._te1) / self._dt) * x_ds,
-                    norm='ortho')[self.readout_inds[it]]
-                y[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(
-                    self.sens[i_sens, ...] *
-                    gam_ds**(((self._tr[it] + self._te1)/ self._dt) + 1) * x_ds,
-                    norm='ortho')[self.readout_inds[it]]
+                temp = self.sens[i_sens, ...] * gam**((self._tr[it] + self._te1) / self._dt) * x
+
+                if self._dim_info['ds_mode'] == 'image':
+                    for s in range(self._dim_info['spatial_n']):
+                        temp =  downsample(temp, self._dim_info['ds'], axis=s)
+
+                y[i_sens, 0, ...][self.readout_inds[it]] = self._xp.fft.fftn(temp, norm='ortho')[self.readout_inds[it]]
+
+                temp = self.sens[i_sens, ...] * gam**(((self._tr[it] + self._te1)/ self._dt) + 1) * x
+
+                if self._dim_info['ds_mode'] == 'image':
+                    for s in range(self._dim_info['spatial_n']):
+                        temp =  downsample(temp, self._dim_info['ds'], axis=s)
+
+                y[i_sens, 1, ...][self.readout_inds[it]] = self._xp.fft.fftn(temp, norm='ortho')[self.readout_inds[it]]
 
         # get x from GPU
         if self._xp.__name__ == 'cupy':
@@ -652,14 +684,8 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             y = self._xp.asarray(y)
             gam = self._xp.asarray(gam)
 
-        x_ds = self._xp.zeros(self.data_shape,
+        x = self._xp.zeros(var_dict[VarName.IMAGE].complex_shape,
                               dtype=self._xp.complex128)
-
-        gam_ds = downsample(downsample(downsample(gam, self._ds, axis=0),
-                                       self._ds,
-                                       axis=1),
-                            self._ds,
-                            axis=2)
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
@@ -667,26 +693,26 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 tmp0 = self._xp.zeros(y[i_sens, 0, ...].shape, dtype=y.dtype)
                 tmp0[self.readout_inds[it]] = y[i_sens, 0,
                                                 ...][self.readout_inds[it]]
-                x_ds += (gam_ds
-                                 **((self._tr[it] + self._te1) / self._dt)) * self._xp.conj(
-                                     self.sens[i_sens]) * self._xp.fft.ifftn(
-                                         tmp0, norm='ortho')
+                tmp0 = self._xp.fft.ifftn(tmp0, norm='ortho')
+
+                if self._dim_info['ds_mode'] == 'image':
+                    for s in range(self._dim_info['spatial_n']):
+                        tmp0 = downsample_transpose(tmp0, self._dim_info['ds'], axis=s)
+
+                x += (gam**((self._tr[it] + self._te1) / self._dt)) * self._xp.conj(self.sens[i_sens]) * tmp0
 
                 # 2nd echo
                 tmp1 = self._xp.zeros(y[i_sens, 1, ...].shape, dtype=y.dtype)
                 tmp1[self.readout_inds[it]] = y[i_sens, 1,
                                                 ...][self.readout_inds[it]]
-                x_ds += (gam_ds**(
-                    ((self._tr[it] + self._te1)/ self._dt) + 1)) * self._xp.conj(
-                        self.sens[i_sens]) * self._xp.fft.ifftn(tmp1,
-                                                                norm='ortho')
 
-        # apply transpose of downsample to f
-        x = downsample_transpose(downsample_transpose(downsample_transpose(x_ds, self._ds, axis=0),
-                              self._ds,
-                              axis=1),
-                     self._ds,
-                     axis=2)
+                tmp1 = self._xp.fft.ifftn(tmp1, norm='ortho')
+
+                if self._dim_info['ds_mode'] == 'image':
+                    for s in range(self._dim_info['spatial_n']):
+                        tmp1 = downsample_transpose(tmp1, self._dim_info['ds'], axis=s)
+
+                x += (gam**(((self._tr[it] + self._te1)/ self._dt) + 1)) * self._xp.conj(self.sens[i_sens]) * tmp1
 
         # get x gam back from GPU
         if self._xp.__name__ == 'cupy':
@@ -736,20 +762,8 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
             gam = self._xp.asarray(gam)
             img = self._xp.asarray(img)
 
-        x_ds = self._xp.zeros(self.data_shape,
+        x = self._xp.zeros(var_dict[VarName.IMAGE].complex_shape,
                               dtype=self._xp.complex128)
-
-        gam_ds = downsample(downsample(downsample(gam, self._ds, axis=0),
-                                       self._ds,
-                                       axis=1),
-                            self._ds,
-                            axis=2)
-
-        img_ds = downsample(downsample(downsample(img, self._ds, axis=0),
-                                       self._ds,
-                                       axis=1),
-                            self._ds,
-                            axis=2)
 
         for i_sens in range(self._num_coils):
             for it in range(self.n_readout_bins):
@@ -759,24 +773,27 @@ class MonoExpDualTESodiumAcqModel(DualTESodiumAcqModel):
                 tmp0 = self._xp.zeros(y[i_sens, 0, ...].shape, dtype=y.dtype)
                 tmp0[self.readout_inds[it]] = y[i_sens, 0,
                                                 ...][self.readout_inds[it]]
-                x_ds += n * (gam_ds**(n - 1)) * self._xp.conj(
-                    img_ds.squeeze() * self.sens[i_sens]) * self._xp.fft.ifftn(
-                        tmp0, norm='ortho')
+                tmp0 = self._xp.fft.ifftn(tmp0, norm='ortho')
+
+                if self._dim_info['ds_mode'] == 'image':
+                    for s in range(self._dim_info['spatial_n']):
+                        tmp0 = downsample_transpose(tmp0, self._dim_info['ds'], axis=s)
+
+                x += n * (gam**(n - 1)) * self._xp.conj(
+                    img.squeeze() * self.sens[i_sens]) * tmp0
 
                 # 2nd echo
                 tmp1 = self._xp.zeros(y[i_sens, 1, ...].shape, dtype=y.dtype)
                 tmp1[self.readout_inds[it]] = y[i_sens, 1,
                                                 ...][self.readout_inds[it]]
-                x_ds += (n + 1) * (gam_ds**n) * self._xp.conj(
-                    img_ds.squeeze() * self.sens[i_sens]) * self._xp.fft.ifftn(
-                        tmp1, norm='ortho')
+                tmp1 = self._xp.fft.ifftn(tmp1, norm='ortho')
 
-        # apply transpose of downsample to x
-        x = downsample_transpose(downsample_transpose(downsample_transpose(x_ds, self._ds, axis=0),
-                              self._ds,
-                              axis=1),
-                     self._ds,
-                     axis=2)
+                if self._dim_info['ds_mode'] == 'image':
+                    for s in range(self._dim_info['spatial_n']):
+                        tmp1 = downsample_transpose(tmp1, self._dim_info['ds'], axis=s)
+
+                x += (n + 1) * (gam**n) * self._xp.conj(
+                    img.squeeze() * self.sens[i_sens]) * tmp1
 
         # get x gam back from GPU
         if self._xp.__name__ == 'cupy':

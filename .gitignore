@@ -110,3 +110,6 @@ data/*
 run*.sh
 run*.bat
 wip/*
+data/*
+data
+*/*config.json

@@ -1,0 +1,6 @@
+run/*
+run*.sh
+run*
+.simulation_config.json
+test*.py
+data/*
