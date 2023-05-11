@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 import pymirc.viewer as pv
 import nibabel as nib
-from scipy.ndimage import binary_erosion, gaussian_filter, zoom
+from scipy.ndimage import binary_erosion, gaussian_filter, zoom, center_of_mass
+from collections import OrderedDict
 import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser()
@@ -91,37 +92,37 @@ aparc = np.pad(np.asanyarray(aparc_nii.dataobj), pad_size_220, 'constant')
 
 aparc = zoom(aparc, sim_shape[0] / aparc.shape[0], order=0, prefilter=False)
 
-roi_inds = {}
-roi_inds['cortical_gm'] = np.where((aparc * gm_mask) >= 1000)
-roi_inds['eroded_cortical_gm'] = np.where(
-    binary_erosion((aparc * gm_mask) >= 1000, iterations=1))
-roi_inds['frontal'] = np.where(np.isin((aparc * gm_mask), [1028, 2028]))
-roi_inds['eroded_frontal'] = np.where(
-    binary_erosion(np.isin((aparc * gm_mask), [1028, 2028]), iterations=1))
-roi_inds['temporal'] = np.where(
-    np.isin((aparc * gm_mask), [1009, 1015, 1030, 1009, 1015, 1030]))
-roi_inds['eroded_temporal'] = np.where(
-    binary_erosion(np.isin((aparc * gm_mask),
-                           [1009, 1015, 1030, 2009, 2015, 2030]),
-                   iterations=1))
-roi_inds['putamen'] = np.where(np.isin((aparc * gm_mask), [12, 51]))
-roi_inds['eroded_putamen'] = np.where(
-    binary_erosion(np.isin((aparc * gm_mask), [12, 51]), iterations=2))
+roi_inds = OrderedDict()
 roi_inds['ventricles'] = np.where(np.isin((aparc * csf_mask), [4, 43]))
-roi_inds['eroded_ventricles'] = np.where(
-    binary_erosion(np.isin((aparc * csf_mask), [4, 43]), iterations=2))
-roi_inds['cerebellum'] = np.where(np.isin((aparc * csf_mask), [8, 15]))
-roi_inds['eroded_cerebellum'] = np.where(
-    binary_erosion(np.isin((aparc * csf_mask), [8, 15]), iterations=1))
-roi_inds['wm'] = np.where(np.isin((aparc * wm_mask), [2, 41]))
-roi_inds['eroded_wm'] = np.where(
-    binary_erosion(np.isin((aparc * wm_mask), [2, 41]), iterations=3))
-wm_border = np.zeros(sim_shape, dtype=np.uint8)
-wm_border[np.isin((aparc * wm_mask), [2, 41])] = 1
-wm_b1 = wm_border - binary_erosion(wm_border, iterations=1)
-wm_b2 = wm_border - binary_erosion(wm_border, iterations=2)
-roi_inds['wm_border1'] = np.where(wm_b1)
-roi_inds['wm_border2'] = np.where(wm_b2)
+roi_inds['white matter'] = np.where(np.isin((aparc * wm_mask), [2, 41]))
+roi_inds['putamen'] = np.where(np.isin((aparc * gm_mask), [12, 51]))
+roi_inds['cerebellum'] = np.where(np.isin((aparc * gm_mask), [8, 47]))
+roi_inds['cortical grey matter'] = np.where((aparc * gm_mask) >= 1000)
+roi_inds['frontal'] = np.where(np.isin((aparc * gm_mask), [1028, 2028]))
+roi_inds['temporal'] = np.where(
+    np.isin((aparc * gm_mask), [1009, 1015, 1030, 2009, 2015, 2030]))
+
+# visualize the ROIs
+vis = []
+
+for key, inds in roi_inds.items():
+    roi_mask = np.zeros_like(gt)
+    roi_mask[inds] = 1
+
+    com = [int(x) for x in center_of_mass(roi_mask)]
+    sl2 = np.argmax(roi_mask.sum((0, 1)))
+    sl1 = np.argmax(roi_mask.sum((0, 2)))
+
+    fig0, ax0 = plt.subplots(1, 2, figsize=(6, 3))
+    ax0[0].imshow(gt[:, :, sl2].T, origin='lower', cmap='Greys_r')
+    ax0[0].contour(roi_mask[:, :, sl2].T, origin='lower', levels=1, cmap='hot')
+    ax0[1].imshow(gt[:, sl1, :].T, origin='lower', cmap='Greys_r')
+    ax0[1].contour(roi_mask[:, sl1, :].T, origin='lower', levels=1, cmap='hot')
+    ax0[0].set_axis_off()
+    ax0[1].set_axis_off()
+    fig0.tight_layout()
+    fig0.savefig(odirs[0] / f'roi_{key}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig0)
 
 betas_non_anatomical = [1e-2, 3e-2, 1e-1]
 betas_anatomical = [3e-4, 1e-3, 3e-3]
@@ -167,13 +168,6 @@ r2s = np.zeros((
     len(betas_anatomical),
 ) + sim_shape)
 
-#ifft1s = np.zeros((
-#    len(odirs),
-#    len(sm_fwhms_mm),
-#) + sim_shape)
-#
-#ifft_scale_fac = 1.
-
 # calculate the ROI averages
 true_means = {}
 recon_e1_no_decay_roi_means = {}
@@ -194,24 +188,6 @@ sl = 73
 # calculate the true means
 for key, inds in roi_inds.items():
     true_means[key] = gt[inds].mean()
-#    ifft1_roi_means[key] = np.array([[x[inds].mean() for x in y]
-#                                     for y in ifft1s])
-
-#for i, odir in enumerate(odirs):
-#    print('loading IFFTs', odir)
-#    # load IFFT of first echo
-#    ifft = ifft_scale_fac * np.load(odir / 'ifft1.npy')
-#    ifft_voxsize = 220 / ifft.shape[0]
-#
-#    for j, sm_fwhm_mm in enumerate(sm_fwhms_mm):
-#        ifft1s[i, j, ...] = zoom(np.abs(
-#            gaussian_filter(ifft, sm_fwhm_mm / (2.35 * ifft_voxsize))),
-#                                 sim_shape[0] / ifft.shape[0],
-#                                 order=1,
-#                                 prefilter=False)
-#
-#ifft1s_mean = ifft1s.mean(axis=0)
-#ifft1s_std = ifft1s.std(axis=0)
 
 # load the image scale factor
 with open(odirs[0] / 'scaling_factors.json', 'r') as f:
@@ -324,22 +300,13 @@ agrs_both_echos_w_decay2_std = agrs_both_echos_w_decay2.std(axis=0)
 #--------------------------------------------------------------------------------
 # bias noise plots
 
-num_rows = 2
-num_cols = len(roi_inds) // 2
+num_rows = 1
+num_cols = len(roi_inds)
 fig, ax = plt.subplots(num_rows,
                        num_cols,
-                       figsize=(4 * num_cols, 4 * num_rows),
+                       figsize=(2.5 * num_cols, 3.5 * num_rows),
+                       sharex=True,
                        sharey=True)
-
-#for i, (roi, vals) in enumerate(ifft1_roi_means.items()):
-#    x = vals.std(0)
-#    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-#    ax.ravel()[i].plot(x, y, 'x-', label='IFFT')
-#
-#    for j in range(len(x)):
-#        ax.ravel()[i].annotate(f'{sm_fwhms_mm[j]:.1f}mm', (x[j], y[j]),
-#                               horizontalalignment='center',
-#                               verticalalignment='bottom')
 
 for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
     if noise_metric == 1:
@@ -412,15 +379,8 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay2_roi_means.items()):
         ax.ravel()[i].set_xlabel('ROI averaged std.dev.')
     ax.ravel()[i].axhline(0, color='k')
 
-    ## get y-axis limits of the plot
-    #low, high = ax.ravel()[i].get_ylim()
-    ## find the new limits
-    #bound = max(abs(low), abs(high))
-    ## set new limits
-    #ax.ravel()[i].set_ylim(-bound, bound)
-
-ax[0, 0].set_ylabel('bias of ROI mean [%]')
-ax[1, 0].set_ylabel('bias of ROI mean [%]')
+ax[0].set_ylabel('bias of ROI mean [%]')
+ax[0].set_ylabel('bias of ROI mean [%]')
 ax.ravel()[-1].legend(loc='lower right', fontsize='small')
 
 fig.tight_layout()
@@ -429,227 +389,98 @@ fig.show()
 #--------------------------------------------------------------------------------
 # recon plots
 
-num_cols2 = len(betas_non_anatomical)
-num_rows2 = 3
-fig2, ax2 = plt.subplots(num_rows2,
-                         num_cols2,
-                         figsize=(3 * num_cols2, 3 * num_rows2))
-
-for i in range(num_cols2):
-    ax2[0, i].imshow(recons_e1_no_decay[0, i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=2)
-    ax2[1, i].imshow(recons_e1_no_decay_mean[i, ..., sl].T - gt[:, :, sl].T,
-                     origin='lower',
-                     cmap='seismic',
-                     vmin=-1,
-                     vmax=1)
-    ax2[2, i].imshow(recons_e1_no_decay_std[i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=0.5)
-
-    ax2[0, i].set_title(f'beta = {betas_non_anatomical[i]}')
-
-ax2[0, 0].set_ylabel('first noise realization')
-ax2[1, 0].set_ylabel('bias image')
-ax2[2, 0].set_ylabel('std.dev. image')
-
-for axx in ax2.ravel():
-    axx.set_xticks([])
-    axx.set_yticks([])
-
-fig2.tight_layout()
-fig2.show()
-
 #------------------------------------------------------------------------------------
 
-#num_cols3 = len(sm_fwhms_mm)
-#num_rows3 = 3
-#fig3, ax3 = plt.subplots(num_rows3,
-#                         num_cols3,
-#                         figsize=(3 * num_cols3, 3 * num_rows3))
-#
-#for i in range(num_cols3):
-#    ax3[0, i].imshow(ifft1s[0,i, ..., sl].T,
-#                     origin='lower',
-#                     cmap='Greys_r',
-#                     vmin=0,
-#                     vmax=2)
-#    ax3[1, i].imshow(ifft1s_mean[i, ..., sl].T - gt[:, :, sl].T,
-#                     origin='lower',
-#                     cmap='seismic',
-#                     vmin=-1,
-#                     vmax=1)
-#    ax3[2, i].imshow(ifft1s_std[i, ..., sl].T,
-#                     origin='lower',
-#                     cmap='Greys_r',
-#                     vmin=0,
-#                     vmax=0.5)
-#
-#    ax3[0, i].set_title(f'fwhm = {sm_fwhms_mm[i]:.1f}mm')
-#
-#ax3[0, 0].set_ylabel('first noise realization')
-#ax3[1, 0].set_ylabel('bias image')
-#ax3[2, 0].set_ylabel('std.dev. image')
-#
-#for axx in ax3.ravel():
-#    axx.set_xticks([])
-#    axx.set_yticks([])
-#
-#fig3.tight_layout()
-#fig3.show()
+vmax_std = 0.2
+vmax = 1.75
+bmax = 1
+inoise = 0
 
-#--------------------------------------------------------------------------------
+fig3a, ax3a = plt.subplots(3, 3, figsize=(6, 6))
+fig3b, ax3b = plt.subplots(3, 3, figsize=(6, 6))
+fig3c, ax3c = plt.subplots(3, 3, figsize=(6, 6))
 
-num_cols4 = len(betas_anatomical)
-num_rows4 = 3
-fig4, ax4 = plt.subplots(num_rows4,
-                         num_cols4,
-                         figsize=(3 * num_cols4, 3 * num_rows4))
+for i in range(3):
+    i0 = ax3a[i, 0].imshow(recons_e1_no_decay[inoise, i, ..., sl].T,
+                           origin='lower',
+                           cmap='Greys_r',
+                           vmin=0,
+                           vmax=vmax)
+    i1 = ax3a[i,
+              1].imshow(recons_e1_no_decay_mean[i, ..., sl].T - gt[:, :, sl].T,
+                        origin='lower',
+                        cmap='seismic',
+                        vmin=-bmax,
+                        vmax=bmax)
+    i2 = ax3a[i, 2].imshow(recons_e1_no_decay_std[i, ..., sl].T,
+                           origin='lower',
+                           cmap='Greys_r',
+                           vmin=0,
+                           vmax=vmax_std)
+    i3 = ax3b[i, 0].imshow(agrs_e1_no_decay[inoise, i, ..., sl].T,
+                           origin='lower',
+                           cmap='Greys_r',
+                           vmin=0,
+                           vmax=vmax)
+    i4 = ax3b[i,
+              1].imshow(agrs_e1_no_decay_mean[i, ..., sl].T - gt[:, :, sl].T,
+                        origin='lower',
+                        cmap='seismic',
+                        vmin=-bmax,
+                        vmax=bmax)
+    i5 = ax3b[i, 2].imshow(agrs_e1_no_decay_std[i, ..., sl].T,
+                           origin='lower',
+                           cmap='Greys_r',
+                           vmin=0,
+                           vmax=vmax_std)
+    i6 = ax3c[i, 0].imshow(agrs_both_echos_w_decay1[inoise, i, ..., sl].T,
+                           origin='lower',
+                           cmap='Greys_r',
+                           vmin=0,
+                           vmax=vmax)
+    i7 = ax3c[i, 1].imshow(agrs_both_echos_w_decay1_mean[i, ..., sl].T -
+                           gt[:, :, sl].T,
+                           origin='lower',
+                           cmap='seismic',
+                           vmin=-bmax,
+                           vmax=bmax)
+    i8 = ax3c[i, 2].imshow(agrs_both_echos_w_decay1_std[i, ..., sl].T,
+                           origin='lower',
+                           cmap='Greys_r',
+                           vmin=0,
+                           vmax=vmax_std)
 
-for i in range(num_cols4):
-    ax4[0, i].imshow(agrs_e1_no_decay[0, i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=2)
-    ax4[1, i].imshow(agrs_e1_no_decay_mean[i, ..., sl].T - gt[:, :, sl].T,
-                     origin='lower',
-                     cmap='seismic',
-                     vmin=-1,
-                     vmax=1)
-    ax4[2, i].imshow(agrs_e1_no_decay_std[i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=0.5)
+ax3a[0, 0].set_title('first noise realization')
+ax3a[0, 1].set_title('bias image')
+ax3a[0, 2].set_title('std.dev. image')
+ax3b[0, 0].set_title('first noise realization')
+ax3b[0, 1].set_title('bias image')
+ax3b[0, 2].set_title('std.dev. image')
+ax3c[0, 0].set_title('first noise realization')
+ax3c[0, 1].set_title('bias image')
+ax3c[0, 2].set_title('std.dev. image')
 
-    ax4[0, i].set_title(f'beta = {betas_anatomical[i]}')
+for axx in ax3a.ravel():
+    axx.set_axis_off()
+for axx in ax3b.ravel():
+    axx.set_axis_off()
+for axx in ax3c.ravel():
+    axx.set_axis_off()
 
-ax4[0, 0].set_ylabel('first noise realization')
-ax4[1, 0].set_ylabel('bias image')
-ax4[2, 0].set_ylabel('std.dev. image')
+fig3a.tight_layout()
+fig3b.tight_layout()
+fig3c.tight_layout()
 
-for axx in ax4.ravel():
-    axx.set_xticks([])
-    axx.set_yticks([])
+fig3a.savefig('conv_sim.png')
+fig3b.savefig('agr_wo_decay_sim.png')
+fig3c.savefig('agr_w_decay_sim.png')
 
+fig3a.show()
+fig3b.show()
+fig3c.show()
+
+fig4, ax4 = plt.subplots(1, 1, figsize=(2, 2))
+ax4.imshow(gt[..., sl].T, origin='lower', cmap='Greys_r', vmin=0, vmax=vmax)
+ax4.set_axis_off()
 fig4.tight_layout()
 fig4.show()
-
-#--------------------------------------------------------------------------------
-
-num_cols5 = len(betas_anatomical)
-num_rows5 = 3
-fig5, ax5 = plt.subplots(num_rows5,
-                         num_cols5,
-                         figsize=(3 * num_cols5, 3 * num_rows5))
-
-for i in range(num_cols5):
-    ax5[0, i].imshow(agrs_both_echos_w_decay0[0, i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=2)
-    ax5[1,
-        i].imshow(agrs_both_echos_w_decay0_mean[i, ..., sl].T - gt[:, :, sl].T,
-                  origin='lower',
-                  cmap='seismic',
-                  vmin=-1,
-                  vmax=1)
-    ax5[2, i].imshow(agrs_both_echos_w_decay0_std[i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=0.5)
-
-    ax5[0, i].set_title(f'beta = {betas_anatomical[i]}')
-
-ax5[0, 0].set_ylabel('first noise realization')
-ax5[1, 0].set_ylabel('bias image')
-ax5[2, 0].set_ylabel('std.dev. image')
-
-for axx in ax5.ravel():
-    axx.set_xticks([])
-    axx.set_yticks([])
-
-fig5.tight_layout()
-fig5.show()
-
-#--------------------------------------------------------------------------------
-
-fig6, ax6 = plt.subplots(num_rows5,
-                         num_cols5,
-                         figsize=(3 * num_cols5, 3 * num_rows5))
-
-for i in range(num_cols5):
-    ax6[0, i].imshow(agrs_both_echos_w_decay1[0, i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=2)
-    ax6[1,
-        i].imshow(agrs_both_echos_w_decay1_mean[i, ..., sl].T - gt[:, :, sl].T,
-                  origin='lower',
-                  cmap='seismic',
-                  vmin=-1,
-                  vmax=1)
-    ax6[2, i].imshow(agrs_both_echos_w_decay1_std[i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=0.5)
-
-    ax6[0, i].set_title(f'beta = {betas_anatomical[i]}')
-
-ax6[0, 0].set_ylabel('first noise realization')
-ax6[1, 0].set_ylabel('bias image')
-ax6[2, 0].set_ylabel('std.dev. image')
-
-for axx in ax6.ravel():
-    axx.set_xticks([])
-    axx.set_yticks([])
-
-fig6.tight_layout()
-fig6.show()
-
-#--------------------------------------------------------------------------------
-
-fig7, ax7 = plt.subplots(num_rows5,
-                         num_cols5,
-                         figsize=(3 * num_cols5, 3 * num_rows5))
-
-for i in range(num_cols5):
-    ax7[0, i].imshow(agrs_both_echos_w_decay2[0, i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=2)
-    ax7[1,
-        i].imshow(agrs_both_echos_w_decay2_mean[i, ..., sl].T - gt[:, :, sl].T,
-                  origin='lower',
-                  cmap='seismic',
-                  vmin=-1,
-                  vmax=1)
-    ax7[2, i].imshow(agrs_both_echos_w_decay2_std[i, ..., sl].T,
-                     origin='lower',
-                     cmap='Greys_r',
-                     vmin=0,
-                     vmax=0.5)
-
-    ax7[0, i].set_title(f'beta = {betas_anatomical[i]}')
-
-ax7[0, 0].set_ylabel('first noise realization')
-ax7[1, 0].set_ylabel('bias image')
-ax7[2, 0].set_ylabel('std.dev. image')
-
-for axx in ax7.ravel():
-    axx.set_xticks([])
-    axx.set_yticks([])
-
-fig7.tight_layout()
-fig7.show()

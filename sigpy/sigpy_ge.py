@@ -580,8 +580,8 @@ est_ratio = cp.clip(
     cp.abs(agr_echo_2_wo_decay_model) / cp.abs(agr_echo_1_wo_decay_model), 0,
     1)
 # set ratio to one in voxels where there is low signal in the first echo
-mask = 1 - (cp.abs(agr_echo_1_wo_decay_model) <
-            0.05 * cp.abs(agr_echo_1_wo_decay_model).max())
+mask = 1 - (cp.abs(agr_echo_1_wo_decay_model)
+            < 0.05 * cp.abs(agr_echo_1_wo_decay_model).max())
 
 label, num_label = ndimage.label(mask == 1)
 size = np.bincount(label.ravel())
@@ -697,6 +697,8 @@ d = cp.asnumpy(cp.abs(ifft1_sm))
 e = cp.asnumpy(cp.abs(recon_echo_1_wo_decay_model))
 f = cp.asnumpy(t1_aligned)
 
+vmax_na = np.percentile(e, 99.99)
+
 # re-orient to RAS
 if rotation == 0:
     a = np.swapaxes(np.flip(a, 0), 0, 1)
@@ -714,7 +716,7 @@ d = np.flip(d, (0, 1))
 e = np.flip(e, (0, 1))
 f = np.flip(f, (0, 1))
 
-ims1 = 2 * [dict(vmin=0, vmax=1.6, cmap='Greys_r')] + [
+ims1 = 2 * [dict(vmin=0, vmax=vmax_na, cmap='Greys_r')] + [
     dict(cmap='Greys_r', vmin=0, vmax=1)
 ]
 vi1 = pv.ThreeAxisViewer([
@@ -724,7 +726,9 @@ vi1 = pv.ThreeAxisViewer([
 ], imshow_kwargs=ims1, sl_z=76)
 vi1.fig.savefig(outfileb.with_suffix('.png'), dpi=300)
 
-ims2 = 2 * [dict(vmin=0, vmax=1.6, cmap='Greys_r')] + [dict(cmap='Greys_r')]
+ims2 = 2 * [dict(vmin=0, vmax=vmax_na, cmap='Greys_r')] + [
+    dict(cmap='Greys_r')
+]
 vi2 = pv.ThreeAxisViewer([
     d,
     e,
