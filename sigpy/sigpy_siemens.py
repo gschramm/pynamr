@@ -590,8 +590,8 @@ est_ratio = cp.clip(
     cp.abs(agr_echo_2_wo_decay_model) / cp.abs(agr_echo_1_wo_decay_model), 0,
     1)
 # set ratio to one in voxels where there is low signal in the first echo
-mask = 1 - (cp.abs(agr_echo_1_wo_decay_model) <
-            0.05 * cp.abs(agr_echo_1_wo_decay_model).max())
+mask = 1 - (cp.abs(agr_echo_1_wo_decay_model)
+            < 0.05 * cp.abs(agr_echo_1_wo_decay_model).max())
 
 label, num_label = ndimage.label(mask == 1)
 size = np.bincount(label.ravel())
@@ -732,3 +732,46 @@ vi2 = pv.ThreeAxisViewer([
     f,
 ], imshow_kwargs=ims2, sl_z=76)
 vi2.fig.savefig(outfile1na.with_suffix('.png'), dpi=300)
+
+#---------------------------------------------------------------------------------------
+
+slz = 72
+sly = 55
+slx = 68
+
+vmax = 1.7
+
+fig, ax = plt.subplots(2, 5, figsize=(5 * 2, 2 * 2))
+ax[0, 0].imshow(f[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=1.5)
+ax[1, 0].imshow(f[slx, :, :].T,
+                origin='lower',
+                cmap='Greys_r',
+                vmin=0,
+                vmax=1.5)
+ax[0, 1].imshow(e[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=vmax)
+ax[1, 1].imshow(e[slx, :, :].T,
+                origin='lower',
+                cmap='Greys_r',
+                vmin=0,
+                vmax=vmax)
+ax[0, 2].imshow(a[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=vmax)
+ax[1, 2].imshow(a[slx, :, :].T,
+                origin='lower',
+                cmap='Greys_r',
+                vmin=0,
+                vmax=vmax)
+ax[0, 3].imshow(b[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=vmax)
+ax[1, 3].imshow(b[slx, :, :].T,
+                origin='lower',
+                cmap='Greys_r',
+                vmin=0,
+                vmax=vmax)
+
+ax[0, 4].imshow(c[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=1)
+ax[1, 4].imshow(c[slx, :, :].T, origin='lower', cmap='Greys_r', vmin=0, vmax=1)
+
+for axx in ax.ravel():
+    axx.set_axis_off()
+
+fig.tight_layout()
+fig.show()

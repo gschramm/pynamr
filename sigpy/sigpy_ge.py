@@ -735,3 +735,46 @@ vi2 = pv.ThreeAxisViewer([
     f,
 ], imshow_kwargs=ims2, sl_z=76)
 vi2.fig.savefig(outfile1na.with_suffix('.png'), dpi=300)
+
+#-------------------------------------------------------------------
+
+slz = 76
+sly = 55
+slx = 64
+
+vmax = 1.5
+
+fig, ax = plt.subplots(2, 5, figsize=(5 * 2, 2 * 2))
+ax[0, 0].imshow(f[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=1.5)
+ax[1, 0].imshow(f[slx, :, :].T,
+                origin='lower',
+                cmap='Greys_r',
+                vmin=0,
+                vmax=1.5)
+ax[0, 1].imshow(e[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=vmax)
+ax[1, 1].imshow(e[slx, :, :].T,
+                origin='lower',
+                cmap='Greys_r',
+                vmin=0,
+                vmax=vmax)
+ax[0, 2].imshow(a[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=vmax)
+ax[1, 2].imshow(a[slx, :, :].T,
+                origin='lower',
+                cmap='Greys_r',
+                vmin=0,
+                vmax=vmax)
+ax[0, 3].imshow(b[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=vmax)
+ax[1, 3].imshow(b[slx, :, :].T,
+                origin='lower',
+                cmap='Greys_r',
+                vmin=0,
+                vmax=vmax)
+
+ax[0, 4].imshow(c[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=1)
+ax[1, 4].imshow(c[slx, :, :].T, origin='lower', cmap='Greys_r', vmin=0, vmax=1)
+
+for axx in ax.ravel():
+    axx.set_axis_off()
+
+fig.tight_layout()
+fig.show()
