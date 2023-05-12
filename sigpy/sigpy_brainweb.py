@@ -61,13 +61,13 @@ cp.random.seed(seed)
 #---------------------------------------------------------------
 # fixed parameters
 
-#sim_shape = (160, 160, 160)
-#num_sim_chunks = 1
-
+# image shape for data simulation
 sim_shape = (256, 256, 256)
 num_sim_chunks = 128
 
+# image shape for iterative recons
 ishape = (128, 128, 128)
+# grid shape for IFFTs
 grid_shape = (64, 64, 64)
 
 field_of_view_cm: float = 22.
