@@ -267,11 +267,11 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     # add mismatches
     if add_anatomical_mismatch:
         R1 = np.sqrt((X - 329)**2 + (Y - 165)**2 + (Z - 200)**2)
-        R2 = np.sqrt((X - 327)**2 + (Y - 262)**2 + (Z - 200)**2)
         inds1 = np.where((R1 < 10))
-        inds2 = np.where((R2 < 10))
         img[inds1] = gm_na_concentration
-        t1[inds2] = 0
+        #R2 = np.sqrt((X - 327)**2 + (Y - 262)**2 + (Z - 200)**2)
+        #inds2 = np.where((R2 < 10))
+        #t1[inds2] = 0
 
     # add bias field on T2* times
     if add_T2star_bias:
@@ -350,8 +350,8 @@ def trilinear_kspace_interpolation(non_uniform_data, kx, ky, kz, matrix_size,
 
             toAdd = non_uniform_data[i]
 
-            if (kx_shifted_low >= 0) and (ky_shifted_low >=
-                                          0) and (kz_shifted_low >= 0):
+            if (kx_shifted_low >= 0) and (ky_shifted_low
+                                          >= 0) and (kz_shifted_low >= 0):
 
                 output[kx_shifted_low, ky_shifted_low,
                        kz_shifted_low] += (1 - dkx) * (1 - dky) * (1 -

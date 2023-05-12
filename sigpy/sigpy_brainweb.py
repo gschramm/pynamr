@@ -39,6 +39,7 @@ parser.add_argument('--regularization_norm_non_anatomical',
                     type=str,
                     default='L2',
                     choices=['L1', 'L2'])
+parser.add_argument('--eta', type=float, default=0.005)
 args = parser.parse_args()
 
 max_num_iter = args.max_num_iter
@@ -53,6 +54,7 @@ beta_non_anatomical = args.beta_non_anatomical
 beta_r = args.beta_r
 regularization_norm_anatomical = args.regularization_norm_anatomical
 regularization_norm_non_anatomical = args.regularization_norm_non_anatomical
+eta = args.eta
 
 cp.random.seed(seed)
 
@@ -130,7 +132,7 @@ if phantom == 'brainweb':
         wm_na_concentration=0.4,
         other_na_concentration=0.3,
         add_anatomical_mismatch=True,
-        add_T2star_bias=True)
+        add_T2star_bias=False)
 elif phantom == 'blob':
     x, t1_image, T2short_ms, T2long_ms = setup_blob_phantom(sim_shape[0],
                                                             radius=0.65)
@@ -453,8 +455,10 @@ del A2
 #---------------------------------------------------------------------
 # projected gradient operator that we need for DTV
 
+t1_image /= np.percentile(t1_image, 99.9)
+
 prior_image = cp.asarray(zoom3d(t1_image, ishape[0] / sim_shape[0]))
-PG = projected_gradient_operator(ishape, prior_image, eta=0.)
+PG = projected_gradient_operator(ishape, prior_image, eta=eta)
 
 #----------------------------------------------------------------------
 #----------------------------------------------------------------------
@@ -550,8 +554,8 @@ est_ratio = cp.clip(
     cp.abs(agr_echo_2_wo_decay_model) / cp.abs(agr_echo_1_wo_decay_model), 0,
     1)
 # set ratio to one in voxels where there is low signal in the first echo
-mask = 1 - (cp.abs(agr_echo_1_wo_decay_model) <
-            0.05 * cp.abs(agr_echo_1_wo_decay_model).max())
+mask = 1 - (cp.abs(agr_echo_1_wo_decay_model)
+            < 0.05 * cp.abs(agr_echo_1_wo_decay_model).max())
 
 label, num_label = ndimage.label(mask == 1)
 size = np.bincount(label.ravel())
