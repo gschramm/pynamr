@@ -11,7 +11,7 @@ import cupyx.scipy.ndimage as ndimage
 import sigpy
 from pymirc.image_operations import zoom3d
 
-from utils import setup_blob_phantom, setup_brainweb_phantom, kb_rolloff
+from utils import setup_blob_phantom, setup_brainweb_phantom, kb_rolloff, read_GE_ak_wav
 from utils_sigpy import NUFFTT2starDualEchoModel, projected_gradient_operator
 
 from scipy.ndimage import binary_erosion
@@ -61,7 +61,12 @@ cp.random.seed(seed)
 #---------------------------------------------------------------
 # fixed parameters
 
-sim_shape = (160, 160, 160)
+#sim_shape = (160, 160, 160)
+#num_sim_chunks = 1
+
+sim_shape = (256, 256, 256)
+num_sim_chunks = 128
+
 ishape = (128, 128, 128)
 grid_shape = (64, 64, 64)
 
@@ -171,9 +176,8 @@ gamma_by_2pi_MHz_T: float = 11.262
 kmax64_1_cm = 1 / (2 * field_of_view_cm / 64)
 
 # read gradients in T/m with shape (num_samples_per_readout, num_readouts, 3)
-with h5py.File(Path(data_root_dir) / 'tpi_gradients/ak_grad56.h5',
-               'r') as data:
-    grads_T_m = np.transpose(data['/gradients'][:], (2, 1, 0))
+grads_T_m, bw, fov, desc, N, params = read_GE_ak_wav(
+    Path(data_root_dir) / 'tpi_gradients/ak_grad56.wav')
 
 # k values in 1/cm with shape (num_samples_per_readout, num_readouts, 3)
 k_1_cm = 0.01 * np.cumsum(grads_T_m, axis=0) * dt_us * gamma_by_2pi_MHz_T
@@ -182,26 +186,44 @@ k_1_cm_abs = np.linalg.norm(k_1_cm, axis=2)
 print(f'readout kmax .: {k_1_cm_abs.max():.2f} 1/cm')
 print(f'64 kmax      .: {kmax64_1_cm:.2f} 1/cm')
 
-data_model = NUFFTT2starDualEchoModel(
-    sim_shape,
-    k_1_cm,
-    field_of_view_cm=field_of_view_cm,
-    acq_sampling_time_ms=acq_sampling_time_ms,
-    time_bin_width_ms=time_bin_width_ms,
-    echo_time_1_ms=echo_time_1_ms,
-    echo_time_2_ms=echo_time_2_ms)
+data_echo_1 = []
+data_echo_2 = []
 
-data_operator_1_short, data_operator_2_short = data_model.get_operators_w_decay_model(
-    true_ratio_image_short)
-data_operator_1_long, data_operator_2_long = data_model.get_operators_w_decay_model(
-    true_ratio_image_long)
+for i_chunk, k_inds in enumerate(
+        np.array_split(np.arange(k_1_cm.shape[0]), num_sim_chunks)):
+    print('simulating data chunk', i_chunk)
 
-#--------------------------------------------------------------------------
-# simulate noise-free data
-data_echo_1 = short_fraction * data_operator_1_short(x) + (
-    1 - short_fraction) * data_operator_1_long(x)
-data_echo_2 = short_fraction * data_operator_2_short(x) + (
-    1 - short_fraction) * data_operator_2_long(x)
+    data_model = NUFFTT2starDualEchoModel(
+        sim_shape,
+        k_1_cm[k_inds, ...],
+        field_of_view_cm=field_of_view_cm,
+        acq_sampling_time_ms=acq_sampling_time_ms,
+        time_bin_width_ms=time_bin_width_ms,
+        echo_time_1_ms=echo_time_1_ms + k_inds[0] *
+        acq_sampling_time_ms,  # account of acq. offset time of every chunk
+        echo_time_2_ms=echo_time_2_ms + k_inds[0] *
+        acq_sampling_time_ms)  # account of acq. offset time of every chunk
+
+    data_operator_1_short, data_operator_2_short = data_model.get_operators_w_decay_model(
+        true_ratio_image_short)
+    data_operator_1_long, data_operator_2_long = data_model.get_operators_w_decay_model(
+        true_ratio_image_long)
+
+    #--------------------------------------------------------------------------
+    # simulate noise-free data
+    data_echo_1.append(short_fraction * data_operator_1_short(x) +
+                       (1 - short_fraction) * data_operator_1_long(x))
+    data_echo_2.append(short_fraction * data_operator_2_short(x) +
+                       (1 - short_fraction) * data_operator_2_long(x))
+
+    del data_operator_1_short
+    del data_operator_2_short
+    del data_operator_1_long
+    del data_operator_2_long
+    del data_model
+
+data_echo_1 = cp.concatenate(data_echo_1)
+data_echo_2 = cp.concatenate(data_echo_2)
 
 # scale data such that max of DC component is 2
 data_scale = 2.0 / float(cp.abs(data_echo_1).max())
@@ -225,12 +247,6 @@ for i in np.linspace(0, d1.shape[1], 10, endpoint=False).astype(int):
         f'{i:04} {float(cp.abs(d1[:, i]).max() / cp.abs(d1[-100:, i]).std()):.2f}'
     )
 
-del data_model
-del data_operator_1_long
-del data_operator_2_long
-del data_operator_1_short
-del data_operator_2_short
-
 #--------------------------------------------------------------------
 #--------------------------------------------------------------------
 # regrid the data and do simple IFFT
@@ -241,7 +257,7 @@ del data_operator_2_short
 kernel = 'kaiser_bessel'
 width = 2
 param = 9.14
-grid_shape = ishape
+grid_shape = (64, 64, 64)
 
 data_echo_1_gridded = sigpy.gridding(data_echo_1,
                                      cp.asarray(k_1_cm.reshape(-1, 3)) *
@@ -279,7 +295,7 @@ TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
 
 phase_corr = cp.asarray(((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z))
 
-ifft_scale = 50.
+ifft_scale = 25.
 
 ifft1 = ifft_scale * phase_corr * ifft_op(data_echo_1_gridded_corr)
 ifft2 = ifft_scale * phase_corr * ifft_op(data_echo_2_gridded_corr)
@@ -288,6 +304,7 @@ tmp_x = cp.linspace(-width / 2, width / 2, grid_shape[0])
 TMP_X, TMP_Y, TMP_Z = cp.meshgrid(tmp_x, tmp_x, tmp_x)
 R = cp.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2)
 R = cp.clip(R, 0, tmp_x.max())
+
 #TODO: understand why factor 1.6 is needed when regridding in 3D
 interpolation_correction_field = kb_rolloff(1.6 * R, param)
 interpolation_correction_field /= interpolation_correction_field.max()
@@ -295,13 +312,32 @@ interpolation_correction_field /= interpolation_correction_field.max()
 ifft1 /= interpolation_correction_field
 ifft2 /= interpolation_correction_field
 
-ifft1_sm = ndimage.gaussian_filter(ifft1, 1.5)
-ifft2_sm = ndimage.gaussian_filter(ifft2, 1.5)
+ifft1_sm = ndimage.gaussian_filter(ifft1, 0.7)
+ifft2_sm = ndimage.gaussian_filter(ifft2, 0.7)
 
 cp.save(odir / 'ifft1.npy', ifft1)
 cp.save(odir / 'ifft2.npy', ifft2)
 cp.save(odir / 'ifft1_sm.npy', ifft1_sm)
 cp.save(odir / 'ifft2_sm.npy', ifft2_sm)
+
+# interpolate iffts from 64 to recon grid
+ifft1 = ndimage.zoom(ifft1,
+                     ishape[0] / grid_shape[0],
+                     order=1,
+                     prefilter=False)
+ifft2 = ndimage.zoom(ifft2,
+                     ishape[0] / grid_shape[0],
+                     order=1,
+                     prefilter=False)
+
+ifft1_sm = ndimage.zoom(ifft1_sm,
+                        ishape[0] / grid_shape[0],
+                        order=1,
+                        prefilter=False)
+ifft2_sm = ndimage.zoom(ifft2_sm,
+                        ishape[0] / grid_shape[0],
+                        order=1,
+                        prefilter=False)
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
