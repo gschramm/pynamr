@@ -211,7 +211,7 @@ data_weights_2 = data_weights_2.ravel()
 kernel = 'kaiser_bessel'
 width = 2
 param = 9.14
-grid_shape = ishape
+grid_shape = (64, 64, 64)
 
 data_echo_1_gridded = sigpy.gridding(data_echo_1,
                                      cp.asarray(k_1_cm.reshape(-1, 3)) *
@@ -272,13 +272,49 @@ interpolation_correction_field /= interpolation_correction_field.max()
 ifft1 /= interpolation_correction_field
 ifft2 /= interpolation_correction_field
 
-ifft1_sm = ndimage.gaussian_filter(ifft1, 2.)
-ifft2_sm = ndimage.gaussian_filter(ifft2, 2.)
+ifft1_sm = ndimage.gaussian_filter(ifft1, 0.7)
+ifft2_sm = ndimage.gaussian_filter(ifft2, 0.7)
 
 cp.save(odir / 'ifft1.npy', ifft1)
 cp.save(odir / 'ifft2.npy', ifft2)
 cp.save(odir / 'ifft1_sm.npy', ifft1_sm)
 cp.save(odir / 'ifft2_sm.npy', ifft2_sm)
+
+## show iffts
+#ims = dict(vmin=0, vmax=float(cp.abs(ifft1_sm).max()), cmap='Greys_r')
+#
+#a = cp.asnumpy(cp.abs(ifft1))
+#b = cp.asnumpy(cp.abs(ifft1_sm))
+#
+## re-orient to RAS
+#if rotation == 0:
+#    a = np.swapaxes(np.flip(a, 0), 0, 1)
+#    b = np.swapaxes(np.flip(b, 0), 0, 1)
+#
+## re-orient to LPS
+#a = np.flip(a, (0, 1))
+#b = np.flip(b, (0, 1))
+#
+#vi = pv.ThreeAxisViewer([a, b], imshow_kwargs=ims)
+
+# interpolate iffts from 64 to recon grid
+ifft1 = ndimage.zoom(ifft1,
+                     ishape[0] / grid_shape[0],
+                     order=1,
+                     prefilter=False)
+ifft2 = ndimage.zoom(ifft2,
+                     ishape[0] / grid_shape[0],
+                     order=1,
+                     prefilter=False)
+
+ifft1_sm = ndimage.zoom(ifft1_sm,
+                        ishape[0] / grid_shape[0],
+                        order=1,
+                        prefilter=False)
+ifft2_sm = ndimage.zoom(ifft2_sm,
+                        ishape[0] / grid_shape[0],
+                        order=1,
+                        prefilter=False)
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
