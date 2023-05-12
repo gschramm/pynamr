@@ -18,7 +18,7 @@ from scipy.ndimage import binary_erosion
 #--------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--max_num_iter', type=int, default=1500)
+parser.add_argument('--max_num_iter', type=int, default=2000)
 parser.add_argument('--num_iter_r', type=int, default=100)
 parser.add_argument('--noise_level', type=float, default=1e-2)
 parser.add_argument('--phantom',
