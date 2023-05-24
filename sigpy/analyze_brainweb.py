@@ -9,7 +9,7 @@ import nibabel as nib
 from scipy.ndimage import binary_erosion, gaussian_filter, zoom, center_of_mass
 from collections import OrderedDict
 import matplotlib.pyplot as plt
-
+import pandas as pd
 import seaborn as sns
 
 sns.set_context('paper')
@@ -62,8 +62,6 @@ odirs = sorted(
     list((Path(data_root_dir) / 'run_brainweb').glob(
         f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_*'
     )))
-
-#odirs = odirs[:19]
 
 #-----------------------------------------------------------------------
 # load the ground truth
@@ -285,24 +283,60 @@ agrs_both_echos_w_decay0_std = agrs_both_echos_w_decay0.std(axis=0)
 agrs_both_echos_w_decay1_std = agrs_both_echos_w_decay1.std(axis=0)
 
 # calculate the RMSE in all ROIs
-rmse_recon_e1_no_decay = {}
-rmse_agr_e1_no_decay = {}
-rmse_agr_both_echos_w_decay0 = {}
-rmse_agr_both_echos_w_decay1 = {}
+df_rmse = pd.DataFrame({})
 
-for key, inds in roi_inds.items():
-    rmse_recon_e1_no_decay[key] = np.array(
-        [[np.sqrt(np.mean((x[inds] - gt[inds])**2)) for x in y]
-         for y in recons_e1_no_decay])
-    rmse_agr_e1_no_decay[key] = np.array(
-        [[np.sqrt(np.mean((x[inds] - gt[inds])**2)) for x in y]
-         for y in agrs_e1_no_decay])
-    rmse_agr_both_echos_w_decay0[key] = np.array(
-        [[np.sqrt(np.mean((x[inds] - gt[inds])**2)) for x in y]
-         for y in agrs_both_echos_w_decay0])
-    rmse_agr_both_echos_w_decay1[key] = np.array(
-        [[np.sqrt(np.mean((x[inds] - gt[inds])**2)) for x in y]
-         for y in agrs_both_echos_w_decay1])
+for roi, inds in roi_inds.items():
+    for ir in range(recons_e1_no_decay.shape[0]):
+        for ib in range(recons_e1_no_decay.shape[1]):
+            tmp = pd.DataFrame(dict(
+                method='iter. quad. prior',
+                b=ib + 1,
+                r=ir + 1,
+                roi=roi,
+                RMSE=np.sqrt(
+                    np.mean((recons_e1_no_decay[ir, ib, ...][inds] -
+                             gt[inds])**2))),
+                               index=[0])
+            df_rmse = pd.concat((df_rmse, tmp))
+
+    for ir in range(agrs_e1_no_decay.shape[0]):
+        for ib in range(agrs_e1_no_decay.shape[1]):
+            tmp = pd.DataFrame(dict(
+                method='AGR wo decay m.',
+                b=ib + 1,
+                r=ir + 1,
+                roi=roi,
+                RMSE=np.sqrt(
+                    np.mean(
+                        (agrs_e1_no_decay[ir, ib, ...][inds] - gt[inds])**2))),
+                               index=[0])
+            df_rmse = pd.concat((df_rmse, tmp))
+
+    for ir in range(agrs_both_echos_w_decay0.shape[0]):
+        for ib in range(agrs_both_echos_w_decay0.shape[1]):
+            tmp = pd.DataFrame(dict(
+                method=f'AGR w decay m. {beta_rs[0]:.1E}',
+                b=ib + 1,
+                r=ir + 1,
+                roi=roi,
+                RMSE=np.sqrt(
+                    np.mean((agrs_both_echos_w_decay0[ir, ib, ...][inds] -
+                             gt[inds])**2))),
+                               index=[0])
+            df_rmse = pd.concat((df_rmse, tmp))
+
+    for ir in range(agrs_both_echos_w_decay1.shape[0]):
+        for ib in range(agrs_both_echos_w_decay1.shape[1]):
+            tmp = pd.DataFrame(dict(
+                method=f'AGR w decay m. {beta_rs[1]:.1E}',
+                b=ib + 1,
+                r=ir + 1,
+                roi=roi,
+                RMSE=np.sqrt(
+                    np.mean((agrs_both_echos_w_decay1[ir, ib, ...][inds] -
+                             gt[inds])**2))),
+                               index=[0])
+            df_rmse = pd.concat((df_rmse, tmp))
 
 #--------------------------------------------------------------------------------
 # bias noise plots
@@ -388,6 +422,7 @@ fig.show()
 # RMSE plots
 #------------------------------------------------------------------------------------
 
+strip_kwargs = dict(size=2., dodge=True, palette='tab10')
 box_kwargs = dict(showfliers=False,
                   showbox=False,
                   showcaps=False,
@@ -397,75 +432,16 @@ box_kwargs = dict(showfliers=False,
                   medianprops=dict(visible=False),
                   whiskerprops=dict(visible=False))
 
-strip_kwargs = dict(size=1.5)
+g = sns.FacetGrid(df_rmse, col="roi", sharey=False)
+g.map_dataframe(sns.stripplot, x="b", y="RMSE", hue="method", **strip_kwargs)
+g.map_dataframe(sns.boxplot, x="b", y="RMSE", hue="method", **box_kwargs)
+g.add_legend()
 
-num_rows = 1
-num_cols = len(roi_inds)
-fig2, ax2 = plt.subplots(num_rows,
-                         num_cols,
-                         figsize=(2.5 * num_cols, 2.5 * num_rows),
-                         sharex=True,
-                         sharey='col')
-
-import pandas as pd
-
-for i, roi in enumerate(roi_inds.keys()):
-    print(i, roi)
-
-    df1 = pd.DataFrame(
-        rmse_recon_e1_no_decay[roi],
-        columns=['b1', 'b2', 'b3'],
-        index=[f'nr{i}' for i in range(rmse_recon_e1_no_decay[roi].shape[0])
-               ]).unstack().reset_index()
-    df1['method'] = 'iter. quad prior'
-
-    df2 = pd.DataFrame(
-        rmse_agr_e1_no_decay[roi],
-        columns=['b1', 'b2', 'b3'],
-        index=[f'nr{i}' for i in range(rmse_agr_e1_no_decay[roi].shape[0])
-               ]).unstack().reset_index()
-    df2['method'] = 'AGR wo decay m.'
-
-    df3 = pd.DataFrame(
-        rmse_agr_both_echos_w_decay0[roi],
-        columns=['b1', 'b2', 'b3'],
-        index=[
-            f'nr{i}' for i in range(rmse_agr_both_echos_w_decay0[roi].shape[0])
-        ]).unstack().reset_index()
-    df3['method'] = f'AGR w decay m. {beta_rs[0]:.1E}'
-
-    df4 = pd.DataFrame(
-        rmse_agr_both_echos_w_decay1[roi],
-        columns=['b1', 'b2', 'b3'],
-        index=[
-            f'nr{i}' for i in range(rmse_agr_both_echos_w_decay1[roi].shape[0])
-        ]).unstack().reset_index()
-    df4['method'] = f'AGR w decay m. {beta_rs[1]:.1E}'
-
-    sns.stripplot(x='level_0',
-                  y=0,
-                  data=pd.concat((df1, df2, df3, df4)),
-                  hue='method',
-                  dodge=True,
-                  ax=ax2[i],
-                  **strip_kwargs)
-
-    sns.boxplot(x='level_0',
-                y=0,
-                data=pd.concat((df1, df2, df3, df4)),
-                hue='method',
-                dodge=True,
-                ax=ax2[i],
-                **box_kwargs)
-
-    ax2[i].set_title(roi)
-
-for axx in ax2.ravel():
+for axx in g.axes.ravel():
     axx.grid(ls=':')
-    axx.legend([], [], frameon=False)
 
-fig2.tight_layout()
-fig2.show()
+g.fig.show()
+
 #--------------------------------------------------------------------------------
 # recon plots
 #------------------------------------------------------------------------------------
