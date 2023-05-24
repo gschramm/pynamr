@@ -63,7 +63,7 @@ odirs = sorted(
         f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_*'
     )))
 
-odirs = odirs[:18]
+#odirs = odirs[:19]
 
 #-----------------------------------------------------------------------
 # load the ground truth
@@ -397,9 +397,9 @@ box_kwargs = dict(showfliers=False,
                   medianprops=dict(visible=False),
                   whiskerprops=dict(visible=False))
 
-swarm_kwargs = dict(palette='dark:gray', size=1.5)
+strip_kwargs = dict(size=1.5)
 
-num_rows = 4
+num_rows = 1
 num_cols = len(roi_inds)
 fig2, ax2 = plt.subplots(num_rows,
                          num_cols,
@@ -407,29 +407,62 @@ fig2, ax2 = plt.subplots(num_rows,
                          sharex=True,
                          sharey='col')
 
+import pandas as pd
+
 for i, roi in enumerate(roi_inds.keys()):
     print(i, roi)
-    sns.boxplot(rmse_recon_e1_no_decay[roi], ax=ax2[0, i], **box_kwargs)
-    sns.swarmplot(rmse_recon_e1_no_decay[roi], ax=ax2[0, i], **swarm_kwargs)
-    sns.boxplot(rmse_agr_e1_no_decay[roi], ax=ax2[1, i], **box_kwargs)
-    sns.swarmplot(rmse_agr_e1_no_decay[roi], ax=ax2[1, i], **swarm_kwargs)
-    sns.boxplot(rmse_agr_both_echos_w_decay0[roi], ax=ax2[2, i], **box_kwargs)
-    sns.swarmplot(rmse_agr_both_echos_w_decay0[roi],
-                  ax=ax2[2, i],
-                  **swarm_kwargs)
-    sns.boxplot(rmse_agr_both_echos_w_decay1[roi], ax=ax2[3, i], **box_kwargs)
-    sns.swarmplot(rmse_agr_both_echos_w_decay1[roi],
-                  ax=ax2[3, i],
-                  **swarm_kwargs)
-    ax2[0, i].set_title(roi)
 
-ax2[0, 0].set_ylabel('RMSE iter. quad prior')
-ax2[1, 0].set_ylabel('RMSE AGR wo decay m.')
-ax2[2, 0].set_ylabel(f'RMSE AGR w decay m. {beta_rs[0]:.1E}')
-ax2[3, 0].set_ylabel(f'RMSE AGR w decay m. {beta_rs[1]:.1E}')
+    df1 = pd.DataFrame(
+        rmse_recon_e1_no_decay[roi],
+        columns=['b1', 'b2', 'b3'],
+        index=[f'nr{i}' for i in range(rmse_recon_e1_no_decay[roi].shape[0])
+               ]).unstack().reset_index()
+    df1['method'] = 'iter. quad prior'
+
+    df2 = pd.DataFrame(
+        rmse_agr_e1_no_decay[roi],
+        columns=['b1', 'b2', 'b3'],
+        index=[f'nr{i}' for i in range(rmse_agr_e1_no_decay[roi].shape[0])
+               ]).unstack().reset_index()
+    df2['method'] = 'AGR wo decay m.'
+
+    df3 = pd.DataFrame(
+        rmse_agr_both_echos_w_decay0[roi],
+        columns=['b1', 'b2', 'b3'],
+        index=[
+            f'nr{i}' for i in range(rmse_agr_both_echos_w_decay0[roi].shape[0])
+        ]).unstack().reset_index()
+    df3['method'] = f'AGR w decay m. {beta_rs[0]:.1E}'
+
+    df4 = pd.DataFrame(
+        rmse_agr_both_echos_w_decay1[roi],
+        columns=['b1', 'b2', 'b3'],
+        index=[
+            f'nr{i}' for i in range(rmse_agr_both_echos_w_decay1[roi].shape[0])
+        ]).unstack().reset_index()
+    df4['method'] = f'AGR w decay m. {beta_rs[1]:.1E}'
+
+    sns.stripplot(x='level_0',
+                  y=0,
+                  data=pd.concat((df1, df2, df3, df4)),
+                  hue='method',
+                  dodge=True,
+                  ax=ax2[i],
+                  **strip_kwargs)
+
+    sns.boxplot(x='level_0',
+                y=0,
+                data=pd.concat((df1, df2, df3, df4)),
+                hue='method',
+                dodge=True,
+                ax=ax2[i],
+                **box_kwargs)
+
+    ax2[i].set_title(roi)
 
 for axx in ax2.ravel():
     axx.grid(ls=':')
+    axx.legend([], [], frameon=False)
 
 fig2.tight_layout()
 fig2.show()
