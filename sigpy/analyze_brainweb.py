@@ -10,8 +10,12 @@ from scipy.ndimage import binary_erosion, gaussian_filter, zoom, center_of_mass
 from collections import OrderedDict
 import matplotlib.pyplot as plt
 
+import seaborn as sns
+
+sns.set_context('paper')
+
 parser = argparse.ArgumentParser()
-parser.add_argument('--max_num_iter', type=int, default=1500)
+parser.add_argument('--max_num_iter', type=int, default=2000)
 parser.add_argument('--num_iter_r', type=int, default=100)
 parser.add_argument('--noise_level', type=float, default=1e-2)
 parser.add_argument('--phantom',
@@ -37,8 +41,12 @@ no_decay = args.no_decay
 regularization_norm_anatomical = args.regularization_norm_anatomical
 regularization_norm_non_anatomical = args.regularization_norm_non_anatomical
 
-beta_rs = [3e-2, 1e-1, 3e-1]
+beta_rs = [1e-1, 3e-1, 3e-1]
 noise_metric = 2
+
+betas_non_anatomical = [1e-2, 3e-2, 1e-1]
+betas_anatomical = [3e-4, 1e-3, 3e-3]
+sm_fwhms_mm = [0.1, 4., 6., 8., 10.]
 #-----------------------------------------------------------------------
 
 iter_shape = (128, 128, 128)
@@ -55,7 +63,7 @@ odirs = sorted(
         f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_*'
     )))
 
-#odirs = odirs[:30]
+odirs = odirs[:18]
 
 #-----------------------------------------------------------------------
 # load the ground truth
@@ -124,11 +132,6 @@ for key, inds in roi_inds.items():
     fig0.savefig(odirs[0] / f'roi_{key}.png', dpi=300, bbox_inches='tight')
     plt.close(fig0)
 
-betas_non_anatomical = [1e-2, 3e-2, 1e-1]
-betas_anatomical = [3e-4, 1e-3, 3e-3]
-
-sm_fwhms_mm = [0.1, 4., 6., 8., 10.]
-
 recons_e1_no_decay = np.zeros((
     len(odirs),
     len(betas_non_anatomical),
@@ -144,11 +147,6 @@ agrs_both_echos_w_decay0 = np.zeros((
 ) + sim_shape)
 
 agrs_both_echos_w_decay1 = np.zeros((
-    len(odirs),
-    len(betas_anatomical),
-) + sim_shape)
-
-agrs_both_echos_w_decay2 = np.zeros((
     len(odirs),
     len(betas_anatomical),
 ) + sim_shape)
@@ -174,16 +172,14 @@ recon_e1_no_decay_roi_means = {}
 agr_e1_no_decay_roi_means = {}
 agr_both_echos_w_decay0_roi_means = {}
 agr_both_echos_w_decay1_roi_means = {}
-agr_both_echos_w_decay2_roi_means = {}
 
 recon_e1_no_decay_roi_stds = {}
 agr_e1_no_decay_roi_stds = {}
 agr_both_echos_w_decay0_roi_stds = {}
 agr_both_echos_w_decay1_roi_stds = {}
-agr_both_echos_w_decay2_roi_stds = {}
 
 ifft1_roi_means = {}
-sl = 73
+sl = int(0.4375 * gt.shape[0])
 
 # calculate the true means
 for key, inds in roi_inds.items():
@@ -260,11 +256,6 @@ for i, odir in enumerate(odirs):
                                              sim_shape[0] / iter_shape[0],
                                              order=1,
                                              prefilter=False)
-        agrs_both_echos_w_decay2[i, ib,
-                                 ...] = zoom(np.abs(d2['x'] / image_scale),
-                                             sim_shape[0] / iter_shape[0],
-                                             order=1,
-                                             prefilter=False)
 
         r0s[i, ib, ...] = zoom(np.load(outfile_r0),
                                sim_shape[0] / iter_shape[0],
@@ -286,16 +277,32 @@ for key, inds in roi_inds.items():
         [[x[inds].mean() for x in y] for y in agrs_both_echos_w_decay0])
     agr_both_echos_w_decay1_roi_means[key] = np.array(
         [[x[inds].mean() for x in y] for y in agrs_both_echos_w_decay1])
-    agr_both_echos_w_decay2_roi_means[key] = np.array(
-        [[x[inds].mean() for x in y] for y in agrs_both_echos_w_decay2])
 
 agrs_both_echos_w_decay0_mean = agrs_both_echos_w_decay0.mean(axis=0)
 agrs_both_echos_w_decay1_mean = agrs_both_echos_w_decay1.mean(axis=0)
-agrs_both_echos_w_decay2_mean = agrs_both_echos_w_decay2.mean(axis=0)
 
 agrs_both_echos_w_decay0_std = agrs_both_echos_w_decay0.std(axis=0)
 agrs_both_echos_w_decay1_std = agrs_both_echos_w_decay1.std(axis=0)
-agrs_both_echos_w_decay2_std = agrs_both_echos_w_decay2.std(axis=0)
+
+# calculate the RMSE in all ROIs
+rmse_recon_e1_no_decay = {}
+rmse_agr_e1_no_decay = {}
+rmse_agr_both_echos_w_decay0 = {}
+rmse_agr_both_echos_w_decay1 = {}
+
+for key, inds in roi_inds.items():
+    rmse_recon_e1_no_decay[key] = np.array(
+        [[np.sqrt(np.mean((x[inds] - gt[inds])**2)) for x in y]
+         for y in recons_e1_no_decay])
+    rmse_agr_e1_no_decay[key] = np.array(
+        [[np.sqrt(np.mean((x[inds] - gt[inds])**2)) for x in y]
+         for y in agrs_e1_no_decay])
+    rmse_agr_both_echos_w_decay0[key] = np.array(
+        [[np.sqrt(np.mean((x[inds] - gt[inds])**2)) for x in y]
+         for y in agrs_both_echos_w_decay0])
+    rmse_agr_both_echos_w_decay1[key] = np.array(
+        [[np.sqrt(np.mean((x[inds] - gt[inds])**2)) for x in y]
+         for y in agrs_both_echos_w_decay1])
 
 #--------------------------------------------------------------------------------
 # bias noise plots
@@ -362,15 +369,6 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay1_roi_means.items()):
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
     ax.ravel()[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[1]:.1E}')
 
-for i, (roi, vals) in enumerate(agr_both_echos_w_decay2_roi_means.items()):
-    if noise_metric == 1:
-        x = vals.std(0)
-    else:
-        x = np.array(
-            [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay2_std])
-    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    ax.ravel()[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[2]:.1E}')
-
     ax.ravel()[i].set_title(roi)
     ax.ravel()[i].grid(ls=':')
     if noise_metric == 1:
@@ -387,8 +385,56 @@ fig.tight_layout()
 fig.show()
 
 #--------------------------------------------------------------------------------
-# recon plots
+# RMSE plots
+#------------------------------------------------------------------------------------
 
+box_kwargs = dict(showfliers=False,
+                  showbox=False,
+                  showcaps=False,
+                  showmeans=True,
+                  meanline=True,
+                  meanprops=dict(color='k', ls='-'),
+                  medianprops=dict(visible=False),
+                  whiskerprops=dict(visible=False))
+
+swarm_kwargs = dict(palette='dark:gray', size=1.5)
+
+num_rows = 4
+num_cols = len(roi_inds)
+fig2, ax2 = plt.subplots(num_rows,
+                         num_cols,
+                         figsize=(2.5 * num_cols, 2.5 * num_rows),
+                         sharex=True,
+                         sharey='col')
+
+for i, roi in enumerate(roi_inds.keys()):
+    print(i, roi)
+    sns.boxplot(rmse_recon_e1_no_decay[roi], ax=ax2[0, i], **box_kwargs)
+    sns.swarmplot(rmse_recon_e1_no_decay[roi], ax=ax2[0, i], **swarm_kwargs)
+    sns.boxplot(rmse_agr_e1_no_decay[roi], ax=ax2[1, i], **box_kwargs)
+    sns.swarmplot(rmse_agr_e1_no_decay[roi], ax=ax2[1, i], **swarm_kwargs)
+    sns.boxplot(rmse_agr_both_echos_w_decay0[roi], ax=ax2[2, i], **box_kwargs)
+    sns.swarmplot(rmse_agr_both_echos_w_decay0[roi],
+                  ax=ax2[2, i],
+                  **swarm_kwargs)
+    sns.boxplot(rmse_agr_both_echos_w_decay1[roi], ax=ax2[3, i], **box_kwargs)
+    sns.swarmplot(rmse_agr_both_echos_w_decay1[roi],
+                  ax=ax2[3, i],
+                  **swarm_kwargs)
+    ax2[0, i].set_title(roi)
+
+ax2[0, 0].set_ylabel('RMSE iter. quad prior')
+ax2[1, 0].set_ylabel('RMSE AGR wo decay m.')
+ax2[2, 0].set_ylabel(f'RMSE AGR w decay m. {beta_rs[0]:.1E}')
+ax2[3, 0].set_ylabel(f'RMSE AGR w decay m. {beta_rs[1]:.1E}')
+
+for axx in ax2.ravel():
+    axx.grid(ls=':')
+
+fig2.tight_layout()
+fig2.show()
+#--------------------------------------------------------------------------------
+# recon plots
 #------------------------------------------------------------------------------------
 
 vmax_std = 0.2
