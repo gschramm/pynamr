@@ -26,15 +26,18 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument('--data_dir',
                     type=str,
-                    default='/data/sodium_mr/Penn/sodium_pilot3')
+                    default='/data/sodium_mr/NYU/CSF31_raw')
 parser.add_argument('--beta_non_anatomical', type=float, default=1e-1)
 parser.add_argument('--beta_anatomical', type=float, default=3e-3)
 parser.add_argument('--beta_r', type=float, default=3e-1)
 parser.add_argument('--num_iter_r', type=int, default=100)
-parser.add_argument('--max_num_iter', type=int, default=1000)
+parser.add_argument('--max_num_iter', type=int, default=2000)
 parser.add_argument('--odir', type=str, default=None)
 parser.add_argument('--matrix_size', type=int, default=128)
 parser.add_argument('--eta', type=float, default=0.005)
+parser.add_argument('--x_shift', type=float, default=0)
+parser.add_argument('--y_shift', type=float, default=-10)
+parser.add_argument('--z_shift', type=float, default=-25)
 args = parser.parse_args()
 
 #--------------------------------------------------------------------
@@ -49,6 +52,9 @@ num_iter_r = args.num_iter_r
 matrix_size = args.matrix_size
 eta = args.eta
 
+x_shift = args.x_shift
+y_shift = args.y_shift
+z_shift = args.z_shift
 #--------------------------------------------------------------------
 # fixed parameters
 gradient_file = data_dir / 'grad.wav'
@@ -138,6 +144,17 @@ with h5py.File(echo_1_data_file) as data1:
 
 with h5py.File(echo_2_data_file) as data2:
     data_echo_2 = data2['/data'][:]
+
+# apply phase shift to data to shift brain into the center
+if x_shift != 0:
+    data_echo_1 = data_echo_1 * np.exp(-1j * k_1_cm[:, :, 0] * x_shift)
+    data_echo_2 = data_echo_2 * np.exp(-1j * k_1_cm[:, :, 0] * x_shift)
+if y_shift != 0:
+    data_echo_1 = data_echo_1 * np.exp(-1j * k_1_cm[:, :, 1] * y_shift)
+    data_echo_2 = data_echo_2 * np.exp(-1j * k_1_cm[:, :, 1] * y_shift)
+if z_shift != 0:
+    data_echo_1 = data_echo_1 * np.exp(-1j * k_1_cm[:, :, 2] * z_shift)
+    data_echo_2 = data_echo_2 * np.exp(-1j * k_1_cm[:, :, 2] * z_shift)
 
 # convert data to complex (from two reals) send data arrays to GPU
 data_echo_1 = cp.asarray(data_echo_1)
@@ -287,6 +304,11 @@ cp.save(odir / 'ifft1.npy', ifft1)
 cp.save(odir / 'ifft2.npy', ifft2)
 cp.save(odir / 'ifft1_sm.npy', ifft1_sm)
 cp.save(odir / 'ifft2_sm.npy', ifft2_sm)
+
+#vi = pv.ThreeAxisViewer(
+#    [cp.asnumpy(cp.abs(ifft1_sm)),
+#     cp.asnumpy(cp.abs(ifft2_sm))],
+#    imshow_kwargs=dict(cmap='Greys_r'))
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
@@ -735,11 +757,11 @@ vi2.fig.savefig(outfile1na.with_suffix('.png'), dpi=300)
 
 #---------------------------------------------------------------------------------------
 
-slz = 72
+slz = 81
 sly = 55
-slx = 68
+slx = 59
 
-vmax = 1.7
+vmax = 2.
 
 fig, ax = plt.subplots(2, 5, figsize=(5 * 2, 2 * 2))
 ax[0, 0].imshow(f[:, :, slz].T, cmap='Greys_r', vmin=0, vmax=1.5)
