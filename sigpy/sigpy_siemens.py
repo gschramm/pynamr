@@ -38,6 +38,7 @@ parser.add_argument('--eta', type=float, default=0.005)
 parser.add_argument('--x_shift', type=float, default=0)
 parser.add_argument('--y_shift', type=float, default=-10)
 parser.add_argument('--z_shift', type=float, default=-25)
+parser.add_argument('--alpha', type=float, default=0.3)
 args = parser.parse_args()
 
 #--------------------------------------------------------------------
@@ -55,6 +56,9 @@ eta = args.eta
 x_shift = args.x_shift
 y_shift = args.y_shift
 z_shift = args.z_shift
+
+# step size for the gradient descent in ratio update
+alpha = args.alpha
 #--------------------------------------------------------------------
 # fixed parameters
 gradient_file = data_dir / 'grad.wav'
@@ -632,7 +636,6 @@ cp.save(odir / f'init_est_ratio_{beta_anatomical:.1E}.npy', init_est_ratio)
 #---------------------------------------------------------------------------------------
 
 # step size for gradient descent on ratio image
-step = 0.3
 acq_model.dual_echo_data = cp.concatenate([data_echo_1, data_echo_2])
 
 agr_both_echos_w_decay_model = deepcopy(agr_echo_1_wo_decay_model)
@@ -711,7 +714,7 @@ for i_outer in range(num_outer):
             grad_df = acq_model.data_fidelity_gradient_r(est_ratio)
             # gradient of beta_r * ||PG(r)||_2^2
             grad_prior = beta_r * PG.H(PG(est_ratio))
-            est_ratio = cp.clip(est_ratio - step * (grad_df + grad_prior),
+            est_ratio = cp.clip(est_ratio - alpha * (grad_df + grad_prior),
                                 1e-2, 1)
 
         cp.save(outfile_r, est_ratio)
