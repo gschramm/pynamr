@@ -100,35 +100,34 @@ aparc = zoom(aparc, sim_shape[0] / aparc.shape[0], order=0, prefilter=False)
 
 roi_inds = OrderedDict()
 roi_inds['ventricles'] = np.where(np.isin((aparc * csf_mask), [4, 43]))
+
+# add the eyes ROI
+x = np.linspace(0, 440 - 1, lab.shape[0])
+X, Y, Z = np.meshgrid(x, x, x)
+R1 = np.sqrt((X - 368)**2 + (Y - 143)**2 + (Z - 97)**2)
+R2 = np.sqrt((X - 368)**2 + (Y - 291)**2 + (Z - 97)**2)
+eye1_inds = np.where((R1 < 25))
+eye2_inds = np.where((R2 < 25))
+
+tmp = np.zeros_like(gt, dtype=np.uint8)
+tmp[eye1_inds] = 1
+tmp[eye2_inds] = 1
+
+roi_inds['eyes'] = np.where(tmp * (np.abs(gt - 1.5) < 0.01))
+
+# add lesion ROI
+R1 = np.sqrt((X - 329)**2 + (Y - 165)**2 + (Z - 200)**2)
+roi_inds['lesion'] = np.where((R1 < 10) * (np.abs(gt - 0.6) < 0.01))
+
 roi_inds['white matter'] = np.where(np.isin((aparc * wm_mask), [2, 41]))
+
 roi_inds['putamen'] = np.where(np.isin((aparc * gm_mask), [12, 51]))
+roi_inds['caudate'] = np.where(np.isin((aparc * gm_mask), [11, 50]))
 roi_inds['cerebellum'] = np.where(np.isin((aparc * gm_mask), [8, 47]))
 roi_inds['cortical grey matter'] = np.where((aparc * gm_mask) >= 1000)
 roi_inds['frontal'] = np.where(np.isin((aparc * gm_mask), [1028, 2028]))
 roi_inds['temporal'] = np.where(
     np.isin((aparc * gm_mask), [1009, 1015, 1030, 2009, 2015, 2030]))
-
-# visualize the ROIs
-vis = []
-
-for key, inds in roi_inds.items():
-    roi_mask = np.zeros_like(gt)
-    roi_mask[inds] = 1
-
-    com = [int(x) for x in center_of_mass(roi_mask)]
-    sl2 = np.argmax(roi_mask.sum((0, 1)))
-    sl1 = np.argmax(roi_mask.sum((0, 2)))
-
-    fig0, ax0 = plt.subplots(1, 2, figsize=(6, 3))
-    ax0[0].imshow(gt[:, :, sl2].T, origin='lower', cmap='Greys_r')
-    ax0[0].contour(roi_mask[:, :, sl2].T, origin='lower', levels=1, cmap='hot')
-    ax0[1].imshow(gt[:, sl1, :].T, origin='lower', cmap='Greys_r')
-    ax0[1].contour(roi_mask[:, sl1, :].T, origin='lower', levels=1, cmap='hot')
-    ax0[0].set_axis_off()
-    ax0[1].set_axis_off()
-    fig0.tight_layout()
-    fig0.savefig(odirs[0] / f'roi_{key}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig0)
 
 recons_e1_no_decay = np.zeros((
     len(odirs),
@@ -341,13 +340,39 @@ for roi, inds in roi_inds.items():
 #--------------------------------------------------------------------------------
 # bias noise plots
 
-num_rows = 1
-num_cols = len(roi_inds)
-fig, ax = plt.subplots(num_rows,
-                       num_cols,
-                       figsize=(2.5 * num_cols, 3.5 * num_rows),
-                       sharex=True,
-                       sharey=True)
+num_rows = 2
+num_cols = int(np.ceil(len(roi_inds) / 2))
+
+size = 1.5
+fig = plt.figure(figsize=(size * 2 * num_cols, size * (2 * num_rows + 2)))
+grid = plt.GridSpec(2 * num_rows + 2, 2 * num_cols, figure=fig)
+
+for ir, (key, inds) in enumerate(roi_inds.items()):
+    roi_mask = np.zeros_like(gt)
+    roi_mask[inds] = 1
+
+    com = [int(x) for x in center_of_mass(roi_mask)]
+    sl2 = np.argmax(roi_mask.sum((0, 1)))
+    sl1 = np.argmax(roi_mask.sum((0, 2)))
+
+    col = ir % num_cols
+
+    if ir < num_cols:
+        rrow = 0
+    else:
+        rrow = -1
+
+    ax0 = fig.add_subplot(grid[rrow, 2 * col])
+    ax1 = fig.add_subplot(grid[rrow, 2 * col + 1])
+
+    ax0.imshow(gt[:, :, sl2].T, origin='lower', cmap='Greys_r')
+    ax0.contour(roi_mask[:, :, sl2].T, origin='lower', levels=1, cmap='hot')
+    ax0.set_axis_off()
+    ax1.imshow(gt[:, sl1, :].T, origin='lower', cmap='Greys_r')
+    ax1.contour(roi_mask[:, sl1, :].T, origin='lower', levels=1, cmap='hot')
+    ax1.set_axis_off()
+
+axs = []
 
 for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
     if noise_metric == 1:
@@ -355,14 +380,21 @@ for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
     else:
         x = np.array([z[roi_inds[roi]].mean() for z in recons_e1_no_decay_std])
 
+    col = i % num_cols
+    row = int(i >= num_cols)
+    axs.append(
+        fig.add_subplot(grid[(2 * row + 1):(2 * row + 3),
+                             (2 * col):(2 * col + 2)]))
+
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    ax.ravel()[i].plot(x, y, 'o-', label='iter quad. prior')
+    axs[i].plot(x, y, 'o-', label='iter quad. prior')
+    axs[i].set_title(roi)
 
     for j in range(len(x)):
-        ax.ravel()[i].annotate(f'{betas_non_anatomical[j]:.1E}', (x[j], y[j]),
-                               horizontalalignment='center',
-                               verticalalignment='bottom',
-                               fontsize='x-small')
+        axs[i].annotate(f'{betas_non_anatomical[j]:.1E}', (x[j], y[j]),
+                        horizontalalignment='center',
+                        verticalalignment='bottom',
+                        fontsize='x-small')
 
 for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
     if noise_metric == 1:
@@ -371,13 +403,13 @@ for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
         x = np.array([z[roi_inds[roi]].mean() for z in agrs_e1_no_decay_std])
 
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    ax.ravel()[i].plot(x, y, 'o-', label='AGR wo decay m.')
+    axs[i].plot(x, y, 'o-', label='AGR wo decay m.')
 
     for j in range(len(x)):
-        ax.ravel()[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
-                               horizontalalignment='center',
-                               verticalalignment='bottom',
-                               fontsize='x-small')
+        axs[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
+                        horizontalalignment='center',
+                        verticalalignment='bottom',
+                        fontsize='x-small')
 
 for i, (roi, vals) in enumerate(agr_both_echos_w_decay0_roi_means.items()):
     if noise_metric == 1:
@@ -386,13 +418,13 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay0_roi_means.items()):
         x = np.array(
             [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay0_std])
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    ax.ravel()[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[0]:.1E}')
+    axs[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[0]:.1E}')
 
     for j in range(len(x)):
-        ax.ravel()[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
-                               horizontalalignment='center',
-                               verticalalignment='bottom',
-                               fontsize='x-small')
+        axs[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
+                        horizontalalignment='center',
+                        verticalalignment='bottom',
+                        fontsize='x-small')
 
 for i, (roi, vals) in enumerate(agr_both_echos_w_decay1_roi_means.items()):
     if noise_metric == 1:
@@ -401,19 +433,23 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay1_roi_means.items()):
         x = np.array(
             [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay1_std])
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    ax.ravel()[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[1]:.1E}')
+    axs[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[1]:.1E}')
 
-    ax.ravel()[i].set_title(roi)
-    ax.ravel()[i].grid(ls=':')
-    if noise_metric == 1:
-        ax.ravel()[i].set_xlabel('std.dev. of ROI mean')
-    else:
-        ax.ravel()[i].set_xlabel('ROI averaged std.dev.')
-    ax.ravel()[i].axhline(0, color='k')
+for i, axx in enumerate(axs):
+    axx.grid(ls=':')
+    axx.axhline(0, color='k')
+    axx.set_xlim(0, 0.1)
+    axx.set_ylim(-40, 20)
 
-ax[0].set_ylabel('bias of ROI mean [%]')
-ax[0].set_ylabel('bias of ROI mean [%]')
-ax.ravel()[-1].legend(loc='lower right', fontsize='small')
+    if i >= num_cols:
+        if noise_metric == 1:
+            axx.set_xlabel('std.dev. of ROI mean')
+        else:
+            axx.set_xlabel('ROI averaged std.dev.')
+
+axs[0].set_ylabel('bias of ROI mean [%]')
+axs[num_cols].set_ylabel('bias of ROI mean [%]')
+axs[-1].legend(loc='lower right', fontsize='small')
 
 fig.tight_layout()
 fig.show()
@@ -522,9 +558,30 @@ for axx in ax3b.ravel():
 for axx in ax3c.ravel():
     axx.set_axis_off()
 
-fig3a.tight_layout()
-fig3b.tight_layout()
-fig3c.tight_layout()
+cax0 = fig3a.add_axes([0.05, 0.04, 0.25, 0.01])
+fig3a.colorbar(i0, cax=cax0, orientation='horizontal')
+cax1 = fig3a.add_axes([0.05 + 0.325, 0.04, 0.25, 0.01])
+fig3a.colorbar(i1, cax=cax1, orientation='horizontal')
+cax2 = fig3a.add_axes([0.05 + 0.65, 0.04, 0.25, 0.01])
+fig3a.colorbar(i2, cax=cax2, orientation='horizontal')
+
+cax3 = fig3b.add_axes([0.05, 0.04, 0.25, 0.01])
+fig3b.colorbar(i3, cax=cax3, orientation='horizontal')
+cax4 = fig3b.add_axes([0.05 + 0.325, 0.04, 0.25, 0.01])
+fig3b.colorbar(i4, cax=cax4, orientation='horizontal')
+cax5 = fig3b.add_axes([0.05 + 0.65, 0.04, 0.25, 0.01])
+fig3b.colorbar(i5, cax=cax5, orientation='horizontal')
+
+cax6 = fig3c.add_axes([0.05, 0.04, 0.25, 0.01])
+fig3c.colorbar(i6, cax=cax6, orientation='horizontal')
+cax7 = fig3c.add_axes([0.05 + 0.325, 0.04, 0.25, 0.01])
+fig3c.colorbar(i7, cax=cax7, orientation='horizontal')
+cax8 = fig3c.add_axes([0.05 + 0.65, 0.04, 0.25, 0.01])
+fig3c.colorbar(i8, cax=cax8, orientation='horizontal')
+
+fig3a.tight_layout(rect=(0, 0.03, 1, 1))
+fig3b.tight_layout(rect=(0, 0.03, 1, 1))
+fig3c.tight_layout(rect=(0, 0.03, 1, 1))
 
 fig3a.savefig('conv_sim.png')
 fig3b.savefig('agr_wo_decay_sim.png')
