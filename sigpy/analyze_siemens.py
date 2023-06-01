@@ -138,8 +138,17 @@ df.loc['cortical GM / WM next to GM ratio'] = df.loc['cortical GM'] / df.loc[
     'WM next to GM']
 df.loc['cortical GM / central WM ratio'] = df.loc['cortical GM'] / df.loc[
     'central WM']
+df.loc[
+    'cortical GM / ventricles'] = df.loc['cortical GM'] / df.loc['ventricles']
+df.loc['WM / ventricles'] = df.loc['WM'] / df.loc['ventricles']
 
 print(df)
+
+fig, ax = plt.subplots(figsize=(8, 4))
+df.plot(kind='barh', ax=ax)
+ax.grid(ls=':')
+fig.tight_layout()
+fig.show()
 
 #------------------------------------------------------------------------------
 
