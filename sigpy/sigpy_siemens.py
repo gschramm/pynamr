@@ -18,15 +18,16 @@ from utils import align_images, read_GE_ak_wav, kb_rolloff
 from utils_sigpy import NUFFTT2starDualEchoModel, projected_gradient_operator
 
 import argparse
+import json
 
 parser = argparse.ArgumentParser(
     description='AGR sodium recons for Siemens data',
     epilog=
-    'DATA_DIR must contain the files: grad.wav, Pecho_1.7.h5, Pecho_2.7.h5, t1.nii'
+    'DATA_DIR must contain the files: grad.wav, Pecho_1.ome, Pecho_2.ome, t1.nii'
 )
 parser.add_argument('--data_dir',
                     type=str,
-                    default='/data/sodium_mr/NYU/CSF31_raw')
+                    default='/data/sodium_mr/NYU/CSF32_raw')
 parser.add_argument('--beta_non_anatomical', type=float, default=1e-1)
 parser.add_argument('--beta_anatomical', type=float, default=3e-3)
 parser.add_argument('--beta_r', type=float, default=3e-1)
@@ -35,10 +36,7 @@ parser.add_argument('--max_num_iter', type=int, default=2000)
 parser.add_argument('--odir', type=str, default=None)
 parser.add_argument('--matrix_size', type=int, default=128)
 parser.add_argument('--eta', type=float, default=0.005)
-parser.add_argument('--x_shift', type=float, default=0)
-parser.add_argument('--y_shift', type=float, default=-10)
-parser.add_argument('--z_shift', type=float, default=-25)
-parser.add_argument('--alpha', type=float, default=0.3)
+parser.add_argument('--alpha', type=float, default=1.0)
 args = parser.parse_args()
 
 #--------------------------------------------------------------------
@@ -53,17 +51,26 @@ num_iter_r = args.num_iter_r
 matrix_size = args.matrix_size
 eta = args.eta
 
-x_shift = args.x_shift
-y_shift = args.y_shift
-z_shift = args.z_shift
+shift_path = data_dir / 'shifts.json'
+
+if shift_path.exists():
+    with open(data_dir / 'shifts.json', 'r') as f:
+        tmp = json.load(f)
+        x_shift = tmp['x']
+        y_shift = tmp['y']
+        z_shift = tmp['z']
+else:
+    x_shift = 0.
+    y_shift = 0.
+    z_shift = 0.
 
 # step size for the gradient descent in ratio update
 alpha = args.alpha
 #--------------------------------------------------------------------
 # fixed parameters
 gradient_file = data_dir / 'grad.wav'
-echo_1_data_file = data_dir / 'Pecho_1.7.h5'
-echo_2_data_file = data_dir / 'Pecho_2.7.h5'
+echo_1_data_file = data_dir / 'Pecho1.ome'
+echo_2_data_file = data_dir / 'Pecho2.ome'
 t1_file = data_dir / 't1.nii'
 
 # shape of the images to be reconstructed
@@ -142,12 +149,10 @@ for ii in range(k_1_cm_ge.shape[1]):
 #--------------------------------------------------------------------
 #--------------------------------------------------------------------
 
-with h5py.File(echo_1_data_file) as data1:
-    data_echo_1 = data1['/data'][:]
-    rotation = int(data1['/header']['rdb_hdr']['rotation'][0])
-
-with h5py.File(echo_2_data_file) as data2:
-    data_echo_2 = data2['/data'][:]
+data_echo_1 = np.fromfile(echo_1_data_file,
+                          dtype=np.complex64).reshape(1596, 3632).T
+data_echo_2 = np.fromfile(echo_2_data_file,
+                          dtype=np.complex64).reshape(1596, 3632).T
 
 # apply phase shift to data to shift brain into the center
 if x_shift != 0:
@@ -222,7 +227,6 @@ print(
 print(
     f'readout time              .: {(k_1_cm.shape[0]+1) * acq_sampling_time_ms:.2f} ms'
 )
-print(f'rotation                  .: {rotation}')
 
 #--------------------------------------------------------------------
 #--------------------------------------------------------------------
@@ -240,7 +244,7 @@ data_weights_2 = data_weights_2.ravel()
 kernel = 'kaiser_bessel'
 width = 2
 param = 9.14
-grid_shape = ishape
+grid_shape = (64, 64, 64)
 
 data_echo_1_gridded = sigpy.gridding(data_echo_1,
                                      cp.asarray(k_1_cm.reshape(-1, 3)) *
@@ -285,7 +289,7 @@ TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
 
 phase_corr = cp.asarray(((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z))
 
-ifft_scale = 100.
+ifft_scale = 50.
 
 ifft1 = ifft_scale * phase_corr * ifft_op(data_echo_1_gridded_corr)
 ifft2 = ifft_scale * phase_corr * ifft_op(data_echo_2_gridded_corr)
@@ -301,18 +305,28 @@ interpolation_correction_field /= interpolation_correction_field.max()
 ifft1 /= interpolation_correction_field
 ifft2 /= interpolation_correction_field
 
-ifft1_sm = ndimage.gaussian_filter(ifft1, 2.)
-ifft2_sm = ndimage.gaussian_filter(ifft2, 2.)
+ifft1_sm = ndimage.gaussian_filter(ifft1, 1.)
+ifft2_sm = ndimage.gaussian_filter(ifft2, 1.)
+
+vi = pv.ThreeAxisViewer([
+    cp.asnumpy(cp.abs(ifft1)),
+    cp.asnumpy(cp.abs(ifft2)),
+    cp.asnumpy(cp.abs(ifft1_sm)),
+    cp.asnumpy(cp.abs(ifft2_sm)),
+],
+                        imshow_kwargs=dict(cmap='Greys_r'))
 
 cp.save(odir / 'ifft1.npy', ifft1)
 cp.save(odir / 'ifft2.npy', ifft2)
 cp.save(odir / 'ifft1_sm.npy', ifft1_sm)
 cp.save(odir / 'ifft2_sm.npy', ifft2_sm)
 
-#vi = pv.ThreeAxisViewer(
-#    [cp.asnumpy(cp.abs(ifft1_sm)),
-#     cp.asnumpy(cp.abs(ifft2_sm))],
-#    imshow_kwargs=dict(cmap='Greys_r'))
+# interpolate ifft to recon grid
+ifft1 = ndimage.zoom(ifft1, ishape[0] / 64, order=1, prefilter=False)
+ifft2 = ndimage.zoom(ifft2, ishape[0] / 64, order=1, prefilter=False)
+
+ifft1_sm = ndimage.zoom(ifft1_sm, ishape[0] / 64, order=1, prefilter=False)
+ifft2_sm = ndimage.zoom(ifft2_sm, ishape[0] / 64, order=1, prefilter=False)
 
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
@@ -467,21 +481,6 @@ t1_affine = t1_nii.affine
 t1_voxsize = t1_nii.header['pixdim'][1:4]
 t1_origin = t1_affine[:-1, -1]
 
-## the sodium data can be rotated during the acq.
-## the rotation is encoded in the "rotation" field of the
-## pfile header
-## depending on the value, we have to flip the T1
-#
-#if rotation == 0:
-#    t1_reoriented = np.flip(np.swapaxes(t1, 0, 1), 0)
-#    t1_origin = t1_origin[[1, 0, 2]]
-#    t1_voxsize = t1_voxsize[[1, 0, 2]]
-#elif rotation == 3:
-#    t1_reoriented = t1
-#else:
-#    raise ValueError('unknown rotation value')
-
-#t1_reoriented = np.flip(t1, 2)
 t1_reoriented = np.flip(t1, (0, 2))
 
 na_voxsize = 10 * field_of_view_cm / np.array(ishape)
