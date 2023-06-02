@@ -225,23 +225,31 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
 #------------------------------------------------------------------------------
 
 ratio_df = dfs['cortical GM'] / dfs['WM']
+ratio_df_brainstem = dfs['cortical GM'] / dfs['brainstem']
 
 plt.style.use('default')
 
-fig2, ax2 = plt.subplots(1, 3, figsize=(9, 3))
+fig2, ax2 = plt.subplots(1, 5, figsize=(12, 3))
 dfs['cortical GM'].plot(ax=ax2[0], rot=0, kind='bar', legend=False)
 dfs['WM'].plot(ax=ax2[1], rot=0, kind='bar', legend=False)
-ratio_df.plot(ax=ax2[2], rot=0, kind='bar').legend(loc='lower right')
+dfs['brainstem'].plot(ax=ax2[2], rot=0, kind='bar', legend=False)
+
+ratio_df.plot(ax=ax2[3], rot=0, kind='bar', legend=False)
+ratio_df_brainstem.plot(ax=ax2[4], rot=0, kind='bar').legend(loc='lower right')
 
 ax2[0].set_title('GM', fontsize='medium')
 ax2[1].set_title('WM', fontsize='medium')
-ax2[2].set_title('GM/WM ratio', fontsize='medium')
+ax2[2].set_title('brainstem center', fontsize='medium')
 
-ax2[0].set_ylabel('TSC (arb. units)', fontsize='medium')
-ax2[1].set_ylabel('TSC (arb. units)', fontsize='medium')
+ax2[3].set_title('GM / WM', fontsize='medium')
+ax2[4].set_title('GM / brainstem center', fontsize='medium')
 
-ax2[0].set_ylim(0, 0.95)
-ax2[1].set_ylim(0, 0.95)
+for i in range(3):
+    ax2[i].set_ylabel('sodium concentration (arb. units)', fontsize='medium')
+    ax2[i].set_ylim(0, 0.95)
+
+ax2[3].set_ylabel('sodium concentration ratio')
+ax2[4].set_ylabel('sodium concentration ratio')
 
 for axx in ax2.ravel():
     axx.set_xlabel('subject')
