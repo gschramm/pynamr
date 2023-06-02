@@ -31,8 +31,6 @@ def resample_sodium_to_t1_grid(na_image,
 
 
 #-----------------------------------------------------------------------------
-q = []
-
 pdict = OrderedDict({'31': [96, 134], '32': [78, 123], '37': [99, 131]})
 sdir = 'recons_128'
 agr_w_decay_file = 'agr_both_echo_w_decay_model_L1_3.0E-03_3.0E-01_2000_19.npz'
@@ -118,9 +116,13 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     ventricle_mask = (aparc == 4).astype(np.uint8) + (aparc == 43).astype(
         np.uint8)
 
+    # inner brain stem - comparison to Haeger 2022
+    brainstem_mask = binary_erosion((aparc == 16).astype(np.uint8),
+                                    iterations=4)
+
     roi_inds['cortical GM'] = np.where(cortical_gm_mask)
     roi_inds['WM'] = np.where(wm_mask)
-    #roi_inds['ventricles'] = np.where(ventricle_mask)
+    roi_inds['brainstem'] = np.where(brainstem_mask)
 
     for roi, inds in roi_inds.items():
         if ip == 0:
@@ -128,11 +130,11 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
 
         tmp = pd.DataFrame(
             {
-                'conv': conv[inds].mean(),
-                'AGR wo decay': agr_wo_decay[inds].mean(),
-                'AGR w decay': agr_w_decay[inds].mean()
+                'CR': conv[inds].mean(),
+                'AGR': agr_wo_decay[inds].mean(),
+                'AGRdm': agr_w_decay[inds].mean()
             },
-            index=[pnum])
+            index=[ip + 1])
 
         dfs[roi] = pd.concat((dfs[roi], tmp))
 
@@ -212,15 +214,14 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
         axx.set_axis_off()
 
     ax[0, 0].set_title('1H T1', fontsize='small')
-    ax[0, 1].set_title('23Na conventional', fontsize='small')
-    ax[0, 2].set_title('23Na AGR wo decay', fontsize='small')
-    ax[0, 3].set_title('23Na AGR w decay', fontsize='small')
-    ax[0, 4].set_title('est. decay r', fontsize='small')
+    ax[0, 1].set_title('23Na CR', fontsize='small')
+    ax[0, 2].set_title('23Na AGR', fontsize='small')
+    ax[0, 3].set_title('23Na AGRdm', fontsize='small')
+    ax[0, 4].set_title('est. ratio r', fontsize='small')
 
     fig.tight_layout(pad=1.8)
     fig.show()
 
-    q.append(agr_w_decay[bbox])
 #------------------------------------------------------------------------------
 
 ratio_df = dfs['cortical GM'] / dfs['WM']

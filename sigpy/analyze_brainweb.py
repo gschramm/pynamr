@@ -288,7 +288,7 @@ for roi, inds in roi_inds.items():
     for ir in range(recons_e1_no_decay.shape[0]):
         for ib in range(recons_e1_no_decay.shape[1]):
             tmp = pd.DataFrame(dict(
-                method='iter. quad. prior',
+                method='CR',
                 b=ib + 1,
                 r=ir + 1,
                 roi=roi,
@@ -301,7 +301,7 @@ for roi, inds in roi_inds.items():
     for ir in range(agrs_e1_no_decay.shape[0]):
         for ib in range(agrs_e1_no_decay.shape[1]):
             tmp = pd.DataFrame(dict(
-                method='AGR wo decay m.',
+                method='AGR',
                 b=ib + 1,
                 r=ir + 1,
                 roi=roi,
@@ -314,7 +314,7 @@ for roi, inds in roi_inds.items():
     for ir in range(agrs_both_echos_w_decay0.shape[0]):
         for ib in range(agrs_both_echos_w_decay0.shape[1]):
             tmp = pd.DataFrame(dict(
-                method=f'AGR w decay m. {beta_rs[0]:.1E}',
+                method=f'AGRdm bu={beta_rs[0]:.1E}',
                 b=ib + 1,
                 r=ir + 1,
                 roi=roi,
@@ -327,7 +327,7 @@ for roi, inds in roi_inds.items():
     for ir in range(agrs_both_echos_w_decay1.shape[0]):
         for ib in range(agrs_both_echos_w_decay1.shape[1]):
             tmp = pd.DataFrame(dict(
-                method=f'AGR w decay m. {beta_rs[1]:.1E}',
+                method=f'AGRdm bu={beta_rs[1]:.1E}',
                 b=ib + 1,
                 r=ir + 1,
                 roi=roi,
@@ -387,7 +387,7 @@ for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
                              (2 * col):(2 * col + 2)]))
 
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    axs[i].plot(x, y, 'o-', label='iter quad. prior')
+    axs[i].plot(x, y, 'o-', label='CR')
     axs[i].set_title(roi)
 
     for j in range(len(x)):
@@ -403,7 +403,7 @@ for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
         x = np.array([z[roi_inds[roi]].mean() for z in agrs_e1_no_decay_std])
 
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    axs[i].plot(x, y, 'o-', label='AGR wo decay m.')
+    axs[i].plot(x, y, 'o-', label='AGR')
 
     for j in range(len(x)):
         axs[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
@@ -418,7 +418,7 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay0_roi_means.items()):
         x = np.array(
             [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay0_std])
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    axs[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[0]:.1E}')
+    axs[i].plot(x, y, 'o-', label=f'AGRdm, bu={beta_rs[0]:.1E}')
 
     for j in range(len(x)):
         axs[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
@@ -433,7 +433,7 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay1_roi_means.items()):
         x = np.array(
             [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay1_std])
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    axs[i].plot(x, y, 'o-', label=f'AGR w decay m. {beta_rs[1]:.1E}')
+    axs[i].plot(x, y, 'o-', label=f'AGRdm, bu={beta_rs[1]:.1E}')
 
 for i, axx in enumerate(axs):
     axx.grid(ls=':')
