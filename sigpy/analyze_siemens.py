@@ -158,6 +158,18 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     vmax = np.percentile(agr_w_decay, 99.99)
     tmax = np.percentile(t1, 99.9)
 
+    # bounding box values for inset plot of transaxial slice
+    xl = find_objects(aparc[bbox][:, :, slz].T > 0)[0][1].start
+    xr = find_objects(aparc[bbox][:, :, slz].T > 0)[0][1].stop
+    xm = (xl + xr) // 2
+    ybottom = find_objects(aparc[bbox][:, :, slz].T > 0)[0][0].stop + 4
+
+    # bounding box values for inset plot of coronal slice
+    xl2 = find_objects(aparc[bbox][:, sly, :].T > 0)[0][1].start
+    xr2 = find_objects(aparc[bbox][:, sly, :].T > 0)[0][1].stop
+    xm2 = (xl + xr) // 2
+    ytop2 = find_objects(aparc[bbox][:, sly, :].T > 0)[0][0].stop + 4
+
     fig, ax = plt.subplots(2, 5, figsize=(5 * 2, 2 * 2))
 
     i0 = ax[0, 0].imshow(t1[bbox][:, :, slz].T,
@@ -169,6 +181,25 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
                     cmap='Greys_r',
                     vmin=0,
                     vmax=tmax)
+
+    axins = ax[0, 0].inset_axes([0.85, 0.7, 0.35, 0.35])
+    axins.imshow(t1[bbox][:, :, slz].T, cmap='Greys_r', vmin=0, vmax=tmax)
+    axins.set_axis_off()
+    axins.set_xlim(xm - 15, xm + 15)
+    axins.set_ylim(ybottom, ybottom - 30)
+    ax[0, 0].indicate_inset_zoom(axins, edgecolor="white")
+
+    axins = ax[1, 0].inset_axes([0.85, 0.7, 0.35, 0.35])
+    axins.imshow(t1[bbox][:, sly, :].T,
+                 cmap='Greys_r',
+                 vmin=0,
+                 vmax=tmax,
+                 origin='lower')
+    axins.set_axis_off()
+    axins.set_xlim(xm2 - 15, xm2 + 15)
+    axins.set_ylim(ytop2 - 30, ytop2)
+    ax[1, 0].indicate_inset_zoom(axins, edgecolor="white")
+
     i1 = ax[0, 1].imshow(conv[bbox][:, :, slz].T,
                          cmap='Greys_r',
                          vmin=0,
@@ -178,6 +209,25 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
                     cmap='Greys_r',
                     vmin=0,
                     vmax=vmax)
+
+    axins = ax[0, 1].inset_axes([0.9, 0.7, 0.35, 0.35])
+    axins.imshow(conv[bbox][:, :, slz].T, cmap='Greys_r', vmin=0, vmax=vmax)
+    axins.set_axis_off()
+    axins.set_xlim(xm - 15, xm + 15)
+    axins.set_ylim(ybottom, ybottom - 30)
+    ax[0, 1].indicate_inset_zoom(axins, edgecolor="white")
+
+    axins = ax[1, 1].inset_axes([0.85, 0.7, 0.35, 0.35])
+    axins.imshow(conv[bbox][:, sly, :].T,
+                 cmap='Greys_r',
+                 vmin=0,
+                 vmax=vmax,
+                 origin='lower')
+    axins.set_axis_off()
+    axins.set_xlim(xm2 - 15, xm2 + 15)
+    axins.set_ylim(ytop2 - 30, ytop2)
+    ax[1, 1].indicate_inset_zoom(axins, edgecolor="white")
+
     i2 = ax[0, 2].imshow(agr_wo_decay[bbox][:, :, slz].T,
                          cmap='Greys_r',
                          vmin=0,
@@ -187,15 +237,59 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
                     cmap='Greys_r',
                     vmin=0,
                     vmax=vmax)
+
+    axins = ax[0, 2].inset_axes([0.85, 0.7, 0.35, 0.35])
+    axins.imshow(agr_wo_decay[bbox][:, :, slz].T,
+                 cmap='Greys_r',
+                 vmin=0,
+                 vmax=vmax)
+    axins.set_axis_off()
+    axins.set_xlim(xm - 15, xm + 15)
+    axins.set_ylim(ybottom, ybottom - 30)
+    ax[0, 2].indicate_inset_zoom(axins, edgecolor="white")
+
+    axins = ax[1, 2].inset_axes([0.85, 0.7, 0.35, 0.35])
+    axins.imshow(agr_wo_decay[bbox][:, sly, :].T,
+                 cmap='Greys_r',
+                 vmin=0,
+                 vmax=vmax,
+                 origin='lower')
+    axins.set_axis_off()
+    axins.set_xlim(xm2 - 15, xm2 + 15)
+    axins.set_ylim(ytop2 - 30, ytop2)
+    ax[1, 2].indicate_inset_zoom(axins, edgecolor="white")
+
     i3 = ax[0, 3].imshow(agr_w_decay[bbox][:, :, slz].T,
                          cmap='Greys_r',
                          vmin=0,
                          vmax=vmax)
+
     ax[1, 3].imshow(agr_w_decay[bbox][:, sly, :].T,
                     origin='lower',
                     cmap='Greys_r',
                     vmin=0,
                     vmax=vmax)
+
+    axins = ax[0, 3].inset_axes([0.85, 0.7, 0.35, 0.35])
+    axins.imshow(agr_w_decay[bbox][:, :, slz].T,
+                 cmap='Greys_r',
+                 vmin=0,
+                 vmax=vmax)
+    axins.set_axis_off()
+    axins.set_xlim(xm - 15, xm + 15)
+    axins.set_ylim(ybottom, ybottom - 30)
+    ax[0, 3].indicate_inset_zoom(axins, edgecolor="white")
+
+    axins = ax[1, 3].inset_axes([0.85, 0.7, 0.35, 0.35])
+    axins.imshow(agr_w_decay[bbox][:, sly, :].T,
+                 cmap='Greys_r',
+                 vmin=0,
+                 vmax=vmax,
+                 origin='lower')
+    axins.set_axis_off()
+    axins.set_xlim(xm2 - 15, xm2 + 15)
+    axins.set_ylim(ytop2 - 30, ytop2)
+    ax[1, 3].indicate_inset_zoom(axins, edgecolor="white")
 
     i4 = ax[0, 4].imshow(est_ratio[bbox][:, :, slz].T,
                          cmap='Greys_r',
