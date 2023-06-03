@@ -90,6 +90,19 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
                                            final_transform,
                                            missing=1.0)
 
+    #    #------------------------------------------------------------------------------
+    #    # export to nifti
+    #    edir = pdir / 'export'
+    #    edir.mkdir(exist_ok=True)
+    #
+    #    nib.save(nib.Nifti1Image(t1.astype(np.float32), t1_nii.affine),
+    #             edir / 'T1.nii')
+    #    nib.save(nib.Nifti1Image(conv, t1_nii.affine), edir / 'CR.nii')
+    #    nib.save(nib.Nifti1Image(agr_wo_decay, t1_nii.affine), edir / 'AGR.nii')
+    #    nib.save(nib.Nifti1Image(agr_w_decay, t1_nii.affine), edir / 'AGRdm.nii')
+    #    nib.save(nib.Nifti1Image(est_ratio, t1_nii.affine),
+    #             edir / 'est_ratio_r.nii')
+
     #------------------------------------------------------------------------------
     # flip all images to LPS
 
