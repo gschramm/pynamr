@@ -3,6 +3,7 @@ import numpy as np
 import numpy.typing as npt
 from numba import jit
 from pathlib import Path
+import cupy as cp
 
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
@@ -11,6 +12,7 @@ import math
 from typing import Union, Sequence
 
 from pymirc.image_operations import aff_transform, zoom3d
+from pynamr.utils import TPIReadOutTime, RadialKSpacePartitioner
 
 import SimpleITK as sitk
 
@@ -191,7 +193,9 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
                            T2short_ms_wm: float = 9.,
                            T2short_ms_other: float = 8.,
                            add_anatomical_mismatch: bool = False,
-                           add_T2star_bias: bool = False):
+                           add_T2star_bias: bool = False,
+                           pathology: str = 'none', # none or combinations of big-lesion, small-lesion, cos, gm, wm, gwm
+                           pathology_change_perc: float = 0.):
 
     simulation_voxel_size_mm: float = 10 * field_of_view_cm / simulation_matrix_size
 
@@ -233,6 +237,45 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
     img[skull_inds] = 0.1
     img[eye1_inds] = csf_na_concentration
     img[eye2_inds] = csf_na_concentration
+
+    # add pathology if required
+    # only in the foreground, only for Na "concentration"
+    if pathology != 'none' and pathology_change_perc > 0.:
+        patho_mask = img > 0.
+        patho_only = np.ones(img.shape, img.dtype)
+        if 'gwm' in pathology:
+            patho_mask *= (lab == 2) + (lab == 3)
+        elif 'gm' in pathology:
+            patho_mask *= (lab == 2)
+        elif 'wm' in pathology:
+            patho_mask *= (lab == 3)
+        if 'cos' in pathology:
+            cos_1d = cos_im_for_tpi(img.shape)
+            patho_only = patho_only * np.broadcast_to(cos_1d, img.shape)
+        if 'lesion' in pathology:
+            if 'small' in pathology:
+                radius = img.shape[0]//20
+                center = img.shape[0]//2 + 2 * radius
+            elif 'big' in pathology:
+                radius = img.shape[0]//10
+                center = img.shape[0]//2 + radius
+            else:
+                radius = img.shape[0]//20
+                center = img.shape[0]//2 + radius
+            # build indices for a sphere with given radius and center
+            ind = np.arange(img.shape[0])
+            k0, k1, k2 = np.meshgrid(ind, ind, ind)
+            k_abs = np.sqrt((k0-center)**2 + (k1-center)**2 + (k2-center)**2)
+            patho_mask *= k_abs < radius
+
+        # the pathological sodium concentration is the maximum normal intensity in the same area
+        # increased by the given percentage
+        ref_intensity = np.max(img[patho_mask])
+        patho_intensity = ref_intensity * pathology_change_perc/100.
+
+        # add the pathology only in the mask area
+        img[patho_mask] += patho_only[patho_mask] * patho_intensity
+
 
     # set up array for Gamma (ratio between 2nd and 1st echo)
     T2short_ms = np.full(lab.shape,
@@ -287,11 +330,17 @@ def setup_brainweb_phantom(simulation_matrix_size: int,
                                     lab_voxelsize / simulation_voxel_size_mm)
     t1_extrapolated = zoom3d(t1, lab_voxelsize / simulation_voxel_size_mm)
 
+
     return img_extrapolated, t1_extrapolated, T2short_ms_extrapolated, T2long_ms_extrapolated
 
 
-def setup_blob_phantom(simulation_matrix_size: int, radius: float = 0.25):
-    """simple central blob phantom to test normalization factor between nufft data and IFFT"""
+def setup_blob_phantom(simulation_matrix_size: int, radius: float = 0.25,
+                        T2short: float = 0.5*np.finfo(np.float32).max, T2long: float = 0.5*np.finfo(np.float32).max,
+                        longerT2ring: bool = False,
+                        pathology: str = 'none', # none, cos, big-lesion, small-lesion, or combinations thereof
+                        pathology_change_perc: float = 0.):
+    """simple central blob phantom to test normalization factor between nufft data and IFFT
+        and study other effects (ideal observer analysis, influence of T2 nonuniformity, etc.)"""
 
     img_shape = 3 * (simulation_matrix_size, )
 
@@ -308,10 +357,101 @@ def setup_blob_phantom(simulation_matrix_size: int, radius: float = 0.25):
     # dummy proton T1 and Na T2star images
     t1 = img.copy()
 
-    T2short = np.full(img_shape, 0.5 * np.finfo(np.float32).max)
-    T2long = np.full(img_shape, 0.5 * np.finfo(np.float32).max)
+    T2short_im = np.full(img_shape, T2short)
+    T2long_im = np.full(img_shape, T2long)
 
-    return img, t1, T2short, T2long
+    if longerT2ring:
+        # add a ring of CSF like T2* values inside the cylinder
+        inner = radius * 0.8
+        T2short_im[np.logical_and(R < radius, R > inner)] = 50 #0.5*np.finfo(np.float32).max
+        T2long_im[np.logical_and(R < radius, R > inner)] = 50 #0.5*np.finfo(np.float32).max
+
+    # add pathology if required
+    # only in the foreground, only for Na "concentration"
+    if pathology != 'none' and pathology_change_perc > 0.:
+        patho_mask = img > 0.
+        patho_only = np.ones(img.shape, img.dtype)
+        if 'cos' in pathology:
+            cos_1d = cos_im_for_tpi(img.shape)
+            patho_only = patho_only * np.broadcast_to(cos_1d, img.shape)
+        if 'lesion' in pathology:
+            if 'small' in pathology:
+                radius = img.shape[0]//20
+                center = img.shape[0]//2 + 2 * radius
+            elif 'big' in pathology:
+                radius = img.shape[0]//10
+                center = img.shape[0]//2 + radius
+            else:
+                radius = img.shape[0]//20
+                center = img.shape[0]//2 + radius
+
+            # build indices for a sphere with given radius and center
+            ind = np.arange(img.shape[0])
+            k0, k1, k2 = np.meshgrid(ind, ind, ind)
+            k_abs = np.sqrt((k0-center)**2 + (k1-center)**2 + (k2-center)**2)
+            patho_mask *= k_abs < radius
+
+        # the pathological sodium concentration is the maximum normal intensity in the same area
+        # increased by the given percentage
+        ref_intensity = np.max(img[patho_mask])
+        patho_intensity = ref_intensity * pathology_change_perc/100.
+
+        # add the pathology only in the mask area
+        img[patho_mask] += patho_only[patho_mask] * patho_intensity
+
+    return img, t1, T2short_im, T2long_im
+
+
+def cos_im_for_tpi(im_shape: tuple) -> np.ndarray:
+    """ Build 1D cosine based on hard coded maximum TPI frequency, field of view,
+        and given input image cubic matrix size
+    """
+
+    kmax_1_cm = 1.45
+    field_of_view_cm = 22.
+    n = im_shape[-1]
+
+    # spatial frequency of the cosine: N - 1 (one before maximum discretized frequency)
+    real_freq = kmax_1_cm - 1./field_of_view_cm # 1/cm
+    vox_size = field_of_view_cm / n
+    period = 1. / real_freq
+    period_nb_vox = period / vox_size
+    # cosine frequency
+    freq = 1. / period_nb_vox
+
+    # 1d cosine in space
+    cos_1d = np.cos(2 * np.pi * freq * np.linspace(0, n, n, endpoint=False))
+    # cosine image
+    cos_im = np.broadcast_to(cos_1d, im_shape)
+
+    return cos_im
+
+
+def crop_kspace_data(data: np.ndarray, in_shape: tuple, out_shape: tuple,
+                     center: bool=False) -> np.ndarray:
+    """ Crop k-space data to a smaller grid
+        Option for providing centered or fftshifted k-space data
+        Assuming fft with ortho norm is used """
+
+    if center:
+        cropped = data[in_shape[0]//2 - out_shape[0]//2:in_shape[0]//2 + out_shape[0]//2,
+                       in_shape[1]//2 - out_shape[1]//2:in_shape[1]//2 + out_shape[1]//2,
+                       in_shape[2]//2 - out_shape[2]//2:in_shape[2]//2 + out_shape[2]//2]
+    else:
+        temp = np.fft.fftshift(data)
+        temp = temp[in_shape[0]//2 - out_shape[0]//2:in_shape[0]//2 + out_shape[0]//2,
+                    in_shape[1]//2 - out_shape[1]//2:in_shape[1]//2 + out_shape[1]//2,
+                    in_shape[2]//2 - out_shape[2]//2:in_shape[2]//2 + out_shape[2]//2]
+        cropped = np.fft.fftshift(temp)
+
+    # normalization factor for preserving the same image scale
+    # assuming ortho norm was used for fft
+    norm_factor = 1
+    for d in range(len(in_shape)):
+        norm_factor *= np.sqrt(out_shape[d] / in_shape[d])
+
+    cropped *= norm_factor
+    return cropped
 
 
 def tpi_sampling_density(kx: npt.NDArray, ky: npt.NDArray, kz: npt.NDArray,
@@ -695,3 +835,53 @@ def read_GE_ak_wav(fname: str):
     fov = params[1] / 100
 
     return grad, bw, fov, desc, N, params
+
+
+def simpleForward_TPI_FFT(image: cp.ndarray,
+                 T2map_short: cp.ndarray,
+                 T2map_long: cp.ndarray,
+                 acquired_grid_n: int,
+                 echo_time_ms: float,
+                 num_time_bins: int,
+                 acc: float=1.) -> [cp.ndarray, cp.ndarray]:
+        """Simple forward TPI operator using FFT approximation, assuming bi exp decay
+
+        Parameters
+        ----------
+        image : input image
+        T2map_short: image of short T2* component
+        T2map_long: image of long T2* component
+        acquired_grid_n: matrix size, assuming cubic matrix
+        echo_time_ms : float
+        num_time_bins: int, number of time bins
+        acc : time acceleration of the hard coded TPI with max grad=0.16G/cm
+
+        Returns
+        ----------
+        data : k-space data as would be approximately acquired with TPI
+        k_mask : spherical mask for actually acquired k-space samples
+
+        """
+
+        ishape = image.shape
+        # hard coded equation for TPI readout time
+        # as a function of the distance from k-space center
+        t = TPIReadOutTime()
+        k = RadialKSpacePartitioner(ishape, num_time_bins, pad_factor = ishape[0] // acquired_grid_n)
+
+        time_bins = t(k.k) / acc
+        k_inds = k.k_inds
+        k_mask = cp.asarray(k.kmask)
+
+        data = cp.zeros(ishape, dtype=cp.complex128)
+        for i, time_bin in enumerate(time_bins):
+            #setup the decay image
+            readout_time_ms = echo_time_ms + time_bin
+            decay = 0.6 * cp.exp(-readout_time_ms / T2map_short) + 0.4 * cp.exp(-readout_time_ms / T2map_long)
+
+            # fft and sum
+            data[k_inds[i]] += cp.fft.fftn(image * decay, norm='ortho')[k_inds[i]]
+
+        return data, k_mask
+
+
