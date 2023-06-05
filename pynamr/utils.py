@@ -40,18 +40,17 @@ class RadialKSpacePartitioner:
 
     def __init__(self,
                  data_shape: tuple,
-                 pad_factor: float,
                  n_bins: int,
+                 pad_factor: float = 1.,
                  k_edge: float = 1.8 * 0.8197) -> None:
 
         self._n_bins = n_bins
         self._k_edge = k_edge
 
-        # the center coordinates of k-space data voxels
-        k_edge_for_ind = [k_edge*(1.-1./data_shape[0]), k_edge*(1.-1./data_shape[1]), k_edge*(1.-1./data_shape[2])]
-        k0, k1, k2 = np.meshgrid(np.linspace(-pad_factor*k_edge_for_ind[0], pad_factor*k_edge_for_ind[0], data_shape[0]),
-                                 np.linspace(-pad_factor*k_edge_for_ind[1], pad_factor*k_edge_for_ind[1], data_shape[1]),
-                                 np.linspace(-pad_factor*k_edge_for_ind[2], pad_factor*k_edge_for_ind[2], data_shape[2]))
+        # the coordinates of k-space data voxels
+        k0, k1, k2 = np.meshgrid(np.linspace(-pad_factor*k_edge, pad_factor*k_edge, data_shape[0], endpoint=False),
+                                 np.linspace(-pad_factor*k_edge, pad_factor*k_edge, data_shape[1], endpoint=False),
+                                 np.linspace(-pad_factor*k_edge, pad_factor*k_edge, data_shape[2], endpoint=False))
 
         # k-space vector magnitude for each k-space voxel
         abs_k = np.sqrt(k0**2 + k1**2 + k2**2)
