@@ -27,10 +27,11 @@ import time
 from pymirc.image_operations import zoom3d
 import pymirc.viewer as pv
 
-from utils import setup_blob_phantom, setup_brainweb_phantom, kb_rolloff, read_tpi_gradient_files, crop_kspace_data, simpleForward_TPI_FFT
-from utils_sigpy import NUFFTT2starDualEchoModel
+from utils import setup_blob_phantom, setup_brainweb_phantom, read_tpi_gradient_files, crop_kspace_data, simpleForward_TPI_FFT
+from utils_sigpy import NUFFTT2starDualEchoModel, recon_grid_and_ifft
 
 from scipy.ndimage import binary_erosion
+from scipy.interpolate import interp1d
 
 from matplotlib import pyplot as plt
 
@@ -92,7 +93,7 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
     """Simulate expected and noisy data only for the first echo using NUFFTT2starDualEchoModel
     """
     # find trajectory gradient file
-    if gradient_strength == 16:
+    if gradient_strength == 16 or gradient_strength == 8:
         gradient_file: str = str(
             Path(data_root_dir) / 'tpi_gradients/n28p4dt10g16_23Na_v1')
     elif gradient_strength == 24:
@@ -109,9 +110,22 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
 
     # read the k-space trajectories from file
     # they have physical units 1/cm
+    # kx.shape = (num_readouts, num_time_points)
     kx, ky, kz, header, n_readouts_per_cone = read_tpi_gradient_files(
         gradient_file)
     #show_tpi_readout(kx, ky, kz, header, n_readouts_per_cone)
+
+    # artificial gradient strength 8 based on 2x oversampling in time of the gradient 16 trace
+    # because no gradient 8 trace available
+    if gradient_strength == 8:
+        num_time_pts = kx.shape[1]
+        interp_time = interp1d(np.arange(num_time_pts), kx, axis=1)
+        oversample2x = np.arange(0, num_time_pts-0.9, 0.5)
+        kx = interp_time(oversample2x)
+        interp_time = interp1d(np.arange(num_time_pts), ky, axis=1)
+        ky = interp_time(oversample2x)
+        interp_time = interp1d(np.arange(num_time_pts), kz, axis=1)
+        kz = interp_time(oversample2x)
 
     # the gradient files only contain a half sphere
     # we add the 2nd half where all gradients are reversed
@@ -272,7 +286,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--noise_level', type=float, default=1e-2, help='noise level relative to DC/max component')
 parser.add_argument('--change_perc', type=float, default=10, help='pathological change in percentage of normal tissue')
 parser.add_argument('--ft', type=str, default='nufft')
-parser.add_argument('--gradient_strengths', type=int, default=[16, 32, 48])
+#parser.add_argument('--gradient_strengths', type=int, default=[8, 16, 32, 48]) # [e-2 G/cm]
 parser.add_argument('--phantom',
                     type=str,
                     default='brainweb',
@@ -289,7 +303,7 @@ parser.add_argument('--odir_suffix', type=str, default='')
 args = parser.parse_args()
 
 noise_level = args.noise_level
-gradient_strengths = args.gradient_strengths
+#gradient_strengths = args.gradient_strengths
 phantom = args.phantom
 nodecay = args.nodecay
 sigma = args.sigma
@@ -301,10 +315,12 @@ ft = args.ft
 padFOV = args.padFOV
 
 cp.random.seed(seed)
-
+plt.ion()
 
 #---------------------------------------------------------------
 # fixed parameters
+
+gradient_strengths = [8, 16, 32, 48] #[16, 32, 48]
 
 # matrix size: assumed cubic
 sim_shape = (256, 256, 256)
@@ -479,6 +495,8 @@ statistic = cp.zeros(len(gradient_strengths), dtype=float)
 # for checking and reconstruction 
 data_x_patho_for_check = []
 data_expect_x_patho_for_check = []
+data_x_normal_for_check = []
+data_expect_x_normal_for_check = []
 k_1_cm_for_check = []
 
 # loop over pulse seq setups/trajectories with different max gradients
@@ -516,6 +534,8 @@ for g, gradient_strength in enumerate(gradient_strengths):
     # for visualizing and checking
     data_x_patho_for_check.append(data_x_patho)
     data_expect_x_patho_for_check.append(data_expect_x_patho)
+    data_x_normal_for_check.append(data_x_normal)
+    data_expect_x_normal_for_check.append(data_expect_x_normal)
 
     # Compute ideal observer SNR and statistic
     snr[g] = ideal_observer_snr(data_expect_x_normal, data_expect_x_patho, nl**2)
@@ -531,18 +551,23 @@ print(f' statistic relative to first grad {statistic/statistic[0]}')
 
 #--------------------------------------------------------------------------
 # Visualize data for the last max gradient, mostly for checking
-data_diff_expect = data_expect_x_normal - data_expect_x_patho
-data_diff = data_x_normal - data_x_patho
 
 if ft == 'nufft':
     # flat data sorted according to time bins
-    plt.ion()
-    plt.figure(), plt.plot(cp.asnumpy(cp.abs(data_diff_expect))), plt.suptitle('Expected pathology in nufft data space')
-    plt.savefig(f'/users/nexuz2/mfilip0/{phantom}_expected_{pathology}_nufft_data.pdf')
-    plt.figure(), plt.plot(cp.asnumpy(cp.abs(data_diff))), plt.suptitle('Pathology in nufft data space')
-    plt.savefig(f'/users/nexuz2/mfilip0/{phantom}_{pathology}_nufft_data.pdf')
+    for g, grad in enumerate(gradient_strengths):
+        data_diff_expect = data_expect_x_normal_for_check[g] - data_expect_x_patho_for_check[g]
+        data_diff = data_x_normal_for_check[g] - data_x_patho_for_check[g]
+        data_show = cp.asnumpy(cp.abs(data_diff_expect))
+        plt.figure(), plt.plot(data_show), plt.suptitle(f'Expected pathology in nufft data space grad {grad}')
+        #plt.savefig(f'/users/nexuz2/mfilip0/{phantom}_expected_{pathology}_nufft_data.pdf')
+        data_show = cp.asnumpy(cp.abs(data_diff))
+        plt.figure(), plt.plot(data_show), plt.suptitle(f'Pathology in nufft data space grad {grad}')
+        #plt.savefig(f'/users/nexuz2/mfilip0/{phantom}_{pathology}_nufft_data.pdf')
 elif ft=='fft':
+    # show only the last gradient
     # easier to visualize
+    data_diff_expect = data_expect_x_normal - data_expect_x_patho
+    data_diff = data_x_normal - data_x_patho
     # show log data normal expect and noisy
     im1 = cp.asnumpy(cp.abs(cp.fft.fftshift(data_expect_x_normal)))
     im2 =  cp.asnumpy(cp.abs(cp.fft.fftshift(cp.fft.fftn(x_normal))))
@@ -603,88 +628,33 @@ if ft == 'fft':
         temp = crop_kspace_data(data_x_patho_for_check[g], sim_shape, grid_shape)
         ifft_patho.append(op_ifft(temp))
 
-    # show expected patho images for all the gradients
-    im = cp.asnumpy(cp.abs(cp.array(ifft_expect_patho)))
-    v.append (pv.ThreeAxisViewer([im[0], im[1], im[2]], imshow_kwargs={'cmap':'viridis', 'vmax':im_max, 'vmin':im_min}))
-    
-    # show noisy patho images for all the gradients
-    im = cp.asnumpy(cp.abs(cp.array(ifft_patho)))
-    v.append (pv.ThreeAxisViewer([im[0], im[1], im[2]], imshow_kwargs={'cmap':'viridis', 'vmax':im_max, 'vmin':im_min}))
-        
 elif ft == 'nufft':
-    # regrid data and apply ifft, with emprirical norm and Kaiser Bessel filter correction
-
-    kernel = 'kaiser_bessel'
-    width = 2
-    param = 9.14
-
     # reconstruct pathological images for all the max gradients 
     ifft_expect_patho = []
     ifft_patho = []
     for g in range(len(gradient_strengths)):
 
-        data_gridded = sigpy.gridding(data_x_patho_for_check[g],
-                                     cp.asarray(k_1_cm_for_check[g].reshape(-1, 3)) *
-                                     field_of_view_cm,
-                                     grid_shape,
-                                     kernel=kernel,
-                                     width=width,
-                                     param=param)
+        # patho image simple recon
+        nufft_k = cp.asarray(k_1_cm_for_check[g].reshape(-1, 3)) * field_of_view_cm
 
-        data_expect_gridded = sigpy.gridding(data_expect_x_patho_for_check[g],
-                                     cp.asarray(k_1_cm_for_check[g].reshape(-1, 3)) *
-                                     field_of_view_cm,
-                                     grid_shape,
-                                     kernel=kernel,
-                                     width=width,
-                                     param=param)
+        im = recon_grid_and_ifft(data_x_patho_for_check[g],
+                                 nufft_k,
+                                 grid_shape)
+        ifft_patho.append(im)
 
-        norm_coefs = sigpy.gridding(cp.ones_like(data_x_patho_for_check[g]),
-                           cp.asarray(k_1_cm_for_check[g].reshape(-1, 3)) *
-                           field_of_view_cm,
-                           grid_shape,
-                           kernel=kernel,
-                           width=width,
-                           param=param)
+        # expected patho image simple recon
+        im = recon_grid_and_ifft(data_expect_x_patho_for_check[g], 
+                                 nufft_k,
+                                 grid_shape)
 
-        ifft_op = sigpy.linop.IFFT(grid_shape, center=False)
-
-        data_gridded_corr = data_gridded
-        data_gridded_corr[norm_coefs > 0] /= norm_coefs[norm_coefs > 0]
-
-        data_expect_gridded_corr = data_expect_gridded
-        data_expect_gridded_corr[norm_coefs > 0] /= norm_coefs[norm_coefs > 0]
-
-        # setup a phase correction field to account phase definition in numpy's fft
-        tmp_x = np.arange(grid_shape[0])
-        TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
-
-        phase_corr = cp.asarray(((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z))
-
-        ifft_scale = 1.
-
-        #ifft1 = cp.fft.fftshift(ifft_scale * phase_corr * ifft_op(data_gridded_corr))
-        #ifft1_expect = cp.fft.fftshift(ifft_scale * phase_corr * ifft_op(data_expect_gridded_corr))
-        ifft1 = ifft_op(phase_corr * data_gridded_corr)
-        ifft1_expect = ifft_op(phase_corr * data_expect_gridded_corr)
-
-        tmp_x = cp.linspace(-width / 2, width / 2, grid_shape[0])
-        TMP_X, TMP_Y, TMP_Z = cp.meshgrid(tmp_x, tmp_x, tmp_x)
-        R = cp.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2)
-        R = cp.clip(R, 0, tmp_x.max())
-
-        #TODO: understand why factor 1.6 is needed when regridding in 3D
-        interpolation_correction_field = kb_rolloff(1.6*R, param)
-        interpolation_correction_field /= interpolation_correction_field.max()
-
-        ifft_patho.append(ifft1 / interpolation_correction_field)
-        ifft_expect_patho.append(ifft1_expect / interpolation_correction_field)
+        ifft_expect_patho.append(im)
 
 
-    # show expected patho images for all the gradients
-    im = cp.asnumpy(cp.abs(cp.array(ifft_expect_patho)))
-    v.append (pv.ThreeAxisViewer([im[0], im[1], im[2]], imshow_kwargs={'cmap':'viridis'}))
+# show expected patho images for all the gradients
+im = [cp.asnumpy(cp.abs(x)) for x in ifft_expect_patho]
+v.append (pv.ThreeAxisViewer([*im], imshow_kwargs={'cmap':'viridis'}))
     
-    # show noisy patho images for all the gradients
-    im = cp.asnumpy(cp.abs(cp.array(ifft_patho)))
-    v.append (pv.ThreeAxisViewer([im[0], im[1], im[2]], imshow_kwargs={'cmap':'viridis'}))
+# show noisy patho images for all the gradients
+im = [cp.asnumpy(cp.abs(x)) for x in ifft_patho]
+v.append (pv.ThreeAxisViewer([*im], imshow_kwargs={'cmap':'viridis'}))
+

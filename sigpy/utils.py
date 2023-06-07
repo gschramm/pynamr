@@ -867,7 +867,8 @@ def simpleForward_TPI_FFT(image: cp.ndarray,
         # hard coded equation for TPI readout time
         # as a function of the distance from k-space center
         t = TPIReadOutTime()
-        k = RadialKSpacePartitioner(ishape, num_time_bins, pad_factor = ishape[0] // acquired_grid_n)
+        pad_factor = ishape[0] // acquired_grid_n
+        k = RadialKSpacePartitioner(ishape, num_time_bins, pad_factor)
 
         time_bins = t(k.k) / acc
         k_inds = k.k_inds

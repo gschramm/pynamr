@@ -4,7 +4,7 @@ import numpy as np
 import cupy as cp
 
 from typing import Union
-
+from utils import kb_rolloff
 
 class NUFFTT2starDualEchoModel:
 
@@ -344,3 +344,73 @@ def projected_gradient_operator(ishape: tuple[int, ...],
     PG = P * G
 
     return PG
+
+
+def recon_grid_and_ifft(k_data: cp.ndarray, nufft_k: cp.ndarray, grid_shape: tuple) -> cp.ndarray:
+    """
+        Gridding + IFFT reconstruction.
+        Using sigpy gridding and Kaiser-Bessel kernel with optimal parameters (Jackson et al.)
+        No sampling density correction, empirical normalization combining sampling density and interpolation coefficients
+
+        Parameters
+        ----------
+        k_data : 1d cupy array, input flattened nufft k-space data
+        nufft_k: 1d cupy array, corresponding flattened k-space coordinates as used in sigpy nufft
+        grid_shape: tuple, the grid shape
+
+        Returns
+        ----------
+        recon : cupy array of grid_shape shape, unscaled reconstructed image
+
+    """
+
+    # interpolation kernel parameters
+    kernel = 'kaiser_bessel'
+    width = 2
+    param = 9.14
+
+    # grid data
+    data_gridded = sigpy.gridding(k_data,
+                                 nufft_k,
+                                 grid_shape,
+                                 kernel=kernel,
+                                 width=width,
+                                 param=param)
+
+    # normalization coefficients taking empirically into account
+    # sampling density and interpolation coefficients
+    norm_coefs = sigpy.gridding(cp.ones_like(k_data),
+                           nufft_k,
+                           grid_shape,
+                           kernel=kernel,
+                           width=width,
+                           param=param)
+    data_gridded_corr = data_gridded
+    data_gridded_corr[norm_coefs > 0] /= norm_coefs[norm_coefs > 0]
+
+    # sigpy ifft operator, though just cupy ifft with ortho norm
+    ifft_op = sigpy.linop.IFFT(grid_shape, center=False)
+
+    # phase correction field to account phase definition in numpy's fft
+    tmp_x = np.arange(grid_shape[0])
+    TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
+    phase_corr = cp.asarray(((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z))
+    data_gridded_corr *= phase_corr
+
+    # apply ifft
+    recon = ifft_op(data_gridded_corr)
+
+    # correction in image space for the KB kernel applied in k-space
+    tmp_x = cp.linspace(-width / 2, width / 2, grid_shape[0])
+    TMP_X, TMP_Y, TMP_Z = cp.meshgrid(tmp_x, tmp_x, tmp_x)
+    R = cp.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2)
+    R = cp.clip(R, 0, tmp_x.max())
+    #TODO: understand why factor 1.6 is needed when regridding in 3D
+    interpolation_correction_field = kb_rolloff(1.6*R, param)
+    interpolation_correction_field /= interpolation_correction_field.max()
+    recon = recon / interpolation_correction_field
+
+    return recon
+
+     
+
