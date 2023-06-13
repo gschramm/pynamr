@@ -28,7 +28,7 @@ from pymirc.image_operations import zoom3d
 import pymirc.viewer as pv
 
 from utils import setup_blob_phantom, setup_brainweb_phantom, read_tpi_gradient_files, crop_kspace_data, simpleForward_TPI_FFT
-from utils_sigpy import NUFFTT2starDualEchoModel, recon_grid_and_ifft
+from utils_sigpy import NUFFTT2starDualEchoModel, recon_empirical_grid_and_ifft, recon_gridding, recon_tpi_iterative_nufft
 
 from scipy.ndimage import binary_erosion
 from scipy.interpolate import interp1d
@@ -74,7 +74,7 @@ def simulate_data_ideal_observer_fft(x_normal: cp.ndarray,
         data_x_patho += nl * (cp.random.randn(*data_x_patho.shape) +
                      1j * cp.random.randn(*data_x_patho.shape)) *  k_mask
 
-        return data_expect_x_normal, data_x_normal, data_expect_x_patho, data_x_patho, nl
+        return data_expect_x_normal, data_x_normal, data_expect_x_patho, data_x_patho, nl, k_1_cm
 
 
 
@@ -110,7 +110,7 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
 
     # read the k-space trajectories from file
     # they have physical units 1/cm
-    # kx.shape = (num_readouts, num_time_points)
+    # kx.shape = (num_readouts, num_time_samples)
     kx, ky, kz, header, n_readouts_per_cone = read_tpi_gradient_files(
         gradient_file)
     #show_tpi_readout(kx, ky, kz, header, n_readouts_per_cone)
@@ -127,16 +127,14 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
         interp_time = interp1d(np.arange(num_time_pts), kz, axis=1)
         kz = interp_time(oversample2x)
 
-    # the gradient files only contain a half sphere
-    # we add the 2nd half where all gradients are reversed
-    kx = np.vstack((kx, -kx))
-    ky = np.vstack((ky, -ky))
-    kz = np.vstack((kz, -kz))
-
+    # group k-space coordinates 
     k_1_cm = np.stack([kx,ky,kz], axis=-1)
-    # shape (num_samples, num_readouts, space_dim)
+    ## reshape as (num_time_samples, num_readouts, space_dim)
     k_1_cm = np.transpose(k_1_cm, (1,0,2))
-    k_1_cm_for_check.append(k_1_cm)
+
+    # the gradient files only contain a half sphere
+    k_1_cm = np.concatenate([k_1_cm, -k_1_cm], axis=1)
+
 
 # different gradient files, not implemented
 # read gradients in T/m with shape (num_samples_per_readout, num_readouts, 3)
@@ -216,7 +214,7 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
     data_x_patho += nl * (cp.random.randn(*data_x_patho.shape) +
                      1j * cp.random.randn(*data_x_patho.shape))
 
-    return data_expect_x_normal, data_x_normal, data_expect_x_patho, data_x_patho, nl
+    return data_expect_x_normal, data_x_normal, data_expect_x_patho, data_x_patho, nl, k_1_cm
 
 
 def ideal_observer_snr(expect_normal: np.ndarray, expect_pathological: np.ndarray, noise_cov: float):
@@ -296,7 +294,7 @@ parser.add_argument('--pathology',
                     default='none',
                     help='relevant combinations of: lesion, big, small, gm, wm, gwm, cos')
 parser.add_argument('--nodecay', action='store_true')
-parser.add_argument('--padFOV', action='store_true')
+parser.add_argument('--padFOV', action='store_true', help='either for smaller sim deltak or for avoiding aliasing at the edges with nufft')
 parser.add_argument('--sigma', type=float, default=0.1)
 parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--odir_suffix', type=str, default='')
@@ -443,9 +441,10 @@ else:
     raise ValueError
 
 # pad the phantom to a larger FOV
-# k_max stays the same, delta_k becomes 2x smaller
+# k_max stays the same, delta_k becomes smaller
 if padFOV:
-    padded_shape = tuple(x * 2 for x in sim_shape)
+    pad_factor = 1.3 #2
+    padded_shape = tuple(int(round(x * pad_factor)) for x in sim_shape)
     padding_len =  (padded_shape[0] - sim_shape[0]) // 2
     x_normal = np.pad(x_normal, padding_len)
     x_patho = np.pad(x_patho, padding_len)
@@ -455,8 +454,8 @@ if padFOV:
 
     # update relevant parameters, not great
     sim_shape = padded_shape
-    field_of_view_cm *= 2
-    grid_shape = tuple(x*2 for x in grid_shape)
+    field_of_view_cm *= pad_factor
+    grid_shape = tuple(int(round(x * pad_factor)) for x in grid_shape)
 
 # move image to GPU
 x_normal = cp.asarray(x_normal.astype(np.complex128))
@@ -504,7 +503,7 @@ for g, gradient_strength in enumerate(gradient_strengths):
 
     if ft == 'nufft':
         # simulate expected and noisy data for the first echo using the NUFFT dual echo model
-        data_expect_x_normal, data_x_normal, data_expect_x_patho, data_x_patho, nl = simulate_data_ideal_observer_nufft(
+        data_expect_x_normal, data_x_normal, data_expect_x_patho, data_x_patho, nl, k_1_cm = simulate_data_ideal_observer_nufft(
                                                 x_normal,
                                                 x_patho,
                                                 data_root_dir,
@@ -517,6 +516,7 @@ for g, gradient_strength in enumerate(gradient_strengths):
                                                 true_ratio_image_short,
                                                 true_ratio_image_long,
                                                 noise_level)    
+        k_1_cm_for_check.append(k_1_cm)
 
     elif ft == 'fft':
         # simulate expected and noisy data for the first echo using simple FFT
@@ -542,9 +542,10 @@ for g, gradient_strength in enumerate(gradient_strengths):
     statistic[g] = ideal_observer_statistic(data_x_normal, data_expect_x_normal, data_expect_x_patho, nl**2)
 
 # print ideal observer SNR and statistic
-print(f'\n snr for grad 16: {snr[0]} ')
+np.set_printoptions(precision=2)
+print(f'\n snr for grad 16: {snr[0]:.2f}')
 print(f' snr relative to first grad {snr/snr[0]}')
-print(f'\n statistic for grad 16: {statistic[0]} ')
+print(f'\n statistic for grad 16: {statistic[0]:.2f} ')
 print(f' statistic relative to first grad {statistic/statistic[0]}')
 
 
@@ -635,26 +636,43 @@ elif ft == 'nufft':
     for g in range(len(gradient_strengths)):
 
         # patho image simple recon
-        nufft_k = cp.asarray(k_1_cm_for_check[g].reshape(-1, 3)) * field_of_view_cm
+        nufft_k_coords = cp.asarray(k_1_cm_for_check[g].reshape(-1, 3)) * field_of_view_cm
+        #dk = acq_sampling_time_ms * 1e-3 * 1129.2 * gradient_strengths[g] * 1e-2
 
-        im = recon_grid_and_ifft(data_x_patho_for_check[g],
-                                 nufft_k,
-                                 grid_shape)
-        ifft_patho.append(im)
+        # normalization factor to account for different matrix sizes between sim and recon,
+        # as nufft uses also fft with norm ortho
+        norm_factor = 1.
+        for d in range(len(grid_shape)):
+            norm_factor *= np.sqrt(grid_shape[d] / sim_shape[d])
 
-        # expected patho image simple recon
-        im = recon_grid_and_ifft(data_expect_x_patho_for_check[g], 
-                                 nufft_k,
-                                 grid_shape)
+        # noisy patho 
+        im = recon_tpi_iterative_nufft(data_x_patho_for_check[g],
+                          grid_shape,
+                          k_1_cm_for_check[g],
+                          field_of_view_cm,
+                          acq_sampling_time_ms,
+                          time_bin_width_ms,
+                          echo_time_1_ms)
+        #im = recon_gridding(data_x_patho_for_check[g], nufft_k_coords, grid_shape, sd_corr)
+        ifft_patho.append(im * norm_factor)
 
-        ifft_expect_patho.append(im)
+        # expected patho
+        im = recon_tpi_iterative_nufft(data_expect_x_patho_for_check[g],
+                          grid_shape,
+                          k_1_cm_for_check[g],
+                          field_of_view_cm,
+                          acq_sampling_time_ms,
+                          time_bin_width_ms,
+                          echo_time_1_ms)
+        #im = recon_gridding(data_expect_x_patho_for_check[g], nufft_k_coords, grid_shape, sd_corr)
+        ifft_expect_patho.append(im * norm_factor)
 
 
 # show expected patho images for all the gradients
 im = [cp.asnumpy(cp.abs(x)) for x in ifft_expect_patho]
-v.append (pv.ThreeAxisViewer([*im], imshow_kwargs={'cmap':'viridis'}))
+v.append (pv.ThreeAxisViewer([*im], imshow_kwargs={'cmap':'viridis', 'vmax':im_max}))
     
 # show noisy patho images for all the gradients
 im = [cp.asnumpy(cp.abs(x)) for x in ifft_patho]
-v.append (pv.ThreeAxisViewer([*im], imshow_kwargs={'cmap':'viridis'}))
+v.append (pv.ThreeAxisViewer([*im], imshow_kwargs={'cmap':'viridis', 'vmax':im_max}))
 
