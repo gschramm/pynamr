@@ -4,7 +4,7 @@ import numpy as np
 import cupy as cp
 
 from typing import Union
-
+from utils import kb_rolloff
 
 class NUFFTT2starDualEchoModel:
 
@@ -344,3 +344,257 @@ def projected_gradient_operator(ishape: tuple[int, ...],
     PG = P * G
 
     return PG
+
+class NUFFT_TPI_BiexpModel:
+
+    def __init__(self,
+                 ishape: tuple[int, int, int],
+                 k_1_cm: np.ndarray,
+                 T2star_short_map: np.ndarray,
+                 T2star_long_map: np.ndarray,
+                 field_of_view_cm: float = 22.,
+                 acq_sampling_time_ms: float = 0.01,
+                 time_bin_width_ms: float = 0.25,
+                 echo_time_ms: float = 0.5) -> None:
+        """sigpy simple forward TPI NUFFT operator including bi-exp. T2* decay modeling
+
+        Parameters
+        ----------
+        ishape : tuple[int, int, int]
+            shape of the input image
+        k_1_cm : np.ndarray
+            input kx, ky, kz coordinates - shape: (num_samples, num_readouts, 3)
+            units 1/cm
+        T2star_short_map: np.ndarray
+            spatial map of short T2* component
+        T2star_long_map: np.ndarray
+            spatial map of long T2* component
+        field_of_view_cm : float, optional
+            field of view in cm, by default 220.
+        acq_sampling_time_ms : float, optional
+            samplignt time during acquisition in ms, by default 0.01
+        time_bin_width_ms : float, optional
+            time bin width for modeling T2* decay, by default 0.25
+        echo_time_1_ms : float, optional
+            first echo time in ms, by default 0.5
+        """
+        self._ishape = ishape
+
+        self._acq_sampling_time_ms = acq_sampling_time_ms
+        self._time_bin_width_ms = time_bin_width_ms
+        self._echo_time_ms = echo_time_ms
+
+        self._time_bins_inds = np.array_split(
+            np.arange(k_1_cm.shape[0]),
+            math.ceil(k_1_cm.shape[0] /
+                      (self._time_bin_width_ms / self._acq_sampling_time_ms)))
+
+        self._coords = []
+
+        # sort coordinates into time bins
+        for _, time_bin_inds in enumerate(self._time_bins_inds):
+            chunk_coords_1_cm = k_1_cm[time_bin_inds, :, :].reshape(
+                -1, k_1_cm.shape[-1])
+
+            self._coords.append(chunk_coords_1_cm * field_of_view_cm)
+
+        # send T2* maps to GPU
+        self.T2star_short_map = cp.asarray(T2star_short_map)
+        self.T2star_long_map = cp.asarray(T2star_long_map)
+
+    def get_operator_wo_decay_model(self) -> sigpy.linop.Linop:
+        op = sigpy.linop.NUFFT(self._ishape, cp.vstack(self._coords))
+        return op
+
+    def get_operators_w_decay_model(self) -> sigpy.linop.Linop:
+        """NUFFT operators for TPI including bi-exponential decay model
+
+        Returns
+        -------
+        sigpy.linop.Linop
+        """
+        ops = []
+        for i, time_bin_inds in enumerate(self._time_bins_inds):
+            #setup the decay image
+            readout_time_ms = self._echo_time_ms + time_bin_inds.mean(
+            ) * self._acq_sampling_time_ms
+
+            # fixed ratio between short and long component
+            decay = 0.6 * cp.exp(-readout_time_ms / self.T2star_short_map)
+            decay +=  0.4 * cp.exp(-readout_time_ms / self.T2star_long_map)
+            ops.append(
+                sigpy.linop.NUFFT(self._ishape, self._coords[i]) *
+                sigpy.linop.Multiply(self._ishape, decay))
+
+        op = sigpy.linop.Vstack(ops)
+
+        return op
+
+def recon_empirical_grid_and_ifft(k_data: cp.ndarray, nufft_k: cp.ndarray, grid_shape: tuple) -> cp.ndarray:
+    """
+        Empirical gridding + IFFT reconstruction:
+        sigpy gridding function, Kaiser-Bessel kernel with optimal parameters (Jackson et al.)
+        No explicit sampling density correction
+        Empirical normalization including sampling density and interpolation coefficients
+
+        Parameters
+        ----------
+        k_data : 1d cupy array
+            input flattened nufft k-space data
+        nufft_k : cupy array of shape (nb_samples, 3)
+            corresponding flattened k-space coordinates as used in sigpy nufft
+        grid_shape : tuple
+            the grid shape
+
+        Returns
+        ----------
+        recon : cupy array of grid_shape shape, unscaled reconstructed image
+
+    """
+
+    # interpolation kernel parameters
+    kernel = 'kaiser_bessel'
+    width = 2
+    param = 9.14
+
+    # grid data
+    data_gridded = sigpy.gridding(k_data,
+                                 nufft_k,
+                                 grid_shape,
+                                 kernel=kernel,
+                                 width=width,
+                                 param=param)
+
+    # normalization coefficients taking empirically into account
+    # sampling density and interpolation coefficients
+    norm_coefs = sigpy.gridding(cp.ones_like(k_data),
+                           nufft_k,
+                           grid_shape,
+                           kernel=kernel,
+                           width=width,
+                           param=param)
+    data_gridded_corr = data_gridded
+    data_gridded_corr[norm_coefs > 0] /= norm_coefs[norm_coefs > 0]
+
+    # sigpy ifft operator, though just cupy ifft with ortho norm
+    ifft_op = sigpy.linop.IFFT(grid_shape, center=False)
+
+    # phase correction field to account phase definition in numpy's fft
+    tmp_x = np.arange(grid_shape[0])
+    TMP_X, TMP_Y, TMP_Z = np.meshgrid(tmp_x, tmp_x, tmp_x)
+    phase_corr = cp.asarray(((-1)**TMP_X) * ((-1)**TMP_Y) * ((-1)**TMP_Z))
+    data_gridded_corr *= phase_corr
+
+    # apply ifft
+    recon = ifft_op(data_gridded_corr)
+
+    # correction in image space for the KB kernel applied in k-space
+    tmp_x = cp.linspace(-width / 2, width / 2, grid_shape[0])
+    TMP_X, TMP_Y, TMP_Z = cp.meshgrid(tmp_x, tmp_x, tmp_x)
+    R = cp.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2)
+    R = cp.clip(R, 0, tmp_x.max())
+    #TODO: understand why factor 1.6 is needed when regridding in 3D
+    interpolation_correction_field = kb_rolloff(1.6*R, param)
+    interpolation_correction_field /= interpolation_correction_field.max()
+    recon = recon / interpolation_correction_field
+
+    return recon
+
+     
+
+def recon_gridding(k_data: cp.ndarray,
+                   nufft_k_coords: cp.ndarray,
+                   grid_shape: tuple,
+                   sample_density_corr: cp.ndarray) -> cp.ndarray:
+    """
+        Recon using standard gridding with known sampling density:
+        Sampling density compensation + gridding (sigpy nufft adjoint) + IFFT
+
+        Parameters
+        ----------
+        k_data : 1d cupy array, input flattened nufft k-space data
+        nufft_k_coords : cupy array of shape (nb_samples, 3)
+                            corresponding flattened k-space coordinates as used in sigpy nufft
+        grid_shape : tuple
+                        the Cartesian grid shape
+        sample_density_corr : cupy array of k-space data shape
+                                 multiplicative sampling density compensation
+
+        Returns
+        ----------
+        recon : cupy array of grid_shape shape, reconstructed image
+
+    """
+
+    # sampling density compensation
+    k_data_corrected = k_data * sample_density_corr
+
+    # nufft adjoint
+    recon = sigpy.nufft_adjoint(k_data_corrected,
+                                 nufft_k_coords,
+                                 grid_shape)
+
+    return recon
+
+
+def recon_tpi_iterative_nufft(k_data: cp.ndarray,
+                          recon_shape,
+                          k_1_cm,
+                          field_of_view_cm = 22.,
+                          acq_sampling_time_ms = 0.01,
+                          time_bin_width_ms = 0.25,
+                          echo_time_ms = 0.5,
+                          beta_reg = 0.) -> cp.ndarray:
+    """
+        Simplest possible iterative recon of raw TPI data:
+        default sigpy MLS conjugate gradient + Tikhonov regularization
+
+        Parameters
+        ----------
+        k_data : cupy array,
+            raw TPI data
+        recon_shape : tuple[int, int, int]
+            shape of the input image
+        k_1_cm : np.ndarray
+            input kx, ky, kz coordinates - shape: (num_samples, num_readouts, 3)
+            units 1/cm
+        field_of_view_cm : float, optional
+            field of view in cm, by default 220.
+        acq_sampling_time_ms : float, optional
+            samplignt time during acquisition in ms, by default 0.01
+        time_bin_width_ms : float, optional
+            time bin width for modeling T2* decay, by default 0.25
+        echo_time_ms : float, optional
+            echo time in ms, by default 0.5
+        beta_reg : float, optional
+            Tikhonov regularization parameter
+
+        Returns
+        ----------
+        recon : cupy array of grid_shape shape
+            reconstructed image
+
+    """
+
+    # we don't know the decay
+    nodecay_T2 = 1e7 * np.ones(recon_shape, np.float64)
+    acq_model = NUFFT_TPI_BiexpModel(recon_shape,
+                                     k_1_cm,
+                                     nodecay_T2,
+                                     nodecay_T2,
+                                     field_of_view_cm=field_of_view_cm,
+                                     acq_sampling_time_ms=acq_sampling_time_ms,
+                                     time_bin_width_ms=time_bin_width_ms,
+                                     echo_time_ms=echo_time_ms)
+
+    # forward operator based on TPI trajectory
+    A = acq_model.get_operator_wo_decay_model()
+
+    # conjugate gradient recon with Tikhonov regularization
+    app = sigpy.app.LinearLeastSquares(A, k_data, lamda=beta_reg)
+    recon = app.run()
+
+    return recon
+
+
+
