@@ -90,7 +90,7 @@ with open('.simulation_config.json', 'r') as f:
 
 odir = Path(
     data_root_dir
-) / 'run_brainweb' / f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_{seed:03}'
+) / 'run_brainweb_shorter_T2star' / f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_{seed:03}'
 odir.mkdir(exist_ok=True, parents=True)
 
 with open(odir / 'config.json', 'w') as f:
@@ -114,8 +114,8 @@ else:
     T2long_ms_gm: float = 20.
     T2long_ms_wm: float = 18.
     T2short_ms_csf: float = 50.
-    T2short_ms_gm: float = 8.
-    T2short_ms_wm: float = 6.
+    T2short_ms_gm: float = 3.
+    T2short_ms_wm: float = 3.
 
 field_of_view_cm: float = 22.
 phantom_data_path: Path = Path(data_root_dir) / 'brainweb54'
