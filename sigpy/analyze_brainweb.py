@@ -314,7 +314,7 @@ for roi, inds in roi_inds.items():
     for ir in range(agrs_both_echos_w_decay0.shape[0]):
         for ib in range(agrs_both_echos_w_decay0.shape[1]):
             tmp = pd.DataFrame(dict(
-                method=f'AGRdm bu={beta_rs[0]:.1E}',
+                method=f'AGRdm br={beta_rs[0]:.1E}',
                 b=ib + 1,
                 r=ir + 1,
                 roi=roi,
@@ -327,7 +327,7 @@ for roi, inds in roi_inds.items():
     for ir in range(agrs_both_echos_w_decay1.shape[0]):
         for ib in range(agrs_both_echos_w_decay1.shape[1]):
             tmp = pd.DataFrame(dict(
-                method=f'AGRdm bu={beta_rs[1]:.1E}',
+                method=f'AGRdm br={beta_rs[1]:.1E}',
                 b=ib + 1,
                 r=ir + 1,
                 roi=roi,
@@ -418,7 +418,7 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay0_roi_means.items()):
         x = np.array(
             [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay0_std])
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    axs[i].plot(x, y, 'o-', label=f'AGRdm, bu={beta_rs[0]:.1E}')
+    axs[i].plot(x, y, 'o-', label=f'AGRdm, br={beta_rs[0]:.1E}')
 
     for j in range(len(x)):
         axs[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
@@ -433,12 +433,12 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay1_roi_means.items()):
         x = np.array(
             [z[roi_inds[roi]].mean() for z in agrs_both_echos_w_decay1_std])
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    axs[i].plot(x, y, 'o-', label=f'AGRdm, bu={beta_rs[1]:.1E}')
+    axs[i].plot(x, y, 'o-', label=f'AGRdm, br={beta_rs[1]:.1E}')
 
 for i, axx in enumerate(axs):
     axx.grid(ls=':')
     axx.axhline(0, color='k')
-    axx.set_xlim(0, 0.1)
+    axx.set_xlim(0, 0.12)
     axx.set_ylim(-40, 20)
 
     if i >= num_cols:
@@ -468,13 +468,14 @@ box_kwargs = dict(showfliers=False,
                   medianprops=dict(visible=False),
                   whiskerprops=dict(visible=False))
 
-g = sns.FacetGrid(df_rmse, col="roi", sharey=False)
+g = sns.FacetGrid(df_rmse, col="roi", sharey=False, col_wrap=5, height=2)
 g.map_dataframe(sns.stripplot, x="b", y="RMSE", hue="method", **strip_kwargs)
 g.map_dataframe(sns.boxplot, x="b", y="RMSE", hue="method", **box_kwargs)
 g.add_legend()
 
 for axx in g.axes.ravel():
     axx.grid(ls=':')
+    axx.set_xlabel('level of regularization')
 
 g.fig.show()
 
@@ -497,6 +498,7 @@ for i in range(3):
                            cmap='Greys_r',
                            vmin=0,
                            vmax=vmax)
+    ax3a[i, 0].set_ylabel(f'$\\beta$ = {betas_non_anatomical[i]:.1E}')
     i1 = ax3a[i,
               1].imshow(recons_e1_no_decay_mean[i, ..., sl].T - gt[:, :, sl].T,
                         origin='lower',
@@ -513,6 +515,7 @@ for i in range(3):
                            cmap='Greys_r',
                            vmin=0,
                            vmax=vmax)
+    ax3b[i, 0].set_ylabel(f'$\\beta_u$ = {betas_anatomical[i]:.1E}')
     i4 = ax3b[i,
               1].imshow(agrs_e1_no_decay_mean[i, ..., sl].T - gt[:, :, sl].T,
                         origin='lower',
@@ -529,6 +532,7 @@ for i in range(3):
                            cmap='Greys_r',
                            vmin=0,
                            vmax=vmax)
+    ax3c[i, 0].set_ylabel(f'$\\beta_u$ = {betas_anatomical[i]:.1E}')
     i7 = ax3c[i, 1].imshow(agrs_both_echos_w_decay1_mean[i, ..., sl].T -
                            gt[:, :, sl].T,
                            origin='lower',
@@ -552,11 +556,19 @@ ax3c[0, 1].set_title('bias image')
 ax3c[0, 2].set_title('std.dev. image')
 
 for axx in ax3a.ravel():
-    axx.set_axis_off()
+    axx.xaxis.set_visible(False)
+    plt.setp(axx.spines.values(), visible=False)
+    axx.tick_params(left=False, labelleft=False)
+
 for axx in ax3b.ravel():
-    axx.set_axis_off()
+    axx.xaxis.set_visible(False)
+    plt.setp(axx.spines.values(), visible=False)
+    axx.tick_params(left=False, labelleft=False)
+
 for axx in ax3c.ravel():
-    axx.set_axis_off()
+    axx.xaxis.set_visible(False)
+    plt.setp(axx.spines.values(), visible=False)
+    axx.tick_params(left=False, labelleft=False)
 
 cax0 = fig3a.add_axes([0.05, 0.04, 0.25, 0.01])
 fig3a.colorbar(i0, cax=cax0, orientation='horizontal')

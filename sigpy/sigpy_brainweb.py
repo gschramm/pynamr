@@ -90,7 +90,7 @@ with open('.simulation_config.json', 'r') as f:
 
 odir = Path(
     data_root_dir
-) / 'run_brainweb_shorter_T2star' / f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_{seed:03}'
+) / 'run_brainweb' / f'{phantom}_nodecay_{no_decay}_i_{max_num_iter:04}_{num_iter_r:04}_nl_{noise_level:.1E}_s_{seed:03}'
 odir.mkdir(exist_ok=True, parents=True)
 
 with open(odir / 'config.json', 'w') as f:
