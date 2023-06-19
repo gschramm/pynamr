@@ -406,7 +406,7 @@ class NUFFT_TPI_BiexpModel:
         op = sigpy.linop.NUFFT(self._ishape, cp.vstack(self._coords))
         return op
 
-    def get_operators_w_decay_model(self) -> sigpy.linop.Linop:
+    def get_operator_w_decay_model(self) -> sigpy.linop.Linop:
         """NUFFT operators for TPI including bi-exponential decay model
 
         Returns

@@ -28,7 +28,7 @@ from pymirc.image_operations import zoom3d
 import pymirc.viewer as pv
 
 from utils import setup_blob_phantom, setup_brainweb_phantom, read_tpi_gradient_files, crop_kspace_data, simpleForward_TPI_FFT
-from utils_sigpy import NUFFTT2starDualEchoModel, recon_empirical_grid_and_ifft, recon_gridding, recon_tpi_iterative_nufft
+from utils_sigpy import NUFFTT2starDualEchoModel, recon_empirical_grid_and_ifft, recon_gridding, recon_tpi_iterative_nufft, NUFFT_TPI_BiexpModel
 
 from scipy.ndimage import binary_erosion
 from scipy.interpolate import interp1d
@@ -117,7 +117,7 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
     #show_tpi_readout(kx, ky, kz, header, n_readouts_per_cone)
 
     # artificial gradient strength 8 based on 2x oversampling in time of the gradient 16 trace
-    # because no gradient 8 trace available
+    # because no gradient 8 trace available yet
     if gradient_strength == 8:
         num_time_pts = kx.shape[1]
         interp_time = interp1d(np.arange(num_time_pts), kx, axis=1)
@@ -127,6 +127,8 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
         ky = interp_time(oversample2x)
         interp_time = interp1d(np.arange(num_time_pts), kz, axis=1)
         kz = interp_time(oversample2x)
+    # artificial gradient strength 64 based on 2x undersampling in time of the gradient 32 trace
+    # because no gradient 64 trace available yet
     elif gradient_strength == 64:
         kx = kx[:,::2]
         ky = ky[:,::2]
@@ -171,7 +173,7 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
     print(f'readout kmax .: {k_1_cm_abs.max():.2f} 1/cm')
     print(f'64 kmax      .: {kmax64_1_cm:.2f} 1/cm')
 
-    num_sim_chunks = x_normal.shape[0] // 2
+    num_sim_chunks = 1
     data_x_normal = []
     data_x_patho = []
 
@@ -179,39 +181,21 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
     for i_chunk, k_inds in enumerate(
                 np.array_split(np.arange(k_1_cm.shape[0]), num_sim_chunks)):
 
-#        print('simulating data chunk', i_chunk)
 
-        # data model
-        data_model = NUFFTT2starDualEchoModel(
-                x_normal.shape,
-                k_1_cm[k_inds,...],
-                field_of_view_cm=field_of_view_cm,
-                acq_sampling_time_ms=acq_sampling_time_ms,
-                time_bin_width_ms=time_bin_width_ms,
-                echo_time_1_ms=echo_time_1_ms + k_inds[0] *
-                    acq_sampling_time_ms,  # account of acq. offset time of every chunk
-                echo_time_2_ms=echo_time_2_ms + k_inds[0] *
-                    acq_sampling_time_ms)  # account of acq. offset time of every chunk
+        data_model = NUFFT_TPI_BiexpModel(sim_shape,
+                         k_1_cm,
+                         T2short_ms,
+                         T2long_ms,
+                         field_of_view_cm,
+                         acq_sampling_time_ms,
+                         time_bin_width_ms,
+                         echo_time_1_ms)
 
-        data_operator_1_short, data_operator_2_short = data_model.get_operators_w_decay_model(
-                true_ratio_image_short)
-        data_operator_1_long, data_operator_2_long = data_model.get_operators_w_decay_model(
-                true_ratio_image_long)
-
-        # need only first echo
-        del data_operator_2_short
-        del data_operator_2_long
-
-        # simulate noise-free data
-        data_x_normal.append(short_fraction * data_operator_1_short(x_normal) + (
-                1 - short_fraction) * data_operator_1_long(x_normal))
-
-        data_x_patho.append(short_fraction * data_operator_1_short(x_patho) + (
-                1 - short_fraction) * data_operator_1_long(x_patho))
-
-        del data_operator_1_short
-        del data_operator_1_long
-        del data_model
+        data_operator = data_model.get_operator_w_decay_model()
+ 
+        data_x_normal.append(data_operator(x_normal))
+        data_x_patho.append(data_operator(x_patho))
+        del data_operator
 
     # concatenate all data chunks
     data_x_normal = cp.concatenate(data_x_normal)
@@ -559,7 +543,7 @@ for g, gradient_strength in enumerate(gradient_strengths):
     statistic[g] = ideal_observer_statistic(data_x_patho, data_expect_x_normal, data_expect_x_patho, nl**2)
 
 # print ideal observer SNR and statistic
-np.set_printoptions(precision=2, floatmode='unique')
+np.set_printoptions(precision=2) #, floatmode='unique')
 print(f'\n snr for grad 16: {snr[0]:.2f}')
 print(f' snr relative to first grad {snr/snr[0]}')
 print(f' all snrs {snr}')
