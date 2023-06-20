@@ -45,7 +45,8 @@ def simulate_data_ideal_observer_fft(x_normal: cp.ndarray,
                       echo_time_1_ms: int,
                       num_time_bins: int,
                       noise_level: float):
-        """Simulate expected and noisy data for a single TPI acquisition using approximative simple FFT
+        """Helper function for simulating expected and noisy data for a single TPI acquisition
+            using approximative simple FFT, for the normal and the pathological image
         """
 
         # simple single echo cupy fft implementation
@@ -86,12 +87,12 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
                               acq_sampling_time_ms: float,
                               time_bin_width_ms: int,
                               echo_time_1_ms: float,
-                              echo_time_2_ms: float,
-                              true_ratio_image_short: np.ndarray,
-                              true_ratio_image_long: np.ndarray,
+                              T2short_ms: np.ndarray,
+                              T2long_ms: np.ndarray,
                               noise_level: float,
                               const_readout_time: bool):
-    """Simulate expected and noisy data only for the first echo using NUFFTT2starDualEchoModel
+    """ Helper function for simulating expected and noisy data for a single SW-TPI acquisition
+        using NUFFT and a gradient trace file, for the normal and the pathological image
     """
     # find trajectory gradient file
     if gradient_strength == 16 or gradient_strength == 8:
@@ -181,15 +182,14 @@ def simulate_data_ideal_observer_nufft(x_normal: cp.ndarray,
     for i_chunk, k_inds in enumerate(
                 np.array_split(np.arange(k_1_cm.shape[0]), num_sim_chunks)):
 
-
         data_model = NUFFT_TPI_BiexpModel(sim_shape,
-                         k_1_cm,
+                         k_1_cm[k_inds,...],
                          T2short_ms,
                          T2long_ms,
                          field_of_view_cm,
                          acq_sampling_time_ms,
                          time_bin_width_ms,
-                         echo_time_1_ms)
+                         echo_time_1_ms + k_inds[0] * acq_sampling_time_ms)
 
         data_operator = data_model.get_operator_w_decay_model()
  
@@ -477,13 +477,6 @@ v.append(pv.ThreeAxisViewer([im1, im2, im3], imshow_kwargs=[{'cmap':'viridis', '
 #plt.savefig(f'/users/nexuz2/mfilip0/{phantom}_{pathology}_images.png')
 
 
-# true ratio (Gamma) image
-true_ratio_image_short = cp.array(
-    np.exp(-(echo_time_2_ms - echo_time_1_ms) / T2short_ms))
-true_ratio_image_long = cp.array(
-    np.exp(-(echo_time_2_ms - echo_time_1_ms) / T2long_ms))
-
-
 #--------------------------------------------------------------------------
 # simulate data
 
@@ -512,9 +505,8 @@ for g, gradient_strength in enumerate(gradient_strengths):
                                                 acq_sampling_time_ms,
                                                 time_bin_width_ms,
                                                 echo_time_1_ms,
-                                                echo_time_2_ms,
-                                                true_ratio_image_short,
-                                                true_ratio_image_long,
+                                                T2short_ms,
+                                                T2long_ms,
                                                 noise_level,
                                                 const_readout_time)
         k_1_cm_for_check.append(k_1_cm)
