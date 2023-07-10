@@ -106,7 +106,8 @@ k_1_cm = 0.01 * np.cumsum(grads_T_m, axis=0) * dt_us * gamma_by_2pi_MHz_T
 
 # get the FOV in cm, the value from the header has to be corrected by
 # the ratio of gamma(1H) / gamma(23Na)
-field_of_view_cm = 100 * fov * 42.577 / gamma_by_2pi_MHz_T
+#field_of_view_cm = 100 * fov * 42.577 / gamma_by_2pi_MHz_T
+field_of_view_cm = 22.
 
 #--------------------------------------------------------------------
 #--------------------------------------------------------------------
