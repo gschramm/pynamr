@@ -98,21 +98,39 @@ def read_grdb(fname: str,
 
 
 def rotate_grdb_tpi_k(kx: np.ndarray, ky: np.ndarray, kz: np.ndarray,
-                      num_readouts_per_cone: np.ndarray):
+                      num_readouts_per_cone: list[int]) -> np.ndarray:
 
     k = []
 
-    for i, num_readounts in enumerate(num_readouts_per_cone):
-        phis = np.linspace(0, 2 * np.pi, num_readounts, endpoint=False)
+    for i, num_readouts in enumerate(num_readouts_per_cone):
+        # remember that num_readouts is the number of readouts per cone combining
+        # lower and upper halfsphere
+        # since the gradient files only contain the upper sphere, we need to
+        # divide by 2
+        # the lower halfsphere is added later
+        phis = np.linspace(0, 2 * np.pi, num_readouts // 2, endpoint=False)
 
-        tmp = np.zeros((3, phis.shape[0], kx.shape[1]))
-        tmp[0, :, :] = np.outer(np.cos(phis), kx[i, :]) - np.outer(
+        k_upper_and_lower = np.zeros((3, 2 * phis.shape[0], kx.shape[1]))
+
+        k0 = np.outer(np.cos(phis), kx[i, :]) - np.outer(
             np.sin(phis), ky[i, :])
-        tmp[1, :, :] = np.outer(np.sin(phis), kx[i, :]) + np.outer(
-            np.cos(phis), ky[i, :])
-        tmp[2, :, :] = np.outer(np.ones_like(phis), kz[i, :])
 
-        k.append(tmp)
+        k1 = np.outer(np.sin(phis), kx[i, :]) + np.outer(
+            np.cos(phis), ky[i, :])
+
+        k2 = np.outer(np.ones_like(phis), kz[i, :])
+
+        # add the upper half sphere
+        k_upper_and_lower[0, ::2, :] = k0
+        k_upper_and_lower[1, ::2, :] = k1
+        k_upper_and_lower[2, ::2, :] = k2
+
+        # add the lower half sphere where the sign of kz is flipped
+        k_upper_and_lower[0, 1::2, :] = k0
+        k_upper_and_lower[1, 1::2, :] = k1
+        k_upper_and_lower[2, 1::2, :] = -k2
+
+        k.append(k_upper_and_lower)
 
     return np.concatenate(k, axis=1)
 
@@ -120,11 +138,10 @@ def rotate_grdb_tpi_k(kx: np.ndarray, ky: np.ndarray, kz: np.ndarray,
 #-------------------------------------------------------------
 
 
-def read_tpi_grdb_kspace_trajectory(fname_x: str,
-                                    gamma_over_2pi_MHz_T: float = 11.262,
-                                    add_lower_halfsphere: bool = True,
-                                    output_file: str | None = None,
-                                    **kwargs) -> np.ndarray:
+def read_tpi_grdb_kspace_trajectory(
+        fname_x: str,
+        gamma_over_2pi_MHz_T: float = 11.262,
+        output_file: str | None = None) -> tuple[np.ndarray, TPIParameters]:
     """_summary_
 
     Parameters
@@ -133,8 +150,6 @@ def read_tpi_grdb_kspace_trajectory(fname_x: str,
         name of the gradb x gradient file
     gamma_over_2pi_MHz_T : float, optional
         gyromagnetic ratio (gamma/2pi) in [MHz/T], by default 11.262
-    add_lower_halfsphere : bool, optional
-        add the lower halfsphere to the k-space trajectory, by default True
     outputfile : str, optional
         name of the output hdf5 file, by default generated from fname_x
 
@@ -160,13 +175,6 @@ def read_tpi_grdb_kspace_trajectory(fname_x: str,
 
     # transpose to (num_points, num_readouts, 3)
     k = np.transpose(k, (2, 1, 0))
-
-    # the gradient files usually only contain the upper halfsphere
-    # of kspace, so we add the lower halfsphere
-    if add_lower_halfsphere:
-        lower_k = k.copy()
-        lower_k[:, :, 2] *= -1
-        k = np.concatenate((k, lower_k), axis=1)
 
     # write the trajectory to hdf5
     if output_file is not None:
@@ -205,10 +213,16 @@ if __name__ == '__main__':
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
     step = 20
-    for i in range(0, k.shape[1], 17):
+    for i in range(0, k.shape[1], 7):
         ax.scatter(k[::step, i, 0],
                    k[::step, i, 1],
                    k[::step, i, 2],
                    marker='.',
                    s=1)
     fig.show()
+
+    fig2 = plt.figure()
+    ax2 = fig2.add_subplot(projection='3d')
+    for i in [0, 1]:
+        ax2.scatter(k[:, i, 0], k[:, i, 1], k[:, i, 2], marker='.', s=1)
+    fig2.show()
