@@ -17,7 +17,7 @@ def ifft_recon(data: np.ndarray,
                field_of_view_cm=22.,
                **kwargs) -> np.ndarray:
 
-    # transfer k-space trajectory to GPU and convert to unitless 
+    # transfer k-space trajectory to GPU and convert to unitless
     k_d = cp.asarray(k.reshape(-1, 3)) * field_of_view_cm
 
     samp_dens = sigpy.gridding(cp.ones(k_d.shape[0], dtype=data.dtype), k_d,
@@ -43,6 +43,31 @@ def ifft_recon(data: np.ndarray,
         x_ifft_d[i, ...] = ifft_op(data_gridded_corr) / kernel_ifft_d
 
     return cp.asnumpy(x_ifft_d)
+
+
+#----------------------------------------------------------------
+
+
+def lsq_recon(data: np.ndarray,
+              k: np.ndarray,
+              grid_shape=(64, 64, 64),
+              field_of_view_cm=22.,
+              max_iter=20,
+              **kwargs) -> np.ndarray:
+
+    # transfer k-space trajectory to GPU and convert to unitless
+    k_d = cp.asarray(k.reshape(-1, 3)) * field_of_view_cm
+    A = sigpy.linop.NUFFT(grid_shape, k_d)
+
+    x = cp.zeros((data.shape[0], ) + grid_shape, dtype=data.dtype)
+
+    for i, d in enumerate(data):
+        # transfer data to GPU
+        d_d = cp.asarray(d.ravel())
+        alg = sigpy.app.LinearLeastSquares(A, d_d, max_iter=max_iter, **kwargs)
+        x[i, ...] = alg.run()
+
+    return cp.asnumpy(x)
 
 
 #----------------------------------------------------------------
@@ -101,22 +126,20 @@ if show_kspace_trajectory:
 iffts_1 = ifft_recon(data_echo_1, k)
 iffts_2 = ifft_recon(data_echo_2, k)
 
-#k_d = cp.asarray(k.reshape(-1, 3))
-#data_d = cp.asanyarray(data_echo_2[0, ...]).ravel()
-#
-## quick iterative LSQ recon
-#A = sigpy.linop.NUFFT(ishape, k_d)
-#alg = sigpy.app.LinearLeastSquares(A, data_d, max_iter=20)
-#x = cp.asnumpy(alg.run())
+sos_ifft_1 = ((np.abs(iffts_1)**2).sum(axis=0))**0.5
+sos_ifft_2 = ((np.abs(iffts_2)**2).sum(axis=0))**0.5
 
-#
-#x_ifft = np.array(x_ifft)
-#x_lsq = np.array(x_lsq)
-#
-#sos_ifft = ((np.abs(x_ifft)**2).sum(axis=0))**0.5
-#sos_lsq = ((np.abs(x_lsq)**2).sum(axis=0))**0.5
-#
-##vi = pv.ThreeAxisViewer(
-##    [gaussian_filter(np.abs(x_ifft), (0, .75, .75, .75)),
-##     np.abs(x_ref)],
-##    imshow_kwargs=dict(cmap='Greys_r'))
+# early stopped least squares recons
+lsq_1 = lsq_recon(data_echo_1, k)
+lsq_2 = lsq_recon(data_echo_2, k)
+
+sos_lsq_1 = ((np.abs(lsq_1)**2).sum(axis=0))**0.5
+sos_lsq_2 = ((np.abs(lsq_2)**2).sum(axis=0))**0.5
+
+# calculate the coil sensitivities
+sigma = 1.5
+sos_lsq_1_sm = gaussian_filter(sos_lsq_1, sigma)
+sos_lsq_2_sm = gaussian_filter(sos_lsq_2, sigma)
+
+sens_1 = np.array([gaussian_filter(x, sigma) / sos_lsq_1_sm for x in lsq_1])
+sens_2 = np.array([gaussian_filter(x, sigma) / sos_lsq_2_sm for x in lsq_2])
