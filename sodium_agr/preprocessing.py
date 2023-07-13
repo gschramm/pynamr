@@ -126,8 +126,8 @@ def rotate_grdb_tpi_k(kx: np.ndarray, ky: np.ndarray, kz: np.ndarray,
         k_upper_and_lower[2, ::2, :] = k2
 
         # add the lower half sphere where the sign of kz is flipped
-        k_upper_and_lower[0, 1::2, :] = k0
-        k_upper_and_lower[1, 1::2, :] = k1
+        k_upper_and_lower[0, 1::2, :] = -k0
+        k_upper_and_lower[1, 1::2, :] = -k1
         k_upper_and_lower[2, 1::2, :] = -k2
 
         k.append(k_upper_and_lower)
@@ -202,13 +202,14 @@ if __name__ == '__main__':
     k, g_params = read_tpi_grdb_kspace_trajectory(fname_x,
                                                   output_file=output_file)
 
-    # restore values from written hdf5 file
-    with h5py.File(output_file, 'r') as f:
-        k2 = f['k'][...]
-        g_params2 = TPIParameters(**f['k'].attrs)
-
     print(g_params)
-    assert (g_params == g_params2)
+
+    ## restore values from written hdf5 file
+    #with h5py.File(output_file, 'r') as f:
+    #    k2 = f['k'][...]
+    #    g_params2 = TPIParameters(**f['k'].attrs)
+
+    #assert (g_params == g_params2)
 
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
@@ -220,9 +221,3 @@ if __name__ == '__main__':
                    marker='.',
                    s=1)
     fig.show()
-
-    fig2 = plt.figure()
-    ax2 = fig2.add_subplot(projection='3d')
-    for i in [0, 1]:
-        ax2.scatter(k[:, i, 0], k[:, i, 1], k[:, i, 2], marker='.', s=1)
-    fig2.show()
