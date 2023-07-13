@@ -121,14 +121,14 @@ def rotate_grdb_tpi_k(kx: np.ndarray, ky: np.ndarray, kz: np.ndarray,
         k2 = np.outer(np.ones_like(phis), kz[i, :])
 
         # add the upper half sphere
-        k_upper_and_lower[0, ::2, :] = k0
+        k_upper_and_lower[0, ::2, :] = -k0
         k_upper_and_lower[1, ::2, :] = k1
-        k_upper_and_lower[2, ::2, :] = k2
+        k_upper_and_lower[2, ::2, :] = -k2
 
         # add the lower half sphere where the sign of kz is flipped
-        k_upper_and_lower[0, 1::2, :] = -k0
+        k_upper_and_lower[0, 1::2, :] = k0
         k_upper_and_lower[1, 1::2, :] = -k1
-        k_upper_and_lower[2, 1::2, :] = -k2
+        k_upper_and_lower[2, 1::2, :] = k2
 
         k.append(k_upper_and_lower)
 
@@ -151,7 +151,7 @@ def read_tpi_grdb_kspace_trajectory(
     gamma_over_2pi_MHz_T : float, optional
         gyromagnetic ratio (gamma/2pi) in [MHz/T], by default 11.262
     outputfile : str, optional
-        name of the output hdf5 file, by default generated from fname_x
+        name of the output hdf5 file, by default None
 
     Returns
     -------
@@ -193,10 +193,10 @@ def read_tpi_grdb_kspace_trajectory(
 
 #-------------------------------------------------------------
 
-def convert_ome_data(
-        raw_data_dir,
-        hdr_pattern: str = '*.?.hdr',
-        output_file: str | None = None) -> np.ndarray:
+
+def convert_ome_data(raw_data_dir,
+                     hdr_pattern: str = '*.?.hdr',
+                     output_file: str | None = None) -> np.ndarray:
 
     hdr_files = list(sorted(Path(raw_data_dir).glob(hdr_pattern)))
 

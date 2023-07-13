@@ -3,6 +3,7 @@ import cupy as cp
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 import h5py
+import nibabel as nib
 from pathlib import Path
 
 import sigpy
@@ -12,6 +13,8 @@ import pymirc.viewer as pv
 
 from preprocessing import TPIParameters
 from reconstruction import channelwise_ifft_recon, channelwise_lsq_recon, regularized_sense_recon
+from registration import align_images
+from operators import projected_gradient_operator
 
 #----------------------------------------------------------------
 #----------------------------------------------------------------
@@ -138,23 +141,77 @@ coil_sens = sens_1
 #---------------------------------------------------------------
 #---------------------------------------------------------------
 
-beta = 1e-3
+beta = 1e-1
 
 # regularized sense recons
 x0 = cp.asarray(sos_lsq_1_sm.astype(data_echo_1.dtype))
-sense_L1_1 = regularized_sense_recon(data_echo_1,
+sense_L2_1 = regularized_sense_recon(data_echo_1,
                                      coil_sens,
                                      k,
                                      beta=beta,
-                                     regulariztion='L1',
+                                     regulariztion='L2',
                                      field_of_view_cm=field_of_view_cm,
                                      x=x0)
 
 x0 = cp.asarray(sos_lsq_1_sm.astype(data_echo_2.dtype))
-sense_L1_2 = regularized_sense_recon(data_echo_2,
+sense_L2_2 = regularized_sense_recon(data_echo_2,
                                      coil_sens,
                                      k,
                                      beta=beta,
-                                     regulariztion='L1',
+                                     regulariztion='L2',
                                      field_of_view_cm=field_of_view_cm,
                                      x=x0)
+
+#---------------------------------------------------------------
+#---------------------------------------------------------------
+#---------------------------------------------------------------
+
+# align the anatomical prior image and setup the projected gradient operator
+
+anat_path = subject_path / 'anatomical_prior_image.nii'
+
+anat_nii = nib.as_closest_canonical(nib.load(anat_path))
+anat_img = anat_nii.get_fdata()
+anat_img /= np.percentile(anat_img, 99.9)
+
+anat_voxsize = anat_nii.header['pixdim'][1:4]
+anat_origin = anat_nii.affine[:-1, -1]
+
+na_img = np.abs(sense_L2_1)
+na_voxsize = 10 * field_of_view_cm / np.array(grid_shape)
+na_origin = anat_origin.copy()
+
+anat_img_aligned, transform = align_images(na_img, anat_img, na_voxsize,
+                                           na_origin, anat_voxsize,
+                                           anat_origin)
+
+PG = projected_gradient_operator(cp, anat_img_aligned, eta=5e-3)
+
+#---------------------------------------------------------------
+#---------------------------------------------------------------
+#---------------------------------------------------------------
+
+beta = 3e-3
+max_iter = 500
+
+agr_L1_1 = regularized_sense_recon(data_echo_1,
+                                   coil_sens,
+                                   k,
+                                   beta=beta,
+                                   regulariztion='L1',
+                                   G=PG,
+                                   field_of_view_cm=field_of_view_cm,
+                                   x=cp.asarray(sense_L2_1),
+                                   max_iter=max_iter)
+np.save(subject_path / 'agr_L1_1.npy', agr_L1_1)
+
+agr_L1_2 = regularized_sense_recon(data_echo_2,
+                                   coil_sens,
+                                   k,
+                                   beta=beta,
+                                   regulariztion='L1',
+                                   G=PG,
+                                   field_of_view_cm=field_of_view_cm,
+                                   x=cp.asarray(sense_L2_1),
+                                   max_iter=max_iter)
+np.save(subject_path / 'agr_L1_2.npy', agr_L1_2)
