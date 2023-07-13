@@ -1,7 +1,7 @@
 from __future__ import annotations
 import numpy as np
 import h5py
-
+from pathlib import Path
 import pydantic
 
 
@@ -193,31 +193,41 @@ def read_tpi_grdb_kspace_trajectory(
 
 #-------------------------------------------------------------
 
-if __name__ == '__main__':
-    import matplotlib.pyplot as plt
-    fname_x = '/home/georg/Desktop/n28p2dt10g30f23sl.x.grdb'
-    output_file = fname_x.replace('.x.grdb', '.h5')
+def convert_ome_data(
+        raw_data_dir,
+        hdr_pattern: str = '*.?.hdr',
+        output_file: str | None = None) -> np.ndarray:
 
-    # read grdb files and write k-space trajectory + header to hdf5
-    k, g_params = read_tpi_grdb_kspace_trajectory(fname_x,
-                                                  output_file=output_file)
+    hdr_files = list(sorted(Path(raw_data_dir).glob(hdr_pattern)))
 
-    print(g_params)
+    for i, hdr_file in enumerate(hdr_files):
+        print(hdr_file)
 
-    ## restore values from written hdf5 file
-    #with h5py.File(output_file, 'r') as f:
-    #    k2 = f['k'][...]
-    #    g_params2 = TPIParameters(**f['k'].attrs)
+        with open(hdr_file, 'r') as f:
+            hdr = f.read().splitlines()
 
-    #assert (g_params == g_params2)
+        dim0 = int(
+            list(filter(lambda x: 'dim0' in x, hdr))[0].split('dim0')[-1])
+        dim1 = int(
+            list(filter(lambda x: 'dim1' in x, hdr))[0].split('dim1')[-1])
 
-    fig = plt.figure()
-    ax = fig.add_subplot(projection='3d')
-    step = 20
-    for i in range(0, k.shape[1], 7):
-        ax.scatter(k[::step, i, 0],
-                   k[::step, i, 1],
-                   k[::step, i, 2],
-                   marker='.',
-                   s=1)
-    fig.show()
+        data_file = hdr_file.with_suffix('.ome')
+
+        tmp = np.fromfile(data_file, dtype=np.complex64).reshape(dim1, dim0).T
+
+        if i == 0:
+            data = np.zeros((len(hdr_files), ) + tmp.shape, dtype=tmp.dtype)
+
+        data[i, ...] = tmp
+
+    # write the trajectory to hdf5
+    if output_file is None:
+        output_file = str(Path(raw_data_dir) / 'converted_data.h5')
+        with h5py.File(output_file, 'w') as f:
+            dset = f.create_dataset('data',
+                                    data=data,
+                                    compression="gzip",
+                                    compression_opts=1)
+            dset.attrs['hdr_files'] = [x.name for x in hdr_files]
+
+    return data
