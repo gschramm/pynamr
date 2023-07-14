@@ -20,7 +20,8 @@ from operators import projected_gradient_operator
 #----------------------------------------------------------------
 #----------------------------------------------------------------
 
-subject_path: Path = Path('/data/sodium_mr/sodium_data/CSF-032')
+#subject_path: Path = Path('/data/sodium_mr/sodium_data/CSF-032')
+subject_path: Path = Path('/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16')
 show_kspace_trajectory: bool = False
 
 grid_shape = (128, 128, 128)
@@ -35,8 +36,27 @@ field_of_view_cm = 22.
 with h5py.File(subject_path / 'raw_TE05' / 'converted_data.h5', 'r') as f1:
     data_echo_1 = f1['data'][:]
 
+    # read the GE's rotation tag
+    if 'header' in f1:
+        rotation = int(f1['header']['rdb_hdr']['rotation'][0])
+    else:
+        rotation = None
+
 with h5py.File(subject_path / 'raw_TE5' / 'converted_data.h5', 'r') as f2:
     data_echo_2 = f2['data'][:]
+
+if not np.iscomplexobj(data_echo_1):
+    data_echo_1 = data_echo_1['real'] + 1j * data_echo_1['imag']
+
+if not np.iscomplexobj(data_echo_2):
+    data_echo_2 = data_echo_2['real'] + 1j * data_echo_2['imag']
+
+# add a dummy coil axis, in case we have single coil 2D data
+if data_echo_1.ndim == 2:
+    data_echo_1 = np.expand_dims(data_echo_1, axis=0)
+
+if data_echo_2.ndim == 2:
+    data_echo_2 = np.expand_dims(data_echo_2, axis=0)
 
 # normalize the data such that the maximum of the readouts of the first
 # echo is approx. 1
@@ -56,6 +76,14 @@ data_echo_2 /= data_norm
 with h5py.File(subject_path / 'kspace_trajectory.h5', 'r') as f:
     k = f['k'][...]
     g_params = TPIParameters(**f['k'].attrs)
+
+# if GE's rotation tag is 0, we have to swap the x and y axis in the
+# kspace trajectory to get the recons in RAS
+if rotation == 0:
+    tmp = k.copy()
+    k[..., 0] = tmp[..., 1]
+    k[..., 1] = -tmp[..., 0]
+    del tmp
 
 # ignore last data points in kspace trajectory
 # (contains more points compared to data points)
