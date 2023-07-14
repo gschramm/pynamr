@@ -121,21 +121,23 @@ if show_kspace_trajectory:
 # calculate channel-wise IFFT
 iffts_1 = channelwise_ifft_recon(data_echo_1,
                                  k,
-                                 field_of_view_cm=field_of_view_cm)
+                                 field_of_view_cm=field_of_view_cm,
+                                 width=2)
 iffts_2 = channelwise_ifft_recon(data_echo_2,
                                  k,
-                                 field_of_view_cm=field_of_view_cm)
+                                 field_of_view_cm=field_of_view_cm,
+                                 width=2)
 
-sos_ifft_1 = ((np.abs(iffts_1)**2).sum(axis=0))**0.5
-sos_ifft_2 = ((np.abs(iffts_2)**2).sum(axis=0))**0.5
+_, coil_combined_ifft_1 = calculate_csm_inati_iter(iffts_1, smoothing=7)
+_, coil_combined_ifft_2 = calculate_csm_inati_iter(iffts_2, smoothing=7)
 
 # save the IFFTs
 ifft_aff = np.diag(
     np.concatenate([10 * field_of_view_cm / np.array(iffts_1.shape[1:]), [1]]))
-nib.save(nib.Nifti1Image(np.abs(sos_ifft_1), ifft_aff),
-         output_path / 'sos_ifft_1.nii')
-nib.save(nib.Nifti1Image(np.abs(sos_ifft_2), ifft_aff),
-         output_path / 'sos_ifft_2.nii')
+nib.save(nib.Nifti1Image(np.abs(coil_combined_ifft_1), ifft_aff),
+         output_path / 'coil_combined_ifft_1.nii')
+nib.save(nib.Nifti1Image(np.abs(coil_combined_ifft_2), ifft_aff),
+         output_path / 'coil_combined_ifft_2.nii')
 
 #---------------------------------------------------------------
 #--- early stopped channel-wise LSQ recons for coil sens -------
