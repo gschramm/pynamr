@@ -1,13 +1,9 @@
 import numpy as np
 import cupy as cp
 import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter
 import h5py
 import nibabel as nib
 from pathlib import Path
-
-import sigpy
-import sigpy.mri
 
 import pymirc.viewer as pv
 
@@ -15,18 +11,34 @@ from preprocessing import TPIParameters
 from reconstruction import channelwise_ifft_recon, channelwise_lsq_recon, regularized_sense_recon
 from registration import align_images
 from operators import projected_gradient_operator
+from coils_sens import calculate_csm_inati_iter, calculate_sense_scale
 
 #----------------------------------------------------------------
 #----------------------------------------------------------------
 #----------------------------------------------------------------
 
-#subject_path: Path = Path('/data/sodium_mr/sodium_data/CSF-032')
-subject_path: Path = Path('/data/sodium_mr/20230316_MR3_GS_QED/pfiles/g16')
+#subject_path: Path = Path('/data/sodium_mr/sodium_data/CSF-031')
+subject_path: Path = Path('/data/sodium_mr/sodium_data/EP-005')
 show_kspace_trajectory: bool = False
 
 grid_shape = (128, 128, 128)
+#grid_shape = (190, 190, 190)
 field_of_view_cm = 22.
 
+beta_non_anatomical = 1e-1
+beta_anatomical = 3e-3
+
+max_iter_agr = 500
+#---------------------------------------------------------------
+#--- create the output directory -------------------------------
+#---------------------------------------------------------------
+
+output_path = subject_path / f'recon_{"_".join(str(x) for x in grid_shape)}'
+output_path.mkdir(exist_ok=True, parents=True)
+
+# aff matrix for all recons
+output_aff = np.diag(
+    np.concatenate([10 * field_of_view_cm / np.array(grid_shape), [1]]))
 #---------------------------------------------------------------
 #---------------------------------------------------------------
 #---------------------------------------------------------------
@@ -103,7 +115,7 @@ if show_kspace_trajectory:
     fig.show()
 
 #---------------------------------------------------------------
-#---------------------------------------------------------------
+#--- IFFT recons -----------------------------------------------
 #---------------------------------------------------------------
 
 # calculate channel-wise IFFT
@@ -117,6 +129,18 @@ iffts_2 = channelwise_ifft_recon(data_echo_2,
 sos_ifft_1 = ((np.abs(iffts_1)**2).sum(axis=0))**0.5
 sos_ifft_2 = ((np.abs(iffts_2)**2).sum(axis=0))**0.5
 
+# save the IFFTs
+ifft_aff = np.diag(
+    np.concatenate([10 * field_of_view_cm / np.array(iffts_1.shape[1:]), [1]]))
+nib.save(nib.Nifti1Image(np.abs(sos_ifft_1), ifft_aff),
+         output_path / 'sos_ifft_1.nii')
+nib.save(nib.Nifti1Image(np.abs(sos_ifft_2), ifft_aff),
+         output_path / 'sos_ifft_2.nii')
+
+#---------------------------------------------------------------
+#--- early stopped channel-wise LSQ recons for coil sens -------
+#---------------------------------------------------------------
+
 # early stopped least squares recons
 lsq_1 = channelwise_lsq_recon(data_echo_1,
                               k,
@@ -127,69 +151,63 @@ lsq_2 = channelwise_lsq_recon(data_echo_2,
                               field_of_view_cm=field_of_view_cm,
                               grid_shape=grid_shape)
 
-sos_lsq_1 = ((np.abs(lsq_1)**2).sum(axis=0))**0.5
-sos_lsq_2 = ((np.abs(lsq_2)**2).sum(axis=0))**0.5
-
 #---------------------------------------------------------------
 #---------------------------------------------------------------
 #---------------------------------------------------------------
 
 # calculate the coil sensitivities
-sm_sig = 1.5 * grid_shape[0] / 128
-sos_lsq_1_sm = gaussian_filter(sos_lsq_1, sm_sig)
-sos_lsq_2_sm = gaussian_filter(sos_lsq_2, sm_sig)
+coil_sens_maps_1, coil_combined_lsq_1 = calculate_csm_inati_iter(lsq_1,
+                                                                 smoothing=7)
+coil_sens_maps_2, coil_combined_lsq_2 = calculate_csm_inati_iter(lsq_2,
+                                                                 smoothing=7)
 
-sens_1 = np.array([gaussian_filter(x, sm_sig) / sos_lsq_1_sm for x in lsq_1])
-sens_2 = np.array([gaussian_filter(x, sm_sig) / sos_lsq_2_sm for x in lsq_2])
+coil_sens_scale = calculate_sense_scale(coil_sens_maps_1, k, data_echo_1,
+                                        field_of_view_cm)
 
-# we normalize the sensitivities such that the sens operator has norm one
-# this is important when doing sense recons with 2nd (gradient) operator
-# and using PDHG
-k_d = cp.asarray(k.reshape(-1, 3)) * field_of_view_cm
-d_d = cp.asarray(data_echo_1.reshape(data_echo_1.shape[0], -1))
-S_tmp = sigpy.mri.linop.Sense(cp.asarray(sens_1), coord=k_d)
-max_eig = sigpy.app.MaxEig(S_tmp.H * S_tmp, dtype=d_d.dtype,
-                           device=k_d.device).run()
-
-sens_scale = np.sqrt(max_eig)
-
-sens_1 /= sens_scale
-sens_2 /= sens_scale
+coil_sens_maps_1 /= coil_sens_scale
+coil_sens_maps_2 /= coil_sens_scale
 
 # apply the sense scaling to the sos_lsq image
+coil_combined_lsq_1 *= coil_sens_scale
+coil_combined_lsq_2 *= coil_sens_scale
 
-sos_lsq_1 *= sens_scale
-sos_lsq_2 *= sens_scale
+coil_sens_maps = coil_sens_maps_1
 
-sos_lsq_1_sm *= sens_scale
-sos_lsq_2_sm *= sens_scale
-
-coil_sens = sens_1
+# save the coil sensitivities
+nib.save(nib.Nifti1Image(coil_sens_maps, output_aff),
+         output_path / 'coil_sens_maps.nii')
+nib.save(nib.Nifti1Image(np.abs(coil_combined_lsq_1), output_aff),
+         output_path / 'early_lsq_1.nii')
+nib.save(nib.Nifti1Image(np.abs(coil_combined_lsq_2), output_aff),
+         output_path / 'early_lsq_2.nii')
 #---------------------------------------------------------------
+#--- SENSE recons with non-anatomical quad diff prior ----------
 #---------------------------------------------------------------
-#---------------------------------------------------------------
-
-beta = 1e-1
 
 # regularized sense recons
-x0 = cp.asarray(sos_lsq_1_sm.astype(data_echo_1.dtype))
+x0 = cp.asarray(coil_combined_lsq_1.astype(data_echo_1.dtype))
 sense_L2_1 = regularized_sense_recon(data_echo_1,
-                                     coil_sens,
+                                     coil_sens_maps,
                                      k,
-                                     beta=beta,
+                                     beta=beta_non_anatomical,
                                      regulariztion='L2',
                                      field_of_view_cm=field_of_view_cm,
                                      x=x0)
 
-x0 = cp.asarray(sos_lsq_1_sm.astype(data_echo_2.dtype))
+x0 = cp.asarray(coil_combined_lsq_2.astype(data_echo_2.dtype))
 sense_L2_2 = regularized_sense_recon(data_echo_2,
-                                     coil_sens,
+                                     coil_sens_maps,
                                      k,
-                                     beta=beta,
+                                     beta=beta_non_anatomical,
                                      regulariztion='L2',
                                      field_of_view_cm=field_of_view_cm,
                                      x=x0)
 
+# save the sense recons with quad diff prior
+nib.save(nib.Nifti1Image(sense_L2_1, output_aff),
+         output_path / f'sense_quad_prior_b{beta_anatomical:.2E}_1.nii')
+nib.save(nib.Nifti1Image(sense_L2_2, output_aff),
+         output_path / f'sense_quad_prior_b{beta_anatomical:.2E}_2.nii')
 #---------------------------------------------------------------
 #---------------------------------------------------------------
 #---------------------------------------------------------------
@@ -213,36 +231,46 @@ anat_img_aligned, transform = align_images(na_img, anat_img, na_voxsize,
                                            na_origin, anat_voxsize,
                                            anat_origin)
 
+# save the aligned anat image
+nib.save(nib.Nifti1Image(anat_img_aligned, output_aff),
+         output_path / f'anatomical_prior_image_aligned.nii')
+
+# setup the projected gradient operator we need for AGR with DTV
 PG = projected_gradient_operator(cp, anat_img_aligned, eta=5e-3)
 
 #---------------------------------------------------------------
+#--- AGR with DTV prior ----------------------------------------
 #---------------------------------------------------------------
-#---------------------------------------------------------------
-
-beta = 3e-3
-max_iter = 500
 
 agr_L1_1 = regularized_sense_recon(data_echo_1,
-                                   coil_sens,
+                                   coil_sens_maps,
                                    k,
-                                   beta=beta,
+                                   beta=beta_anatomical,
                                    regulariztion='L1',
                                    G=PG,
                                    field_of_view_cm=field_of_view_cm,
                                    x=cp.asarray(sense_L2_1),
-                                   max_iter=max_iter)
-np.save(subject_path / 'agr_L1_1.npy', agr_L1_1)
+                                   max_iter=max_iter_agr)
+# save the AGR recons
+nib.save(nib.Nifti1Image(agr_L1_1, output_aff),
+         output_path / f'agr_dtv_b{beta_anatomical:.2E}_1.nii')
 
 agr_L1_2 = regularized_sense_recon(data_echo_2,
-                                   coil_sens,
+                                   coil_sens_maps,
                                    k,
-                                   beta=beta,
+                                   beta=beta_anatomical,
                                    regulariztion='L1',
                                    G=PG,
                                    field_of_view_cm=field_of_view_cm,
                                    x=cp.asarray(sense_L2_1),
-                                   max_iter=max_iter)
-np.save(subject_path / 'agr_L1_2.npy', agr_L1_2)
+                                   max_iter=max_iter_agr)
+# save the AGR recons
+nib.save(nib.Nifti1Image(agr_L1_2, output_aff),
+         output_path / f'agr_dtv_b{beta_anatomical:.2E}_2.nii')
+
+#---------------------------------------------------------------
+#--- show results ----------------------------------------------
+#---------------------------------------------------------------
 
 vi = pv.ThreeAxisViewer(
     [np.abs(agr_L1_2), np.abs(agr_L1_1), anat_img_aligned],
