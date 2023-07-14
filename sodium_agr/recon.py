@@ -20,7 +20,7 @@ from operators import projected_gradient_operator
 #----------------------------------------------------------------
 #----------------------------------------------------------------
 
-subject_path: Path = Path('/data/sodium_mr/sodium_data/EP-005')
+subject_path: Path = Path('/data/sodium_mr/sodium_data/CSF-032')
 show_kspace_trajectory: bool = False
 
 grid_shape = (128, 128, 128)
@@ -215,3 +215,7 @@ agr_L1_2 = regularized_sense_recon(data_echo_2,
                                    x=cp.asarray(sense_L2_1),
                                    max_iter=max_iter)
 np.save(subject_path / 'agr_L1_2.npy', agr_L1_2)
+
+vi = pv.ThreeAxisViewer(
+    [np.abs(agr_L1_2), np.abs(agr_L1_1), anat_img_aligned],
+    imshow_kwargs=dict(cmap='Greys_r', vmax=1))
