@@ -18,6 +18,117 @@ class TPIParameters(pydantic.BaseModel):
         return self.max_grad_G_cm * 1e-4
 
 
+def read_tpi_akwav_kspace_trajectory(
+        fname: str,
+        gamma_over_2pi_MHz_T: float = 11.262,
+        output_file: str | None = None) -> tuple[np.ndarray, TPIParameters]:
+    """
+    read GE waveforms stored to external ak wav format and convert to kspace coordinates
+
+    Parameters
+    ----------
+    fname : str
+    gamma_over_2pi_MHz_T : float, optional
+        gyromagnetic ratio (gamma/2pi) in [MHz/T], by default 11.262
+    outputfile : str, optional
+        name of the output hdf5 file, by default None
+
+    Returns
+    -------
+    np.ndarray
+        k-space trajectory array of shape (num_points, num_readouts, 3)
+        in 1/cm
+    TPIGradientParameters
+    """
+
+    N = {}
+    offset = 0
+
+    desc = np.fromfile(fname, dtype=np.int8, offset=offset, count=256)
+    offset += desc.size * desc.itemsize
+
+    N["gpts"] = np.fromfile(fname,
+                            dtype=np.dtype('>u2'),
+                            offset=offset,
+                            count=1)[0]
+    offset += N["gpts"].size * N["gpts"].itemsize
+
+    N["groups"] = np.fromfile(fname,
+                              dtype=np.dtype('>u2'),
+                              offset=offset,
+                              count=1)[0]
+    offset += N["groups"].size * N["groups"].itemsize
+
+    N["intl"] = np.fromfile(fname,
+                            dtype=np.dtype('>u2'),
+                            offset=offset,
+                            count=N["groups"])
+    offset += N["intl"].size * N["intl"].itemsize
+
+    N["params"] = np.fromfile(fname,
+                              dtype=np.dtype('>u2'),
+                              offset=256 + 4 + N["groups"] * 2,
+                              count=1)[0]
+    offset += N["params"].size * N["params"].itemsize
+
+    params = np.fromfile(fname,
+                         dtype=np.dtype('>f8'),
+                         offset=offset,
+                         count=N["params"])
+    offset += params.size * params.itemsize
+
+    wave = np.fromfile(fname, dtype=np.dtype('>i2'), offset=offset)
+    offset += wave.size * wave.itemsize
+
+    grad = np.swapaxes(wave.reshape((N["groups"], N["intl"][0], N["gpts"])), 0,
+                       2)
+
+    # set stop bit to 0
+    grad[-1, ...] = 0
+
+    # get useful parameters
+    dt_us = float(params[7])
+    num_points = int(N["gpts"])
+    max_grad_G_cm = float(params[3])
+    # in the akwav format, there is no information about the cone numbers
+    # we just assume that there is only one "cone" with all readouts
+    num_readouts_per_cone = [int(N["intl"][0])]
+    num_cones = 1
+
+    # scale gradients to SI units (T/m)
+    scale_T_cm = (max_grad_G_cm / (32767 * 100 * 100))
+    grads_T_cm = grad.astype(np.float32) * scale_T_cm
+
+    ## bandwidth in (Hz)
+    #bw = 1e6 / params[7]
+    ## (proton) field of view in (cm)
+    #fov = params[1]
+
+    k_1_cm = np.cumsum(grads_T_cm, axis=0) * dt_us * gamma_over_2pi_MHz_T
+
+    gradient_parameters = TPIParameters(
+        sampling_time_us=dt_us,
+        num_points=num_points,
+        num_cones=num_cones,
+        num_readouts_per_cone=num_readouts_per_cone,
+        max_grad_G_cm=max_grad_G_cm,
+        gamma_over_2pi_MHz_T=gamma_over_2pi_MHz_T)
+
+    # write the trajectory to hdf5
+    if output_file is not None:
+        with h5py.File(output_file, 'w') as f:
+            dset = f.create_dataset('k',
+                                    data=k_1_cm,
+                                    compression="gzip",
+                                    compression_opts=9)
+
+            # write the TPI parameters to hdf5 attributes
+            for key, value in gradient_parameters.model_dump().items():
+                dset.attrs[key] = value
+
+    return k_1_cm, gradient_parameters
+
+
 def read_grdb(fname: str,
               gamma_over_2pi_MHz_T: float = 11.262,
               verbose: bool = False) -> tuple[np.ndarray, TPIParameters]:
@@ -158,6 +269,7 @@ def read_tpi_grdb_kspace_trajectory(
     np.ndarray
         k-space trajectory array of shape (num_points, num_readouts, 3)
         in 1/cm
+    TPIGradientParameters
     """
 
     kx, g_params_x = read_grdb(fname_x,
