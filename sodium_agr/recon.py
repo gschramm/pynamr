@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 import cupy as cp
 import matplotlib.pyplot as plt
@@ -17,8 +18,11 @@ from coils_sens import calculate_csm_inati_iter, calculate_sense_scale
 #----------------------------------------------------------------
 #----------------------------------------------------------------
 
-#subject_path: Path = Path('/data/sodium_mr/sodium_data/CSF-031')
-subject_path: Path = Path('/data/sodium_mr/sodium_data/EP-005')
+parser = argparse.ArgumentParser()
+parser.add_argument('--sdir', type=str, required=True)
+args = parser.parse_args()
+
+subject_path: Path = Path(args.sdir)
 show_kspace_trajectory: bool = False
 
 grid_shape = (128, 128, 128)
@@ -275,5 +279,8 @@ nib.save(nib.Nifti1Image(agr_L1_2, output_aff),
 #---------------------------------------------------------------
 
 vi = pv.ThreeAxisViewer(
-    [np.abs(agr_L1_2), np.abs(agr_L1_1), anat_img_aligned],
+    [np.abs(sense_L2_1),
+     np.abs(agr_L1_1), anat_img_aligned],
     imshow_kwargs=dict(cmap='Greys_r', vmax=1))
+
+vi.fig.savefig(output_path / 'recons.png')
