@@ -3,6 +3,13 @@ import cupy as cp
 import sigpy
 import sigpy.mri
 
+from typing import Union
+
+from operators import ApodizedNUFFT
+
+# custom type indicating a numpy or cupy array
+ndarray = Union[np.ndarray, cp.ndarray]
+
 
 def channelwise_ifft_recon(data: np.ndarray,
                            k: np.ndarray,
@@ -74,13 +81,14 @@ def regularized_sense_recon(data: np.ndarray,
                             coil_sens: np.ndarray,
                             k: np.ndarray,
                             field_of_view_cm=22.,
-                            regulariztion: str = 'L2',
+                            regularization: str = 'L2',
                             beta: float = 1e-1,
                             sigma: float = 1e-1,
                             operator_norm_squared: float | None = 1.,
                             max_iter: int = 100,
                             G: sigpy.linop.Linop | None = None,
-                            **kwargs) -> np.ndarray:
+                            u: np.ndarray | None = None,
+                            **kwargs) -> tuple[np.ndarray, np.ndarray | None]:
 
     # send kspace trajectory and data to GPU
     k_d = cp.asarray(k.reshape(-1, 3)) * field_of_view_cm
@@ -94,10 +102,10 @@ def regularized_sense_recon(data: np.ndarray,
         G = (1 / np.sqrt(12)) * sigpy.linop.FiniteDifference(S.ishape)
 
     # setup prox for gradient norm
-    if regulariztion == 'L2':
+    if regularization == 'L2':
         proxg = sigpy.prox.L2Reg(G.oshape, lamda=beta)
         g = lambda z: float(beta * 0.5 * ((z * z.conj()).sum()).real)
-    elif regulariztion == 'L1':
+    elif regularization == 'L1':
         proxg = sigpy.prox.L1Reg(G.oshape, lamda=beta)
         g = lambda z: float(beta * cp.abs(z).sum())
     else:
@@ -108,7 +116,7 @@ def regularized_sense_recon(data: np.ndarray,
                                                  dtype=data.dtype,
                                                  device=data.device).run()
 
-    alg = sigpy.app.LinearLeastSquares(S,
+    app = sigpy.app.LinearLeastSquares(S,
                                        d_d,
                                        G=G,
                                        proxg=proxg,
@@ -118,6 +126,131 @@ def regularized_sense_recon(data: np.ndarray,
                                        sigma,
                                        g=g,
                                        **kwargs)
-    x = cp.asnumpy(alg.run())
+    if G is not None:
+        if u is not None:
+            app.alg.u = cp.asarray(u)
 
-    return x
+    x = cp.asnumpy(app.run())
+
+    if G is not None:
+        return x, cp.asnumpy(app.alg.u)
+    else:
+        return x, None
+
+
+#---------------------------------------------------------------
+
+
+def data_fidelity_gradient_r(x: ndarray, A_1: ApodizedNUFFT,
+                             A_2: ApodizedNUFFT, d_1: ndarray, d_2: ndarray):
+
+    xp = sigpy.backend.get_array_module(x)
+    g_r = xp.zeros(A_1.ishape, dtype=A_1.r.dtype)
+
+    for i in range(A_1.num_time_bins):
+        inds = A_1.get_split_inds(i)
+
+        A_1i = A_1.get_Ai(i)
+        A_2i = A_2.get_Ai(i)
+
+        g_r += A_1.tau[i] * (A_1.r**(A_1.tau[i] - 1)) * (
+            x.conj() * A_1i.H(A_1i(x) - d_1[:, inds, :])).real
+        g_r += A_2.tau[i] * (A_2.r**(A_2.tau[i] - 1)) * (
+            x.conj() * A_2i.H(A_2i(x) - d_2[:, inds, :])).real
+
+    return g_r
+
+
+def dual_echo_sense_with_decay_estimation(
+        data_1: np.ndarray,
+        data_2: np.ndarray,
+        sampling_time_us: float,
+        TE1_ms: float,
+        TE2_ms: float,
+        coil_sens: np.ndarray,
+        k: np.ndarray,
+        x0: np.ndarray,
+        u0: np.ndarray,
+        r0: np.ndarray,
+        G: sigpy.linop.Linop,
+        field_of_view_cm=22.,
+        regularization: str = 'L1',
+        beta: float = 3e-3,
+        sigma: float = 1e-1,
+        max_iter: int = 100,
+        max_outer_iter: int = 20,
+        num_time_bins: int = 64,
+        beta_r: float = 1e-3,
+        **kwargs) -> tuple[np.ndarray, np.ndarray]:
+
+    d_1 = cp.asarray(data_1)
+    d_2 = cp.asarray(data_2)
+
+    x = cp.asarray(x0)
+    u = cp.asarray(u0)
+    r = cp.asarray(r0)
+
+    Flist = [
+        sigpy.mri.linop.Sense(cp.asarray(coil_sens), cp.asarray(kchunk)) for
+        kchunk in np.array_split(k * field_of_view_cm, num_time_bins, axis=0)
+    ]
+
+    t_read_1_ms = np.arange(k.shape[0]) * sampling_time_us * (1e-3) + TE1_ms
+    t_read_2_ms = np.arange(k.shape[0]) * sampling_time_us * (1e-3) + TE2_ms
+
+    tau_1 = [
+        x.mean()
+        for x in np.array_split(t_read_1_ms / (TE2_ms - TE1_ms), num_time_bins)
+    ]
+    tau_2 = [
+        x.mean()
+        for x in np.array_split(t_read_2_ms / (TE2_ms - TE1_ms), num_time_bins)
+    ]
+
+    A_1 = ApodizedNUFFT(Flist, r, tau_1)
+    A_2 = ApodizedNUFFT(Flist, r, tau_2)
+
+    stepsize_r = 1 / 1.5
+
+    # setup prox for gradient norm
+    if regularization == 'L2':
+        proxg = sigpy.prox.L2Reg(G.oshape, lamda=beta)
+    elif regularization == 'L1':
+        proxg = sigpy.prox.L1Reg(G.oshape, lamda=beta)
+    else:
+        raise ValueError('regularization must be L1 or L2')
+
+    for i_outer in range(max_outer_iter):
+        # gradient descent to update r
+        for j in range(max_iter):
+            data_grad_r = data_fidelity_gradient_r(x, A_1, A_2, d_1, d_2)
+
+            prior_grad_r = beta_r * G.H(G(A_1.r))
+            r_new = cp.clip(A_1.r - stepsize_r * (data_grad_r + prior_grad_r),
+                            1e-2, 1)
+
+            A_1.r = r_new
+            A_2.r = r_new
+
+        cp.save(f'r_{i_outer+1}', A_1.r)
+
+        #-----------------------------------------------------------------------
+        app = sigpy.app.LinearLeastSquares(sigpy.linop.Vstack([A_1, A_2],
+                                                              axis=0),
+                                           cp.concatenate((d_1, d_2), 0),
+                                           G=G,
+                                           proxg=proxg,
+                                           x=x,
+                                           max_iter=100,
+                                           sigma=sigma,
+                                           tau=0.99 * sigma / 1.5)
+
+        app.alg.u = u
+        x = app.run()
+
+        # save the dual variable for the initialization of the next PDHG run
+        u = app.alg.u.copy()
+
+        cp.save(f'x_{i_outer+1}', x)
+
+    return cp.asnumpy(x), cp.asnumpy(r_new)

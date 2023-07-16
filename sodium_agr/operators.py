@@ -57,6 +57,7 @@ class ApodizedNUFFT(sigpy.linop.Linop):
         self._tau = tau
 
         self._Flist = Flist
+        self._num_time_bins = len(Flist)
 
         self._xp = sigpy.backend.get_array_module(self._r)
 
@@ -80,8 +81,15 @@ class ApodizedNUFFT(sigpy.linop.Linop):
         return self._tau
 
     @property
+    def num_time_bins(self) -> int:
+        return self._num_time_bins
+
+    @property
     def xp(self) -> ModuleType:
         return self._xp
+
+    def get_split_inds(self, i: int) -> ndarray:
+        return self._split_inds[i]
 
     def get_Ai(self, i: int) -> sigpy.linop.Linop:
         return self._Flist[i] * sigpy.linop.Multiply(self.ishape, self._r**
@@ -123,7 +131,6 @@ class _ApodizedNUFFTAdjoint(sigpy.linop.Linop):
 
     def _adjoint_linop(self) -> sigpy.linop.Linop:
         return self._A
-
 
 
 def projected_gradient_operator(xp: ModuleType,

@@ -2,6 +2,7 @@ import argparse
 import numpy as np
 import cupy as cp
 import matplotlib.pyplot as plt
+import scipy.ndimage as ndimage
 import h5py
 import nibabel as nib
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 import pymirc.viewer as pv
 
 from preprocessing import TPIParameters
-from reconstruction import channelwise_ifft_recon, channelwise_lsq_recon, regularized_sense_recon
+from reconstruction import channelwise_ifft_recon, channelwise_lsq_recon, regularized_sense_recon, dual_echo_sense_with_decay_estimation
 from registration import align_images
 from operators import projected_gradient_operator
 from coils_sens import calculate_csm_inati_iter, calculate_sense_scale
@@ -30,9 +31,10 @@ grid_shape = (128, 128, 128)
 field_of_view_cm = 22.
 
 beta_non_anatomical = 1e-1
-beta_anatomical = 3e-3
+beta_anatomical = 1e-3
+beta_r = 1e-2
 
-max_iter_agr = 500
+max_iter_agr = 100
 #---------------------------------------------------------------
 #--- create the output directory -------------------------------
 #---------------------------------------------------------------
@@ -192,22 +194,22 @@ nib.save(nib.Nifti1Image(np.abs(coil_combined_lsq_2), output_aff),
 
 # regularized sense recons
 x0 = cp.asarray(coil_combined_lsq_1.astype(data_echo_1.dtype))
-sense_L2_1 = regularized_sense_recon(data_echo_1,
-                                     coil_sens_maps,
-                                     k,
-                                     beta=beta_non_anatomical,
-                                     regulariztion='L2',
-                                     field_of_view_cm=field_of_view_cm,
-                                     x=x0)
+sense_L2_1, _ = regularized_sense_recon(data_echo_1,
+                                        coil_sens_maps,
+                                        k,
+                                        beta=beta_non_anatomical,
+                                        regularization='L2',
+                                        field_of_view_cm=field_of_view_cm,
+                                        x=x0)
 
 x0 = cp.asarray(coil_combined_lsq_2.astype(data_echo_2.dtype))
-sense_L2_2 = regularized_sense_recon(data_echo_2,
-                                     coil_sens_maps,
-                                     k,
-                                     beta=beta_non_anatomical,
-                                     regulariztion='L2',
-                                     field_of_view_cm=field_of_view_cm,
-                                     x=x0)
+sense_L2_2, _ = regularized_sense_recon(data_echo_2,
+                                        coil_sens_maps,
+                                        k,
+                                        beta=beta_non_anatomical,
+                                        regularization='L2',
+                                        field_of_view_cm=field_of_view_cm,
+                                        x=x0)
 
 # save the sense recons with quad diff prior
 nib.save(nib.Nifti1Image(sense_L2_1, output_aff),
@@ -248,31 +250,83 @@ PG = projected_gradient_operator(cp, anat_img_aligned, eta=5e-3)
 #--- AGR with DTV prior ----------------------------------------
 #---------------------------------------------------------------
 
-agr_L1_1 = regularized_sense_recon(data_echo_1,
-                                   coil_sens_maps,
-                                   k,
-                                   beta=beta_anatomical,
-                                   regulariztion='L1',
-                                   G=PG,
-                                   field_of_view_cm=field_of_view_cm,
-                                   x=cp.asarray(sense_L2_1),
-                                   max_iter=max_iter_agr)
+agr_L1_1, u_agr_L1_1 = regularized_sense_recon(
+    data_echo_1,
+    coil_sens_maps,
+    k,
+    beta=beta_anatomical,
+    regularization='L1',
+    G=PG,
+    field_of_view_cm=field_of_view_cm,
+    x=cp.asarray(sense_L2_1),
+    max_iter=max_iter_agr)
+
 # save the AGR recons
 nib.save(nib.Nifti1Image(agr_L1_1, output_aff),
          output_path / f'agr_dtv_b{beta_anatomical:.2E}_1.nii')
+np.save(output_path / f'u_agr_dtv_b{beta_anatomical:.2E}_1.npy', u_agr_L1_1)
 
-agr_L1_2 = regularized_sense_recon(data_echo_2,
-                                   coil_sens_maps,
-                                   k,
-                                   beta=beta_anatomical,
-                                   regulariztion='L1',
-                                   G=PG,
-                                   field_of_view_cm=field_of_view_cm,
-                                   x=cp.asarray(sense_L2_1),
-                                   max_iter=max_iter_agr)
+agr_L1_2, u_agr_L1_2 = regularized_sense_recon(
+    data_echo_2,
+    coil_sens_maps,
+    k,
+    beta=beta_anatomical,
+    regularization='L1',
+    G=PG,
+    field_of_view_cm=field_of_view_cm,
+    x=cp.asarray(sense_L2_1),
+    max_iter=max_iter_agr)
+
 # save the AGR recons
 nib.save(nib.Nifti1Image(agr_L1_2, output_aff),
          output_path / f'agr_dtv_b{beta_anatomical:.2E}_2.nii')
+np.save(output_path / f'u_agr_dtv_b{beta_anatomical:.2E}_2.npy', u_agr_L1_2)
+
+#---------------------------------------------------------------
+#--- dual echo AGR with decay est ------------------------------
+#---------------------------------------------------------------
+
+# estimate the ratio between the two AGR recons
+r0 = np.clip(np.abs(agr_L1_2) / np.abs(agr_L1_1), 0, 1)
+# set ratio to one in voxels where there is low signal in the first echo
+mask = 1 - (np.abs(agr_L1_1) < 0.05 * np.abs(agr_L1_1).max())
+
+label, num_label = ndimage.label(mask == 1)
+size = np.bincount(label.ravel())
+biggest_label = size[1:].argmax() + 1
+clump_mask = (label == biggest_label)
+
+r0[clump_mask == 0] = 1
+
+#---------------------------------------------------------------
+#---------------------------------------------------------------
+#---------------------------------------------------------------
+
+TE1_ms = 0.5
+TE2_ms = 5.
+
+num_data = np.prod(data_echo_1.shape)
+u0 = np.concatenate(
+    (u_agr_L1_1[:num_data], u_agr_L1_2[:num_data], u_agr_L1_1[num_data:]))
+
+a, b = dual_echo_sense_with_decay_estimation(data_echo_1,
+                                             data_echo_2,
+                                             g_params.sampling_time_us,
+                                             TE1_ms,
+                                             TE2_ms,
+                                             coil_sens_maps,
+                                             k,
+                                             x0=agr_L1_1,
+                                             u0=u0,
+                                             r0=r0,
+                                             G=PG,
+                                             field_of_view_cm=field_of_view_cm,
+                                             regularization='L1',
+                                             beta=beta_anatomical,
+                                             max_iter=100,
+                                             max_outer_iter=20,
+                                             num_time_bins=64,
+                                             beta_r=beta_r)
 
 #---------------------------------------------------------------
 #--- show results ----------------------------------------------
