@@ -32,9 +32,9 @@ field_of_view_cm = 22.
 
 beta_non_anatomical = 1e-1
 beta_anatomical = 1e-3
-beta_r = 1e-2
+beta_r = 3e-1
 
-max_iter_agr = 100
+max_iter_agr = 500
 #---------------------------------------------------------------
 #--- create the output directory -------------------------------
 #---------------------------------------------------------------
