@@ -232,8 +232,6 @@ def dual_echo_sense_with_decay_estimation(
             A_1.r = r_new
             A_2.r = r_new
 
-        cp.save(f'r_{i_outer+1}', A_1.r)
-
         #-----------------------------------------------------------------------
         app = sigpy.app.LinearLeastSquares(sigpy.linop.Vstack([A_1, A_2],
                                                               axis=0),
@@ -251,6 +249,7 @@ def dual_echo_sense_with_decay_estimation(
         # save the dual variable for the initialization of the next PDHG run
         u = app.alg.u.copy()
 
+        cp.save(f'r_{i_outer+1}', A_1.r)
         cp.save(f'x_{i_outer+1}', x)
 
     return cp.asnumpy(x), cp.asnumpy(r_new)

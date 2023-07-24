@@ -21,20 +21,52 @@ from coils_sens import calculate_csm_inati_iter, calculate_sense_scale
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--sdir', type=str, required=True)
+parser.add_argument('--matrix_size',
+                    type=int,
+                    default=128,
+                    help='recon matrix size, default 128')
+parser.add_argument('--fov_cm',
+                    type=float,
+                    default=22.,
+                    help='recon field of view (cm)')
+parser.add_argument(
+    '--beta_non_anatomical',
+    type=float,
+    default=1e-1,
+    help='prior weight for recon with non-anatomical quadratic difference prior'
+)
+parser.add_argument('--beta_anatomical',
+                    type=float,
+                    default=1e-3,
+                    help='prior weight for recon with anatomical L1 prior')
+parser.add_argument(
+    '--beta_r',
+    type=float,
+    default=1e-3,
+    help='prior weight for anatomical L2 prior for the ratio image')
+
+parser.add_argument('--max_iter_agr',
+                    type=int,
+                    default=500,
+                    help='number of iterations for AGR without decay modeling')
 args = parser.parse_args()
+
+#---------------------------------------------------------------
+#--- input parameters ------------------------------------------
+#---------------------------------------------------------------
 
 subject_path: Path = Path(args.sdir)
 show_kspace_trajectory: bool = False
 
-grid_shape = (128, 128, 128)
-#grid_shape = (190, 190, 190)
-field_of_view_cm = 22.
+grid_shape = (args.matrix_size, args.matrix_size, args.matrix_size)
+field_of_view_cm = args.fov_cm
 
-beta_non_anatomical = 1e-1
-beta_anatomical = 1e-3
-beta_r = 3e-1
+beta_non_anatomical = args.beta_non_anatomical
+beta_anatomical = args.beta_anatomical
+beta_r = args.beta_r
 
-max_iter_agr = 500
+max_iter_agr = args.max_iter_agr
+
 #---------------------------------------------------------------
 #--- create the output directory -------------------------------
 #---------------------------------------------------------------
@@ -323,8 +355,8 @@ a, b = dual_echo_sense_with_decay_estimation(data_echo_1,
                                              field_of_view_cm=field_of_view_cm,
                                              regularization='L1',
                                              beta=beta_anatomical,
-                                             max_iter=100,
-                                             max_outer_iter=20,
+                                             max_iter=20,
+                                             max_outer_iter=100,
                                              num_time_bins=64,
                                              beta_r=beta_r)
 
