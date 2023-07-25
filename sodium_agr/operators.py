@@ -39,7 +39,7 @@ class ApodizedNUFFT(sigpy.linop.Linop):
         Parameters
         ----------
         Flist : list[sigpy.linop.Linop]
-            list of Fourier (Forier Sense) operators
+            list of Fourier (Fourier Sense) operators
         r : ndarray
             real decay ratio image
         tau : Sequence[float]

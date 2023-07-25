@@ -1,3 +1,5 @@
+import tempfile
+from pathlib import Path
 import numpy as np
 import cupy as cp
 import sigpy
@@ -181,6 +183,7 @@ def dual_echo_sense_with_decay_estimation(
         max_outer_iter: int = 20,
         num_time_bins: int = 64,
         beta_r: float = 1e-3,
+        save_intermed: bool = True,
         **kwargs) -> tuple[np.ndarray, np.ndarray]:
 
     d_1 = cp.asarray(data_1)
@@ -220,7 +223,14 @@ def dual_echo_sense_with_decay_estimation(
     else:
         raise ValueError('regularization must be L1 or L2')
 
+    if save_intermed:
+        tempdir = tempfile.TemporaryDirectory()
+        temppath = Path(tempdir.name)
+
     for i_outer in range(max_outer_iter):
+        print(
+            f'dual echp AGR with decay est. outer iteration {(i_outer+1):03} / {max_outer_iter:03}'
+        )
         # gradient descent to update r
         for j in range(max_iter):
             data_grad_r = data_fidelity_gradient_r(x, A_1, A_2, d_1, d_2)
@@ -239,9 +249,10 @@ def dual_echo_sense_with_decay_estimation(
                                            G=G,
                                            proxg=proxg,
                                            x=x,
-                                           max_iter=100,
+                                           max_iter=max_iter,
                                            sigma=sigma,
-                                           tau=0.99 * sigma / 1.5)
+                                           tau=0.99 * sigma / 1.5,
+                                           **kwargs)
 
         app.alg.u = u
         x = app.run()
@@ -249,7 +260,9 @@ def dual_echo_sense_with_decay_estimation(
         # save the dual variable for the initialization of the next PDHG run
         u = app.alg.u.copy()
 
-        cp.save(f'r_{i_outer+1}', A_1.r)
-        cp.save(f'x_{i_outer+1}', x)
+        if save_intermed:
+            print(f'saving intermediate results to {temppath}')
+            cp.save(temppath / f'r_{i_outer+1}.npy', A_1.r)
+            cp.save(temppath / f'x_{i_outer+1}.npy', x)
 
     return cp.asnumpy(x), cp.asnumpy(r_new)
