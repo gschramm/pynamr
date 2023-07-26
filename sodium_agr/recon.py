@@ -259,12 +259,11 @@ if not coil_sens_file.exists():
     coil_combined_lsq_1 *= coil_sens_scale
     coil_combined_lsq_2 *= coil_sens_scale
 
-    coil_sens_maps = coil_sens_maps_1
-
     # save the coil sensitivities
     print(f'saving {coil_sens_file}')
     np.savez_compressed(coil_sens_file,
-                        coil_sens_maps=coil_sens_maps,
+                        coil_sens_maps_1=coil_sens_maps_1,
+                        coil_sens_maps_2=coil_sens_maps_2,
                         coil_combined_lsq_1=coil_combined_lsq_1,
                         coil_combined_lsq_2=coil_combined_lsq_2,
                         coil_sens_scale=coil_sens_scale,
@@ -272,7 +271,8 @@ if not coil_sens_file.exists():
 else:
     print(f'loading {coil_sens_file}')
     data = np.load(coil_sens_file)
-    coil_sens_maps = data['coil_sens_maps']
+    coil_sens_maps_1 = data['coil_sens_maps_1']
+    coil_sens_maps_2 = data['coil_sens_maps_2']
     coil_combined_lsq_1 = data['coil_combined_lsq_1']
     coil_combined_lsq_2 = data['coil_combined_lsq_2']
     coil_sens_scale = data['coil_sens_scale']
@@ -289,7 +289,7 @@ non_agr_sens_file_2 = output_path / f'sense_non_agr_b{beta_non_anatomical:.2E}_2
 if not non_agr_sens_file_1.exists():
     x0 = cp.asarray(coil_combined_lsq_1.astype(data_echo_1.dtype))
     sense_L2_1, _ = regularized_sense_recon(data_echo_1,
-                                            coil_sens_maps,
+                                            coil_sens_maps_1,
                                             k,
                                             beta=beta_non_anatomical,
                                             regularization='L2',
@@ -304,7 +304,7 @@ else:
 if not non_agr_sens_file_2.exists():
     x0 = cp.asarray(coil_combined_lsq_2.astype(data_echo_2.dtype))
     sense_L2_2, _ = regularized_sense_recon(data_echo_2,
-                                            coil_sens_maps,
+                                            coil_sens_maps_2,
                                             k,
                                             beta=beta_non_anatomical,
                                             regularization='L2',
@@ -355,13 +355,19 @@ PG = projected_gradient_operator(cp, anat_img_aligned, eta=eta)
 #--- AGR with DTV prior ----------------------------------------
 #---------------------------------------------------------------
 
+# adjust the phase in the coil sensitivities maps such that
+# the resulting recons should have no residual phase
+# which is important for the dual echo recons later
+coil_sens_maps_1 = coil_sens_maps_1 * np.exp(1j * np.angle(sense_L2_1))
+coil_sens_maps_2 = coil_sens_maps_2 * np.exp(1j * np.angle(sense_L2_2))
+
 agr_nodecay_file_1 = output_path / f'agr_no_decay_b{beta_anatomical:.2E}_1.npz'
 agr_nodecay_file_2 = output_path / f'agr_no_decay_b{beta_anatomical:.2E}_2.npz'
 
 if not agr_nodecay_file_1.exists():
     agr_L1_1, u_agr_L1_1 = regularized_sense_recon(
         data_echo_1,
-        coil_sens_maps,
+        coil_sens_maps_1,
         k,
         beta=beta_anatomical,
         regularization='L1',
@@ -385,7 +391,7 @@ else:
 if not agr_nodecay_file_2.exists():
     agr_L1_2, u_agr_L1_2 = regularized_sense_recon(
         data_echo_2,
-        coil_sens_maps,
+        coil_sens_maps_2,
         k,
         beta=beta_anatomical,
         regularization='L1',
@@ -441,7 +447,8 @@ if not dual_echo_agr_file.exists():
         g_params.sampling_time_us,
         TE1_ms,
         TE2_ms,
-        coil_sens_maps,
+        coil_sens_maps_1,
+        coil_sens_maps_2,
         k,
         x0=agr_L1_1,
         u0=u0,

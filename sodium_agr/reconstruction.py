@@ -204,7 +204,8 @@ def dual_echo_sense_with_decay_estimation(
         sampling_time_us: float,
         TE1_ms: float,
         TE2_ms: float,
-        coil_sens: np.ndarray,
+        coil_sens_1: np.ndarray,
+        coil_sens_2: np.ndarray,
         k: np.ndarray,
         x0: np.ndarray,
         u0: np.ndarray,
@@ -228,8 +229,13 @@ def dual_echo_sense_with_decay_estimation(
     u = cp.asarray(u0)
     r = cp.asarray(r0)
 
-    Flist = [
-        sigpy.mri.linop.Sense(cp.asarray(coil_sens), cp.asarray(kchunk)) for
+    Flist_1 = [
+        sigpy.mri.linop.Sense(cp.asarray(coil_sens_1), cp.asarray(kchunk)) for
+        kchunk in np.array_split(k * field_of_view_cm, num_time_bins, axis=0)
+    ]
+
+    Flist_2 = [
+        sigpy.mri.linop.Sense(cp.asarray(coil_sens_2), cp.asarray(kchunk)) for
         kchunk in np.array_split(k * field_of_view_cm, num_time_bins, axis=0)
     ]
 
@@ -245,8 +251,8 @@ def dual_echo_sense_with_decay_estimation(
         for x in np.array_split(t_read_2_ms / (TE2_ms - TE1_ms), num_time_bins)
     ]
 
-    A_1 = ApodizedNUFFT(Flist, r, tau_1)
-    A_2 = ApodizedNUFFT(Flist, r, tau_2)
+    A_1 = ApodizedNUFFT(Flist_1, r, tau_1)
+    A_2 = ApodizedNUFFT(Flist_2, r, tau_2)
 
     # setup prox for gradient norm
     if regularization == 'L2':
