@@ -6,6 +6,7 @@ import sigpy
 import sigpy.mri
 
 from typing import Union
+from scipy.optimize import fmin_l_bfgs_b
 
 from operators import ApodizedNUFFT
 
@@ -163,6 +164,40 @@ def data_fidelity_gradient_r(x: ndarray, A_1: ApodizedNUFFT,
     return g_r
 
 
+#---------------------------------------------------------------
+
+
+def r_cost_wrapper(r_flat, x, A_1, A_2, d_1, d_2, G, beta):
+    r_init = A_1.r.copy()
+    r = cp.asarray(r_flat.reshape(A_1.ishape))
+    A_1.r = r
+    A_2.r = r
+
+    data_fid = 0.5 * float((cp.abs(A_1(x) - d_1)**2).sum() +
+                           (cp.abs(A_2(x) - d_2)**2).sum())
+    prior = 0.5 * beta * float((G(r)**2).sum())
+
+    A_1.r = r_init
+    A_2.r = r_init
+
+    return (data_fid + prior)
+
+
+def r_gradient_wrapper(r_flat, x, A_1, A_2, d_1, d_2, G, beta):
+    r_init = A_1.r.copy()
+    r = cp.asarray(r_flat.reshape(A_1.ishape))
+    A_1.r = r
+    A_2.r = r
+
+    data_grad = data_fidelity_gradient_r(x, A_1, A_2, d_1, d_2)
+    prior_grad = beta * G.H(G(r))
+
+    A_1.r = r_init
+    A_2.r = r_init
+
+    return cp.asnumpy((data_grad + prior_grad).ravel())
+
+
 def dual_echo_sense_with_decay_estimation(
         data_1: np.ndarray,
         data_2: np.ndarray,
@@ -213,8 +248,6 @@ def dual_echo_sense_with_decay_estimation(
     A_1 = ApodizedNUFFT(Flist, r, tau_1)
     A_2 = ApodizedNUFFT(Flist, r, tau_2)
 
-    stepsize_r = 1 / 1.5
-
     # setup prox for gradient norm
     if regularization == 'L2':
         proxg = sigpy.prox.L2Reg(G.oshape, lamda=beta)
@@ -227,20 +260,25 @@ def dual_echo_sense_with_decay_estimation(
         tempdir = tempfile.TemporaryDirectory()
         temppath = Path(tempdir.name)
 
+    r_bounds = r.size * [(0.01, 1)]
+
     for i_outer in range(max_outer_iter):
         print(
-            f'dual echp AGR with decay est. outer iteration {(i_outer+1):03} / {max_outer_iter:03}'
+            f'dual echo AGR with decay est. outer iteration {(i_outer+1):03} / {max_outer_iter:03}'
         )
-        # gradient descent to update r
-        for j in range(max_iter):
-            data_grad_r = data_fidelity_gradient_r(x, A_1, A_2, d_1, d_2)
+        rf = cp.asnumpy(A_1.r.copy()).flatten()
+        res = fmin_l_bfgs_b(r_cost_wrapper,
+                            rf,
+                            fprime=r_gradient_wrapper,
+                            args=(x, A_1, A_2, d_1, d_2, G, beta_r),
+                            maxiter=10,
+                            bounds=r_bounds,
+                            disp=1)
 
-            prior_grad_r = beta_r * G.H(G(A_1.r))
-            r_new = cp.clip(A_1.r - stepsize_r * (data_grad_r + prior_grad_r),
-                            1e-2, 1)
+        r_new = cp.asarray(res[0].reshape(A_1.ishape))
 
-            A_1.r = r_new
-            A_2.r = r_new
+        A_1.r = r_new
+        A_2.r = r_new
 
         #-----------------------------------------------------------------------
         app = sigpy.app.LinearLeastSquares(sigpy.linop.Vstack([A_1, A_2],

@@ -42,7 +42,7 @@ parser.add_argument('--beta_anatomical',
 parser.add_argument(
     '--beta_r',
     type=float,
-    default=1e-3,
+    default=3e-1,
     help='prior weight for anatomical L2 prior for the ratio image')
 
 parser.add_argument('--max_iter_agr',
