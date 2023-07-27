@@ -1,24 +1,55 @@
-import argparse
-import numpy as np
-import cupy as cp
-import matplotlib.pyplot as plt
-import scipy.ndimage as ndimage
-import h5py
-import nibabel as nib
-from pathlib import Path
+""" script for dual echo sodium AGR with decay estimation and modeling
 
-from preprocessing import TPIParameters
-from reconstruction import channelwise_ifft_recon, channelwise_lsq_recon, regularized_sense_recon, dual_echo_sense_with_decay_estimation
-from registration import align_images
-from operators import projected_gradient_operator
-from coils_sens import calculate_csm_inati_iter, calculate_sense_scale
+The input data of a subject should be organized as follows:
+
+subject_directory
+|-- anatomical_prior_image.nii
+|
+|-- kspace_trajectory.h5
+|
+|-- raw_echo1
+|   |-- converted_data.h5
+|
+`-- raw_echo2
+    |-- converted_data.h5
+
+See e.g. /data/sodium_mr/sodium_data/demo_case
+
+Note
+----
+
+1. To convert Siemens (ome) raw data to HDF5 use the function:
+     convert_ome_data()
+   from the preprocessing module.
+
+2. To convert GE raw data to HDF5 use read_p() from the matlab
+   toolbox.
+
+3. To create the kspace trajectory points in 1/cm in HDF5, 
+   from Siemens grdb files use:
+     read_tpi_grdb_kspace_trajectory()
+   from the preprocessing module.
+
+4. To create the kspace trajectory points in 1/cm in HDF5, 
+   from GE wav files use:
+     read_tpi_akwav_kspace_trajectory()
+   from the preprocessing module.
+
+5. All reconstruction are saved as nifti (magnitude images) and
+   numpy npy/npz files (full complex images).
+"""
+
+import argparse
 
 #----------------------------------------------------------------
 #--- setup the command line parser ------------------------------
 #----------------------------------------------------------------
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--sdir', type=str, required=True)
+parser.add_argument('--sdir',
+                    type=str,
+                    required=True,
+                    help='subject directory containg the raw data')
 parser.add_argument('--matrix_size',
                     type=int,
                     default=128,
@@ -54,6 +85,24 @@ parser.add_argument(
     default=20,
     help='number of outer iterations for AGR with decay modeling')
 args = parser.parse_args()
+
+#---------------------------------------------------------------
+#--- import all modules we need --------------------------------
+#---------------------------------------------------------------
+
+import numpy as np
+import cupy as cp
+import matplotlib.pyplot as plt
+import scipy.ndimage as ndimage
+import h5py
+import nibabel as nib
+from pathlib import Path
+
+from preprocessing import TPIParameters
+from reconstruction import channelwise_ifft_recon, channelwise_lsq_recon, regularized_sense_recon, dual_echo_sense_with_decay_estimation
+from registration import align_images
+from operators import projected_gradient_operator
+from coils_sens import calculate_csm_inati_iter, calculate_sense_scale
 
 #---------------------------------------------------------------
 #---------------------------------------------------------------
@@ -102,7 +151,7 @@ output_aff = np.diag(
 
 # load the multi-channel non-uniform k-space data
 # the array will have shape (num_channels, num_points, num_readouts)
-with h5py.File(subject_path / 'raw_TE05' / 'converted_data.h5', 'r') as f1:
+with h5py.File(subject_path / 'raw_echo1' / 'converted_data.h5', 'r') as f1:
     data_echo_1 = f1['data'][:]
 
     # read the GE's rotation tag
@@ -111,7 +160,7 @@ with h5py.File(subject_path / 'raw_TE05' / 'converted_data.h5', 'r') as f1:
     else:
         rotation = None
 
-with h5py.File(subject_path / 'raw_TE5' / 'converted_data.h5', 'r') as f2:
+with h5py.File(subject_path / 'raw_echo2' / 'converted_data.h5', 'r') as f2:
     data_echo_2 = f2['data'][:]
 
 if not np.iscomplexobj(data_echo_1):
