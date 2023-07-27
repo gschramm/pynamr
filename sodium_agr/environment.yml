@@ -11,6 +11,5 @@ dependencies:
   - matplotlib>=3.0
   - nibabel>=5.0
   - pydantic==2.0
-  - pymirc>=0.28
   - scipy>=1.0
   - SimpleITK>=2.0

@@ -7,8 +7,6 @@ import h5py
 import nibabel as nib
 from pathlib import Path
 
-import pymirc.viewer as pv
-
 from preprocessing import TPIParameters
 from reconstruction import channelwise_ifft_recon, channelwise_lsq_recon, regularized_sense_recon, dual_echo_sense_with_decay_estimation
 from registration import align_images
