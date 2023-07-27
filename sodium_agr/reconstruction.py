@@ -221,6 +221,57 @@ def dual_echo_sense_with_decay_estimation(
         beta_r: float = 1e-3,
         save_intermed: bool = True,
         **kwargs) -> tuple[np.ndarray, np.ndarray]:
+    """Dual echo AGR with T2* decay estimation and modeling
+
+    Parameters
+    ----------
+    data_1, data_2 : np.ndarray
+        non-uniform (TPI) complex kspace data
+        of shape (num_coils, num_time_points, num_readouts)
+    sampling_time_us : float
+        acquisition sampling time in microseconds
+    TE1_ms, TE2_ms : float
+        1st / 2nd echo time in milli seconds
+    coil_sens_1, coil_sens_2 : np.ndarray
+        coil sensitivity maps of shape (num_coils, nx, ny, nz)
+        for 1st / 2nd acquisition
+        note that these should include a phase factor that accounts
+        for the phase differences in the 1st / 2nd echo images
+    k : np.ndarray
+        array of kspace kooridnates of shape (num_time_points, num_readouts, 3)
+    x0 : np.ndarray
+        initial value for the image to be reconstructed
+    u0 : np.ndarray
+        initial value for the dual variable of the PDHG
+    r0 : np.ndarray
+        initial value for the ratio image between 2nd and 1st echo
+    G : sigpy.linop.Linop
+        "gradient" operator for the regularization
+        can be projector gradient to get AGRs
+    field_of_view_cm : _type_, optional
+        image field of view in cm, by default 22.
+    regularization : str, optional
+        norm used for image regularization ('L1' or 'L2'), by default 'L1'
+    beta : float, optional
+        weight for image prior, by default 3e-3
+    sigma : float, optional
+        sigma stepsize of PDHG, by default 1e-1
+    max_iter : int, optional
+        number of PDHG inner iterations to update the image, by default 100
+    max_outer_iter : int, optional
+        number of outer iterations, by default 20
+    num_time_bins : int, optional
+        number of time bins to model decay, by default 64
+    beta_r : float, optional
+        weight of L2 gradient prior for the ration image, by default 1e-3
+    save_intermed : bool, optional
+        save intermediate results in a temporary directory, by default True
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        the reconstructed image and the ratio image
+    """
 
     d_1 = cp.asarray(data_1)
     d_2 = cp.asarray(data_2)
@@ -272,6 +323,8 @@ def dual_echo_sense_with_decay_estimation(
         print(
             f'dual echo AGR with decay est. outer iteration {(i_outer+1):03} / {max_outer_iter:03}'
         )
+
+        # use L-BFGS_B to update the ratio image
         rf = cp.asnumpy(A_1.r.copy()).flatten()
         res = fmin_l_bfgs_b(r_cost_wrapper,
                             rf,
