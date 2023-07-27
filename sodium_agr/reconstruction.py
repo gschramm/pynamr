@@ -21,6 +21,27 @@ def channelwise_ifft_recon(data: np.ndarray,
                            grid_shape=(64, 64, 64),
                            field_of_view_cm=22.,
                            **kwargs) -> np.ndarray:
+    """Channelwise gridding + IFFT recon of multi-coil data
+
+    Parameters
+    ----------
+    data : np.ndarray
+        array of (non-uniform) kspace data of shape (num_coils, num_time_points, num_readouts)
+    k : np.ndarray
+        array containing the kspace coordinates of the readouts in 1/cm
+        shape (num_time_points, num_readouts, 3)
+    grid_shape : tuple, optional
+        shape of the image grid , by default (64, 64, 64)
+    field_of_view_cm : _type_, optional
+        the field of view in cm, by default 22.
+    **kwargs:
+        additional keyword arguments passed to sigpy.gridding
+
+    Returns
+    -------
+    np.ndarray
+        array of shape (num_coil, grid_shape)
+    """
 
     # transfer k-space trajectory to GPU and convert to unitless
     k_d = cp.asarray(k.reshape(-1, 3)) * field_of_view_cm
@@ -51,8 +72,6 @@ def channelwise_ifft_recon(data: np.ndarray,
 
 
 #----------------------------------------------------------------
-#----------------------------------------------------------------
-#----------------------------------------------------------------
 
 
 def channelwise_lsq_recon(data: np.ndarray,
@@ -61,6 +80,29 @@ def channelwise_lsq_recon(data: np.ndarray,
                           field_of_view_cm=22.,
                           max_iter=10,
                           **kwargs) -> np.ndarray:
+    """Channelwise iterative least squares recon of multi-coil data
+
+    Parameters
+    ----------
+    data : np.ndarray
+        array of (non-uniform) kspace data of shape (num_coils, num_time_points, num_readouts)
+    k : np.ndarray
+        array containing the kspace coordinates of the readouts in 1/cm
+        shape (num_time_points, num_readouts, 3)
+    grid_shape : tuple, optional
+        shape of the image grid , by default (64, 64, 64)
+    field_of_view_cm : _type_, optional
+        the field of view in cm, by default 22.
+    max_iter : int
+        number of iterations, by default 10
+    **kwargs:
+        additional keyword arguments passed to sigpy.app.LinearLeastSquares
+
+    Returns
+    -------
+    np.ndarray
+        array of shape (num_coil, grid_shape)
+    """
 
     # transfer k-space trajectory to GPU and convert to unitless
     k_d = cp.asarray(k.reshape(-1, 3)) * field_of_view_cm
@@ -78,14 +120,12 @@ def channelwise_lsq_recon(data: np.ndarray,
 
 
 #---------------------------------------------------------------
-#---------------------------------------------------------------
-#---------------------------------------------------------------
 
 
 def regularized_sense_recon(data: np.ndarray,
                             coil_sens: np.ndarray,
                             k: np.ndarray,
-                            field_of_view_cm=22.,
+                            field_of_view_cm: float = 22.,
                             regularization: str = 'L2',
                             beta: float = 1e-1,
                             sigma: float = 1e-1,
@@ -94,7 +134,42 @@ def regularized_sense_recon(data: np.ndarray,
                             G: sigpy.linop.Linop | None = None,
                             u: np.ndarray | None = None,
                             **kwargs) -> tuple[np.ndarray, np.ndarray | None]:
+    """regularized iterative Sense recon of multicoil data
 
+    Parameters
+    ----------
+    data : np.ndarray
+        array of (non-uniform) kspace data of shape (num_coils, num_time_points, num_readouts)
+    coil_sens : np.ndarray
+        array of coil sensitivity maps of shape (num_coils, nx, ny, nz)
+    k : np.ndarray
+        array containing the kspace coordinates of the readouts in 1/cm
+        shape (num_time_points, num_readouts, 3)
+    field_of_view_cm : float, optional
+        the field of view in cm, by default 22.
+    regularization : str, optional
+        norm used for regularization ('L1' or 'L2'), by default 'L2'
+    beta : float, optional
+        regularization weight, by default 1e-1
+    sigma : float, optional
+        sigma step size for PDHG, by default 1e-1
+    operator_norm_squared : float | None, optional
+        squared norm of the operator used to calcucate 
+        tau step size in PDHG, by default 1.
+    max_iter : int, optional
+        maximum number of iterations, by default 100
+    G : sigpy.linop.Linop | None, optional
+        operator used for regularization, by default None
+    u : np.ndarray | None, optional
+        initial value of the dual variable in PDHG, by default None
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray | None]
+        single array containing the reconstructed image (if G is None)
+        or tuple of the reconstructed image and the dual variable u
+        (if G is not None)
+    """
     # send kspace trajectory and data to GPU
     k_d = cp.asarray(k.reshape(-1, 3)) * field_of_view_cm
     d_d = cp.asarray(data.reshape(data.shape[0], -1))
@@ -147,8 +222,24 @@ def regularized_sense_recon(data: np.ndarray,
 
 
 def data_fidelity_gradient_r(x: ndarray, A_1: ApodizedNUFFT,
-                             A_2: ApodizedNUFFT, d_1: ndarray, d_2: ndarray):
+                             A_2: ApodizedNUFFT, d_1: ndarray,
+                             d_2: ndarray) -> ndarray:
+    """gradient with respect to the ratio image of the dual data fidelity
 
+    Parameters
+    ----------
+    x : ndarray
+        containing the sodium image
+    A_1, A_2 : ApodizedNUFFT
+        apodized NUFFT operator for 1st / 2nd echo
+    d_1, d_2 : cp.ndarray
+        non-uniform data of 1st / 2nd echo
+
+    Returns
+    -------
+    ndarray
+        containg the gradient with respect to r
+    """
     xp = sigpy.backend.get_array_module(x)
     g_r = xp.zeros(A_1.ishape, dtype=A_1.r.dtype)
 
@@ -167,9 +258,32 @@ def data_fidelity_gradient_r(x: ndarray, A_1: ApodizedNUFFT,
 
 
 #---------------------------------------------------------------
+def r_cost_wrapper(r_flat: np.ndarray, x: cp.ndarray, A_1: ApodizedNUFFT,
+                   A_2: ApodizedNUFFT, d_1: cp.ndarray, d_2: cp.ndarray,
+                   G: sigpy.linop.Linop, beta: float) -> float:
+    """wrapper around the data fidelity cost function that can be used
+       by scipy.optimize.fmin_l_bfgs_b
 
+    Parameters
+    ----------
+    r_flat : np.ndarray
+        flattened array containing the ratio image
+    x : cp.ndarray
+        array containing the sodium image
+    A_1, A_2 : ApodizedNUFFT
+        apodized NUFFT operator for 1st / 2nd echo
+    d_1, d_2 : cp.ndarray
+        non-uniform data of 1st / 2nd echo
+    G : sigpy.linop.Linop
+        linear operator used for regularization
+    beta : float
+        regularization weight
 
-def r_cost_wrapper(r_flat, x, A_1, A_2, d_1, d_2, G, beta):
+    Returns
+    -------
+    float
+        the data fidelity
+    """
     r_init = A_1.r.copy()
     r = cp.asarray(r_flat.reshape(A_1.ishape))
     A_1.r = r
@@ -185,7 +299,33 @@ def r_cost_wrapper(r_flat, x, A_1, A_2, d_1, d_2, G, beta):
     return (data_fid + prior)
 
 
-def r_gradient_wrapper(r_flat, x, A_1, A_2, d_1, d_2, G, beta):
+def r_gradient_wrapper(r_flat: np.ndarray, x: cp.ndarray, A_1: ApodizedNUFFT,
+                       A_2: ApodizedNUFFT, d_1: cp.ndarray, d_2: cp.ndarray,
+                       G: sigpy.linop.Linop, beta: float) -> np.ndarray:
+    """wrapper around the r gradient data fidelity cost function that can be used
+       by scipy.optimize.fmin_l_bfgs_b
+
+    Parameters
+    ----------
+    r_flat : np.ndarray
+        flattened array containing the ratio image
+    x : cp.ndarray
+        array containing the sodium image
+    A_1, A_2 : ApodizedNUFFT
+        apodized NUFFT operator for 1st / 2nd echo
+    d_1, d_2 : cp.ndarray
+        non-uniform data of 1st / 2nd echo
+    G : sigpy.linop.Linop
+        linear operator used for regularization
+    beta : float
+        regularization weight
+
+    Returns
+    -------
+    np.ndarray
+        the (flattned) gradient of the data fidelity with respect to r
+    """
+
     r_init = A_1.r.copy()
     r = cp.asarray(r_flat.reshape(A_1.ishape))
     A_1.r = r
