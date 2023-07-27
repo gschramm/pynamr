@@ -1,0 +1,16 @@
+name: sodium_mr_agr
+
+channels:
+  - conda-forge
+
+dependencies:
+  - numpy>=1.20.0
+  - cupy>=11.0.
+  - sigpy>=0.1.25
+  - h5py>=3.0.0
+  - matplotlib>=3.0.0
+  - nibabel>=5.0.0
+  - pydantic>=2.0.0
+  - pymirc>=0.28
+  - scipy>=1.0.0
+  - SimpleITK>=2.0.0
