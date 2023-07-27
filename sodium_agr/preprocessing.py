@@ -306,10 +306,26 @@ def read_tpi_grdb_kspace_trajectory(
 #-------------------------------------------------------------
 
 
-def convert_ome_data(raw_data_dir,
+def convert_ome_data(raw_data_dir: str,
                      hdr_pattern: str = '*.?.hdr',
                      output_file: str | None = None) -> np.ndarray:
+    """convert Siemens ome kspace data to hdf5
 
+    Parameters
+    ----------
+    raw_data_dir : str
+        directory containing the ome/hdr files
+    hdr_pattern : str, optional
+        pattern for hdf files to consider, by default '*.?.hdr'
+    output_file : str | None, optional
+        name of the output file, by default None
+        if None, 'converted_data.h5' is used
+
+    Returns
+    -------
+    np.ndarray
+        _description_
+    """
     hdr_files = list(sorted(Path(raw_data_dir).glob(hdr_pattern)))
 
     for i, hdr_file in enumerate(hdr_files):
