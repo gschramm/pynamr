@@ -9,7 +9,7 @@ class TPIParameters(pydantic.BaseModel):
     sampling_time_us: float
     num_points: int
     num_cones: int
-    num_readouts_per_cone: list[int]
+    num_readouts_per_cone: list
     max_grad_G_cm: float
     gamma_over_2pi_MHz_T: float
 
