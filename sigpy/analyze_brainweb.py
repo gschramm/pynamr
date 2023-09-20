@@ -66,6 +66,7 @@ odirs = sorted(
 #-----------------------------------------------------------------------
 # load the ground truth
 gt = np.abs(np.load(odirs[0] / 'na_gt.npy'))
+t1 = np.abs(np.load(odirs[0] / 't1.npy'))
 sim_shape = gt.shape
 
 # load the brainweb label array
@@ -608,3 +609,9 @@ ax4.imshow(gt[..., sl].T, origin='lower', cmap='Greys_r', vmin=0, vmax=vmax)
 ax4.set_axis_off()
 fig4.tight_layout()
 fig4.show()
+
+fig5, ax5 = plt.subplots(1, 1, figsize=(2, 2))
+ax5.imshow(t1[..., sl].T, origin='lower', cmap='Greys_r')
+ax5.set_axis_off()
+fig5.tight_layout()
+fig5.show()
