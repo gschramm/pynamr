@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sigpy
 import math
 import numpy as np
