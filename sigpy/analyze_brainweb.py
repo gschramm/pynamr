@@ -46,7 +46,7 @@ noise_metric = 2
 
 betas_non_anatomical = [1e-2, 3e-2, 1e-1]
 betas_anatomical = [3e-4, 1e-3, 3e-3]
-sm_fwhms_mm = [0.1, 4., 6., 8., 10.]
+sm_sigs = [0.4, 0.6, 0.75]
 #-----------------------------------------------------------------------
 
 iter_shape = (128, 128, 128)
@@ -130,6 +130,10 @@ roi_inds['frontal'] = np.where(np.isin((aparc * gm_mask), [1028, 2028]))
 roi_inds['temporal'] = np.where(
     np.isin((aparc * gm_mask), [1009, 1015, 1030, 2009, 2015, 2030]))
 
+iffts_e1 = np.zeros((
+    len(odirs),
+    len(sm_sigs),
+) + sim_shape)
 recons_e1_no_decay = np.zeros((
     len(odirs),
     len(betas_non_anatomical),
@@ -170,13 +174,14 @@ recon_e1_no_decay_roi_means = {}
 agr_e1_no_decay_roi_means = {}
 agr_both_echos_w_decay0_roi_means = {}
 agr_both_echos_w_decay1_roi_means = {}
+iffts_e1_roi_means = {}
 
 recon_e1_no_decay_roi_stds = {}
 agr_e1_no_decay_roi_stds = {}
 agr_both_echos_w_decay0_roi_stds = {}
 agr_both_echos_w_decay1_roi_stds = {}
+iffts_e1_roi_stds = {}
 
-ifft1_roi_means = {}
 sl = int(0.4375 * gt.shape[0])
 
 # calculate the true means
@@ -187,6 +192,30 @@ for key, inds in roi_inds.items():
 with open(odirs[0] / 'scaling_factors.json', 'r') as f:
     image_scale = json.load(f)['image_scale']
 
+# factor needed to compensate global intensity shift from regridding
+ifft_regridding_fac = 0.86
+
+for i, odir in enumerate(odirs):
+    print('loading IFFT1', odir)
+    tmp = ifft_regridding_fac*np.load(odir / 'ifft1.npy')
+
+    for ib, sig in enumerate(sm_sigs):
+        iffts_e1[i, ib, ...] = zoom(np.abs(gaussian_filter(tmp, sig) / image_scale),
+                                              sim_shape[0] / tmp.shape[0],
+                                              order=1,
+                                              prefilter=False)
+
+for key, inds in roi_inds.items():
+    iffts_e1_roi_means[key] = np.array([[x[inds].mean() for x in y]
+                                                 for y in iffts_e1])
+iffts_e1_mean = iffts_e1.mean(axis=0)
+iffts_e1_std = iffts_e1.std(axis=0)
+
+for key, inds in roi_inds.items():
+    iffts_e1_roi_stds[key] = np.array(
+        [x[inds].mean() for x in iffts_e1_std])
+
+   
 for i, odir in enumerate(odirs):
     print('loading iterative no decay model', odir)
 
@@ -198,6 +227,7 @@ for i, odir in enumerate(odirs):
                                               sim_shape[0] / iter_shape[0],
                                               order=1,
                                               prefilter=False)
+
 
 for key, inds in roi_inds.items():
     recon_e1_no_decay_roi_means[key] = np.array([[x[inds].mean() for x in y]
@@ -282,6 +312,33 @@ agrs_both_echos_w_decay1_mean = agrs_both_echos_w_decay1.mean(axis=0)
 agrs_both_echos_w_decay0_std = agrs_both_echos_w_decay0.std(axis=0)
 agrs_both_echos_w_decay1_std = agrs_both_echos_w_decay1.std(axis=0)
 
+#--------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------
+#--- print the biases in different regions --------------------------------------
+#--------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------
+print(f'\n bias AGR')
+for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
+    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+    print(roi, y)
+
+
+print(f'\n bias AGRdm - beta_r {beta_rs[0]:.2e}')
+for i, (roi, vals) in enumerate(agr_both_echos_w_decay0_roi_means.items()):
+    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+    print(roi, y)
+
+print(f'\n bias AGRdm - beta_r {beta_rs[1]:.2e}')
+for i, (roi, vals) in enumerate(agr_both_echos_w_decay1_roi_means.items()):
+    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+    print(roi, y)
+
+#--------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------
+#--- RMSE calculation -----------------------------------------------------------
+#--------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------
+
 # calculate the RMSE in all ROIs
 df_rmse = pd.DataFrame({})
 
@@ -295,6 +352,19 @@ for roi, inds in roi_inds.items():
                 roi=roi,
                 RMSE=np.sqrt(
                     np.mean((recons_e1_no_decay[ir, ib, ...][inds] -
+                             gt[inds])**2))),
+                               index=[0])
+            df_rmse = pd.concat((df_rmse, tmp))
+
+    for ir in range(iffts_e1.shape[0]):
+        for ib in range(iffts_e1.shape[1]):
+            tmp = pd.DataFrame(dict(
+                method='REGR_IFFT',
+                b=ib + 1,
+                r=ir + 1,
+                roi=roi,
+                RMSE=np.sqrt(
+                    np.mean((iffts_e1[ir, ib, ...][inds] -
                              gt[inds])**2))),
                                index=[0])
             df_rmse = pd.concat((df_rmse, tmp))
@@ -339,6 +409,11 @@ for roi, inds in roi_inds.items():
             df_rmse = pd.concat((df_rmse, tmp))
 
 #--------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------
+#--- Plots ----------------------------------------------------------------------
+#--------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------
 # bias noise plots
 
 num_rows = 2
@@ -375,6 +450,7 @@ for ir, (key, inds) in enumerate(roi_inds.items()):
 
 axs = []
 
+
 for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
     if noise_metric == 1:
         x = vals.std(0)
@@ -396,6 +472,22 @@ for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
                         horizontalalignment='center',
                         verticalalignment='bottom',
                         fontsize='x-small')
+
+for i, (roi, vals) in enumerate(iffts_e1_roi_means.items()):
+    if noise_metric == 1:
+        x = vals.std(0)
+    else:
+        x = np.array([z[roi_inds[roi]].mean() for z in iffts_e1_std])
+
+    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+    axs[i].plot(x, y, 'o-', label='REGR+IFFT')
+
+    for j in range(len(x)):
+        axs[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
+                        horizontalalignment='center',
+                        verticalalignment='bottom',
+                        fontsize='x-small')
+
 
 for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
     if noise_metric == 1:
@@ -455,9 +547,12 @@ axs[-1].legend(loc='lower right', fontsize='small')
 fig.tight_layout()
 fig.show()
 
-#--------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
 # RMSE plots
 #------------------------------------------------------------------------------------
+
+df_rmse.reset_index(inplace=True)
 
 strip_kwargs = dict(size=2., dodge=True, palette='tab10')
 box_kwargs = dict(showfliers=False,
@@ -492,6 +587,7 @@ inoise = 0
 fig3a, ax3a = plt.subplots(3, 3, figsize=(6, 6))
 fig3b, ax3b = plt.subplots(3, 3, figsize=(6, 6))
 fig3c, ax3c = plt.subplots(3, 3, figsize=(6, 6))
+fig3d, ax3d = plt.subplots(3, 3, figsize=(6, 6))
 
 for i in range(3):
     i0 = ax3a[i, 0].imshow(recons_e1_no_decay[inoise, i, ..., sl].T,
@@ -528,6 +624,7 @@ for i in range(3):
                            cmap='Greys_r',
                            vmin=0,
                            vmax=vmax_std)
+
     i6 = ax3c[i, 0].imshow(agrs_both_echos_w_decay1[inoise, i, ..., sl].T,
                            origin='lower',
                            cmap='Greys_r',
@@ -546,6 +643,25 @@ for i in range(3):
                            vmin=0,
                            vmax=vmax_std)
 
+    i9 = ax3d[i, 0].imshow(iffts_e1[inoise, i, ..., sl].T,
+                           origin='lower',
+                           cmap='Greys_r',
+                           vmin=0,
+                           vmax=vmax)
+    ax3d[i, 0].set_ylabel(f'$\\sigma$ = {sm_sigs[i]:.1E}')
+    i10 = ax3d[i, 1].imshow(iffts_e1_mean[i, ..., sl].T -
+                           gt[:, :, sl].T,
+                           origin='lower',
+                           cmap='seismic',
+                           vmin=-bmax,
+                           vmax=bmax)
+    i11 = ax3d[i, 2].imshow(iffts_e1_std[i, ..., sl].T,
+                           origin='lower',
+                           cmap='Greys_r',
+                           vmin=0,
+                           vmax=vmax_std)
+
+
 ax3a[0, 0].set_title('first noise realization')
 ax3a[0, 1].set_title('bias image')
 ax3a[0, 2].set_title('std.dev. image')
@@ -555,6 +671,9 @@ ax3b[0, 2].set_title('std.dev. image')
 ax3c[0, 0].set_title('first noise realization')
 ax3c[0, 1].set_title('bias image')
 ax3c[0, 2].set_title('std.dev. image')
+ax3d[0, 0].set_title('first noise realization')
+ax3d[0, 1].set_title('bias image')
+ax3d[0, 2].set_title('std.dev. image')
 
 for axx in ax3a.ravel():
     axx.xaxis.set_visible(False)
@@ -570,6 +689,10 @@ for axx in ax3c.ravel():
     axx.xaxis.set_visible(False)
     plt.setp(axx.spines.values(), visible=False)
     axx.tick_params(left=False, labelleft=False)
+
+for axx in ax3d.ravel():
+    axx.xaxis.set_visible(False)
+    plt.setp(axx.spines.values(), visible=False)
 
 cax0 = fig3a.add_axes([0.05, 0.04, 0.25, 0.01])
 fig3a.colorbar(i0, cax=cax0, orientation='horizontal')
@@ -592,26 +715,38 @@ fig3c.colorbar(i7, cax=cax7, orientation='horizontal')
 cax8 = fig3c.add_axes([0.05 + 0.65, 0.04, 0.25, 0.01])
 fig3c.colorbar(i8, cax=cax8, orientation='horizontal')
 
+cax9 = fig3d.add_axes([0.05, 0.04, 0.25, 0.01])
+fig3d.colorbar(i9, cax=cax9, orientation='horizontal')
+cax10 = fig3d.add_axes([0.05 + 0.325, 0.04, 0.25, 0.01])
+fig3c.colorbar(i10, cax=cax10, orientation='horizontal')
+cax11 = fig3d.add_axes([0.05 + 0.65, 0.04, 0.25, 0.01])
+fig3c.colorbar(i11, cax=cax11, orientation='horizontal')
+
+
 fig3a.tight_layout(rect=(0, 0.03, 1, 1))
 fig3b.tight_layout(rect=(0, 0.03, 1, 1))
 fig3c.tight_layout(rect=(0, 0.03, 1, 1))
+fig3d.tight_layout(rect=(0, 0.03, 1, 1))
 
 fig3a.savefig('conv_sim.png')
 fig3b.savefig('agr_wo_decay_sim.png')
 fig3c.savefig('agr_w_decay_sim.png')
+fig3d.savefig('ifft1_sim.png')
 
 fig3a.show()
 fig3b.show()
 fig3c.show()
+fig3d.show()
 
-fig4, ax4 = plt.subplots(1, 1, figsize=(2, 2))
-ax4.imshow(gt[..., sl].T, origin='lower', cmap='Greys_r', vmin=0, vmax=vmax)
-ax4.set_axis_off()
-fig4.tight_layout()
-fig4.show()
-
-fig5, ax5 = plt.subplots(1, 1, figsize=(2, 2))
-ax5.imshow(t1[..., sl].T, origin='lower', cmap='Greys_r')
-ax5.set_axis_off()
-fig5.tight_layout()
-fig5.show()
+#fig4, ax4 = plt.subplots(1, 1, figsize=(2, 2))
+#ax4.imshow(gt[..., sl].T, origin='lower', cmap='Greys_r', vmin=0, vmax=vmax)
+#ax4.set_axis_off()
+#fig4.tight_layout()
+#fig4.show()
+#
+#fig5, ax5 = plt.subplots(1, 1, figsize=(2, 2))
+#ax5.imshow(t1[..., sl].T, origin='lower', cmap='Greys_r')
+#ax5.set_axis_off()
+#fig5.tight_layout()
+#fig5.show()
+#
