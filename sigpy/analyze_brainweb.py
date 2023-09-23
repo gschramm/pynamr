@@ -1,16 +1,14 @@
-#TODO: - voxel-wise noise metric
-
 import argparse
 import json
 from pathlib import Path
 import numpy as np
-import pymirc.viewer as pv
 import nibabel as nib
 from scipy.ndimage import binary_erosion, gaussian_filter, zoom, center_of_mass
 from collections import OrderedDict
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+from mpl_toolkits.axes_grid1 import ImageGrid
 
 sns.set_context('paper')
 
@@ -158,12 +156,12 @@ r0s = np.zeros((
     len(betas_anatomical),
 ) + sim_shape)
 
-r1s = np.zeros((
+r0 = np.zeros((
     len(odirs),
     len(betas_anatomical),
 ) + sim_shape)
 
-r2s = np.zeros((
+r1 = np.zeros((
     len(odirs),
     len(betas_anatomical),
 ) + sim_shape)
@@ -175,6 +173,8 @@ agr_e1_no_decay_roi_means = {}
 agr_both_echos_w_decay0_roi_means = {}
 agr_both_echos_w_decay1_roi_means = {}
 iffts_e1_roi_means = {}
+T2star0_roi_means = {}
+T2star1_roi_means = {}
 
 recon_e1_no_decay_roi_stds = {}
 agr_e1_no_decay_roi_stds = {}
@@ -197,25 +197,24 @@ ifft_regridding_fac = 0.86
 
 for i, odir in enumerate(odirs):
     print('loading IFFT1', odir)
-    tmp = ifft_regridding_fac*np.load(odir / 'ifft1.npy')
+    tmp = ifft_regridding_fac * np.load(odir / 'ifft1.npy')
 
     for ib, sig in enumerate(sm_sigs):
-        iffts_e1[i, ib, ...] = zoom(np.abs(gaussian_filter(tmp, sig) / image_scale),
-                                              sim_shape[0] / tmp.shape[0],
-                                              order=1,
-                                              prefilter=False)
+        iffts_e1[i, ib,
+                 ...] = zoom(np.abs(gaussian_filter(tmp, sig) / image_scale),
+                             sim_shape[0] / tmp.shape[0],
+                             order=1,
+                             prefilter=False)
 
 for key, inds in roi_inds.items():
     iffts_e1_roi_means[key] = np.array([[x[inds].mean() for x in y]
-                                                 for y in iffts_e1])
+                                        for y in iffts_e1])
 iffts_e1_mean = iffts_e1.mean(axis=0)
 iffts_e1_std = iffts_e1.std(axis=0)
 
 for key, inds in roi_inds.items():
-    iffts_e1_roi_stds[key] = np.array(
-        [x[inds].mean() for x in iffts_e1_std])
+    iffts_e1_roi_stds[key] = np.array([x[inds].mean() for x in iffts_e1_std])
 
-   
 for i, odir in enumerate(odirs):
     print('loading iterative no decay model', odir)
 
@@ -227,7 +226,6 @@ for i, odir in enumerate(odirs):
                                               sim_shape[0] / iter_shape[0],
                                               order=1,
                                               prefilter=False)
-
 
 for key, inds in roi_inds.items():
     recon_e1_no_decay_roi_means[key] = np.array([[x[inds].mean() for x in y]
@@ -264,15 +262,12 @@ for i, odir in enumerate(odirs):
     for ib, beta_anatomical in enumerate(betas_anatomical):
         ofile_both_echos_agr0 = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[0]:.1E}_{max_num_iter}_{num_iter_r}.npz'
         ofile_both_echos_agr1 = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[1]:.1E}_{max_num_iter}_{num_iter_r}.npz'
-        ofile_both_echos_agr2 = odir / f'agr_both_echo_w_decay_model_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[2]:.1E}_{max_num_iter}_{num_iter_r}.npz'
 
         outfile_r0 = odir / f'est_ratio_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[0]:.1E}_{max_num_iter}_{num_iter_r}.npy'
         outfile_r1 = odir / f'est_ratio_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[1]:.1E}_{max_num_iter}_{num_iter_r}.npy'
-        outfile_r2 = odir / f'est_ratio_{regularization_norm_anatomical}_{beta_anatomical:.1E}_{beta_rs[2]:.1E}_{max_num_iter}_{num_iter_r}.npy'
 
         d0 = np.load(ofile_both_echos_agr0)
         d1 = np.load(ofile_both_echos_agr1)
-        d2 = np.load(ofile_both_echos_agr2)
 
         agrs_both_echos_w_decay0[i, ib,
                                  ...] = zoom(np.abs(d0['x'] / image_scale),
@@ -285,20 +280,16 @@ for i, odir in enumerate(odirs):
                                              order=1,
                                              prefilter=False)
 
-        r0s[i, ib, ...] = zoom(np.load(outfile_r0),
-                               sim_shape[0] / iter_shape[0],
-                               order=1,
-                               prefilter=False)
+        # load ratio images
+        r0[i, ib, ...] = zoom(np.load(outfile_r0),
+                              sim_shape[0] / iter_shape[0],
+                              order=1,
+                              prefilter=False)
 
-        r1s[i, ib, ...] = zoom(np.load(outfile_r1),
-                               sim_shape[0] / iter_shape[0],
-                               order=1,
-                               prefilter=False)
-
-        r2s[i, ib, ...] = zoom(np.load(outfile_r2),
-                               sim_shape[0] / iter_shape[0],
-                               order=1,
-                               prefilter=False)
+        r1[i, ib, ...] = zoom(np.load(outfile_r1),
+                              sim_shape[0] / iter_shape[0],
+                              order=1,
+                              prefilter=False)
 
 for key, inds in roi_inds.items():
     agr_both_echos_w_decay0_roi_means[key] = np.array(
@@ -312,16 +303,38 @@ agrs_both_echos_w_decay1_mean = agrs_both_echos_w_decay1.mean(axis=0)
 agrs_both_echos_w_decay0_std = agrs_both_echos_w_decay0.std(axis=0)
 agrs_both_echos_w_decay1_std = agrs_both_echos_w_decay1.std(axis=0)
 
+# convert rs to T2star time
+
+# average ratio images
+r0_mean = r0.mean(axis=0)
+r1_mean = r1.mean(axis=0)
+
+# scale from ratios to T2star times
+T2star0_mean = np.zeros_like(r0_mean)
+T2star1_mean = np.zeros_like(r1_mean)
+
+T2star0_mean[r0_mean < 1] = -4.545 / np.log(r0_mean[r0_mean < 1])
+T2star1_mean[r1_mean < 1] = -4.545 / np.log(r1_mean[r1_mean < 1])
+
+mask = (gt > 0).astype(float)
+for i in range(T2star0_mean.shape[0]):
+    T2star0_mean[i, ...] *= mask
+    T2star1_mean[i, ...] *= mask
+
+for key, inds in roi_inds.items():
+    T2star0_roi_means[key] = np.array([x[inds].mean() for x in T2star0_mean])
+    T2star1_roi_means[key] = np.array([x[inds].mean() for x in T2star1_mean])
+
 #--------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------
 #--- print the biases in different regions --------------------------------------
 #--------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------
+
 print(f'\n bias AGR')
 for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
     print(roi, y)
-
 
 print(f'\n bias AGRdm - beta_r {beta_rs[0]:.2e}')
 for i, (roi, vals) in enumerate(agr_both_echos_w_decay0_roi_means.items()):
@@ -332,6 +345,18 @@ print(f'\n bias AGRdm - beta_r {beta_rs[1]:.2e}')
 for i, (roi, vals) in enumerate(agr_both_echos_w_decay1_roi_means.items()):
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
     print(roi, y)
+
+#--------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------
+#--- print mean T2star times  ---------------------------------------------------
+#--------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------
+
+print(f'\n T2star0 roi means')
+print(T2star0_roi_means)
+
+print(f'\n T2star1 roi means')
+print(T2star1_roi_means)
 
 #--------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------
@@ -358,14 +383,13 @@ for roi, inds in roi_inds.items():
 
     for ir in range(iffts_e1.shape[0]):
         for ib in range(iffts_e1.shape[1]):
-            tmp = pd.DataFrame(dict(
-                method='REGR_IFFT',
-                b=ib + 1,
-                r=ir + 1,
-                roi=roi,
-                RMSE=np.sqrt(
-                    np.mean((iffts_e1[ir, ib, ...][inds] -
-                             gt[inds])**2))),
+            tmp = pd.DataFrame(dict(method='REGR_IFFT',
+                                    b=ib + 1,
+                                    r=ir + 1,
+                                    roi=roi,
+                                    RMSE=np.sqrt(
+                                        np.mean((iffts_e1[ir, ib, ...][inds] -
+                                                 gt[inds])**2))),
                                index=[0])
             df_rmse = pd.concat((df_rmse, tmp))
 
@@ -450,7 +474,6 @@ for ir, (key, inds) in enumerate(roi_inds.items()):
 
 axs = []
 
-
 for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
     if noise_metric == 1:
         x = vals.std(0)
@@ -487,7 +510,6 @@ for i, (roi, vals) in enumerate(iffts_e1_roi_means.items()):
                         horizontalalignment='center',
                         verticalalignment='bottom',
                         fontsize='x-small')
-
 
 for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
     if noise_metric == 1:
@@ -546,7 +568,6 @@ axs[-1].legend(loc='lower right', fontsize='small')
 
 fig.tight_layout()
 fig.show()
-
 
 #-------------------------------------------------------------------------------
 # RMSE plots
@@ -649,18 +670,16 @@ for i in range(3):
                            vmin=0,
                            vmax=vmax)
     ax3d[i, 0].set_ylabel(f'$\\sigma$ = {sm_sigs[i]:.1E}')
-    i10 = ax3d[i, 1].imshow(iffts_e1_mean[i, ..., sl].T -
-                           gt[:, :, sl].T,
-                           origin='lower',
-                           cmap='seismic',
-                           vmin=-bmax,
-                           vmax=bmax)
+    i10 = ax3d[i, 1].imshow(iffts_e1_mean[i, ..., sl].T - gt[:, :, sl].T,
+                            origin='lower',
+                            cmap='seismic',
+                            vmin=-bmax,
+                            vmax=bmax)
     i11 = ax3d[i, 2].imshow(iffts_e1_std[i, ..., sl].T,
-                           origin='lower',
-                           cmap='Greys_r',
-                           vmin=0,
-                           vmax=vmax_std)
-
+                            origin='lower',
+                            cmap='Greys_r',
+                            vmin=0,
+                            vmax=vmax_std)
 
 ax3a[0, 0].set_title('first noise realization')
 ax3a[0, 1].set_title('bias image')
@@ -693,6 +712,7 @@ for axx in ax3c.ravel():
 for axx in ax3d.ravel():
     axx.xaxis.set_visible(False)
     plt.setp(axx.spines.values(), visible=False)
+    axx.tick_params(left=False, labelleft=False)
 
 cax0 = fig3a.add_axes([0.05, 0.04, 0.25, 0.01])
 fig3a.colorbar(i0, cax=cax0, orientation='horizontal')
@@ -722,7 +742,6 @@ fig3c.colorbar(i10, cax=cax10, orientation='horizontal')
 cax11 = fig3d.add_axes([0.05 + 0.65, 0.04, 0.25, 0.01])
 fig3c.colorbar(i11, cax=cax11, orientation='horizontal')
 
-
 fig3a.tight_layout(rect=(0, 0.03, 1, 1))
 fig3b.tight_layout(rect=(0, 0.03, 1, 1))
 fig3c.tight_layout(rect=(0, 0.03, 1, 1))
@@ -750,3 +769,35 @@ fig3d.show()
 #fig5.tight_layout()
 #fig5.show()
 #
+
+# figure for est. T2star plots
+kws = dict(cmap='magma', vmin=0, vmax=50, origin='lower')
+fig = plt.figure(figsize=(6, 2))
+
+grid = ImageGrid(
+    fig,
+    111,  # as in plt.subplot(111)
+    nrows_ncols=(1, 3),
+    axes_pad=0.15,
+    share_all=True,
+    cbar_location="right",
+    cbar_mode="single",
+    cbar_size="7%",
+    cbar_pad=0.15,
+)
+
+# Add data to image grid
+im = grid[0].imshow(T2star1_mean[0, ..., sl].T, **kws)
+im = grid[1].imshow(T2star1_mean[1, ..., sl].T, **kws)
+im = grid[2].imshow(T2star1_mean[2, ..., sl].T, **kws)
+
+# Colorbar
+grid[-1].cax.colorbar(im)
+grid[-1].cax.toggle_label(True)
+
+for i, ax in enumerate(grid):
+    ax.set_axis_off()
+    ax.set_title(f'T2* (ms) $\\beta_u$ = {betas_anatomical[i]:.1E}')
+
+fig.tight_layout()
+fig.show()
