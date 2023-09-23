@@ -73,7 +73,7 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     conv = resample_sodium_to_t1_grid(
         np.abs(np.load(pdir / sdir / conv_file)['x']), na_voxsize, na_origin,
         t1, t1_voxsize, t1_origin, final_transform)
-    
+
     conv_2 = resample_sodium_to_t1_grid(
         np.abs(np.load(pdir / sdir / conv_file_2)['x']), na_voxsize, na_origin,
         t1, t1_voxsize, t1_origin, final_transform)
@@ -128,8 +128,7 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     # calculate the effective estimate T2star
     eff_T2star = np.zeros(est_ratio.shape)
     eff_T2star[est_ratio < 1] = -4.5 / np.log(est_ratio[est_ratio < 1])
-    eff_T2star[t1 < 0.01*t1.max()] = 0
-
+    eff_T2star[t1 < 0.01 * t1.max()] = 0
 
     #------------------------------------------------------------------------------
     # flip define ROIs and quantify
@@ -158,7 +157,8 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     # normalize the images to the 135 mmol/L in the ventricles
     # for the conv recon of the 1st recon
 
-    norm_fac = 135/conv[np.where(binary_erosion(ventricle_mask, iterations=2))].mean()
+    norm_fac = 135 / conv[np.where(binary_erosion(ventricle_mask,
+                                                  iterations=2))].mean()
 
     conv *= norm_fac
     conv_2 *= norm_fac
@@ -186,7 +186,8 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
 
     #vmax = np.percentile(agr_w_decay, 99.99)
     vmax = 210.
-    vmax_T2star = np.percentile(eff_T2star[aparc > 0], 99)
+    #vmax_T2star = np.percentile(eff_T2star[aparc > 0], 99)
+    vmax_T2star = 50.
     tmax = np.percentile(t1, 99.9)
 
     # bounding box values for inset plot of transaxial slice
@@ -243,9 +244,9 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
                     vmax=vmax)
 
     i12 = ax[2, 1].imshow(conv_2[bbox][:, :, slz].T,
-                         cmap='Greys_r',
-                         vmin=0,
-                         vmax=vmax)
+                          cmap='Greys_r',
+                          vmin=0,
+                          vmax=vmax)
     ax[3, 1].imshow(conv_2[bbox][:, sly, :].T,
                     origin='lower',
                     cmap='Greys_r',
@@ -270,7 +271,6 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     axins.set_ylim(ytop2 - 30, ytop2)
     ax[1, 1].indicate_inset_zoom(axins, edgecolor="white")
 
-
     axins = ax[2, 1].inset_axes([0.9, 0.7, 0.35, 0.35])
     axins.imshow(conv_2[bbox][:, :, slz].T, cmap='Greys_r', vmin=0, vmax=vmax)
     axins.set_axis_off()
@@ -289,8 +289,6 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     axins.set_ylim(ytop2 - 30, ytop2)
     ax[3, 1].indicate_inset_zoom(axins, edgecolor="white")
 
-
-
     # show AGRs without decay model
     i2 = ax[0, 2].imshow(agr_wo_decay[bbox][:, :, slz].T,
                          cmap='Greys_r',
@@ -303,9 +301,9 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
                     vmax=vmax)
 
     i22 = ax[2, 2].imshow(agr_wo_decay_2[bbox][:, :, slz].T,
-                         cmap='Greys_r',
-                         vmin=0,
-                         vmax=vmax)
+                          cmap='Greys_r',
+                          vmin=0,
+                          vmax=vmax)
     ax[3, 2].imshow(agr_wo_decay_2[bbox][:, sly, :].T,
                     origin='lower',
                     cmap='Greys_r',
@@ -354,9 +352,6 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     axins.set_ylim(ytop2 - 30, ytop2)
     ax[3, 2].indicate_inset_zoom(axins, edgecolor="white")
 
-
-
-
     i3 = ax[0, 3].imshow(agr_w_decay[bbox][:, :, slz].T,
                          cmap='Greys_r',
                          vmin=0,
@@ -402,16 +397,14 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
                     vmax=1)
 
     i42 = ax[2, 4].imshow(eff_T2star[bbox][:, :, slz].T,
-                         cmap='magma',
-                         vmin=0,
-                         vmax=vmax_T2star)
+                          cmap='magma',
+                          vmin=0,
+                          vmax=vmax_T2star)
     ax[3, 4].imshow(eff_T2star[bbox][:, sly, :].T,
                     origin='lower',
                     cmap='magma',
                     vmin=0,
                     vmax=vmax_T2star)
-
-
 
     cax0 = fig.add_axes([0.02, 0.52, 0.18, 0.01])
     cb0 = fig.colorbar(i0, cax=cax0, orientation='horizontal')
@@ -479,7 +472,7 @@ ax2[4].set_title('GM / brainstem center', fontsize='medium')
 
 for i in range(3):
     ax2[i].set_ylabel('sodium concentration (mmol/L)', fontsize='medium')
-    ax2[i].set_ylim(0, 0.95*norm_fac)
+    ax2[i].set_ylim(0, 0.95 * norm_fac)
 
 ax2[3].set_ylabel('sodium concentration ratio')
 ax2[4].set_ylabel('sodium concentration ratio')
