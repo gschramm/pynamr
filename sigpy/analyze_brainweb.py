@@ -44,7 +44,7 @@ noise_metric = 2
 
 betas_non_anatomical = [1e-2, 3e-2, 1e-1]
 betas_anatomical = [3e-4, 1e-3, 3e-3]
-sm_sigs = [0.4, 0.6, 0.75]
+sm_sigs = [0.0, 1.8, 3.]
 #-----------------------------------------------------------------------
 
 iter_shape = (128, 128, 128)
@@ -192,19 +192,17 @@ for key, inds in roi_inds.items():
 with open(odirs[0] / 'scaling_factors.json', 'r') as f:
     image_scale = json.load(f)['image_scale']
 
-# factor needed to compensate global intensity shift from regridding
-ifft_regridding_fac = 0.86
-
 for i, odir in enumerate(odirs):
     print('loading IFFT1', odir)
-    tmp = ifft_regridding_fac * np.load(odir / 'ifft1.npy')
+    # adjoint iffts are already scaled to the scale of the ground truth
+    # no need to apply the scaling factor
+    tmp = zoom(np.load(odir / 'adjoint_ifft_echo_1.npy'),
+               sim_shape[0] / iter_shape[0],
+               order=1,
+               prefilter=False)
 
     for ib, sig in enumerate(sm_sigs):
-        iffts_e1[i, ib,
-                 ...] = zoom(np.abs(gaussian_filter(tmp, sig) / image_scale),
-                             sim_shape[0] / tmp.shape[0],
-                             order=1,
-                             prefilter=False)
+        iffts_e1[i, ib, ...] = np.abs(gaussian_filter(tmp, sig))
 
 for key, inds in roi_inds.items():
     iffts_e1_roi_means[key] = np.array([[x[inds].mean() for x in y]
@@ -381,18 +379,6 @@ for roi, inds in roi_inds.items():
                                index=[0])
             df_rmse = pd.concat((df_rmse, tmp))
 
-    for ir in range(iffts_e1.shape[0]):
-        for ib in range(iffts_e1.shape[1]):
-            tmp = pd.DataFrame(dict(method='REGR_IFFT',
-                                    b=ib + 1,
-                                    r=ir + 1,
-                                    roi=roi,
-                                    RMSE=np.sqrt(
-                                        np.mean((iffts_e1[ir, ib, ...][inds] -
-                                                 gt[inds])**2))),
-                               index=[0])
-            df_rmse = pd.concat((df_rmse, tmp))
-
     for ir in range(agrs_e1_no_decay.shape[0]):
         for ib in range(agrs_e1_no_decay.shape[1]):
             tmp = pd.DataFrame(dict(
@@ -429,6 +415,18 @@ for roi, inds in roi_inds.items():
                 RMSE=np.sqrt(
                     np.mean((agrs_both_echos_w_decay1[ir, ib, ...][inds] -
                              gt[inds])**2))),
+                               index=[0])
+            df_rmse = pd.concat((df_rmse, tmp))
+
+    for ir in range(iffts_e1.shape[0]):
+        for ib in range(iffts_e1.shape[1]):
+            tmp = pd.DataFrame(dict(method='REGR+IFFT',
+                                    b=ib + 1,
+                                    r=ir + 1,
+                                    roi=roi,
+                                    RMSE=np.sqrt(
+                                        np.mean((iffts_e1[ir, ib, ...][inds] -
+                                                 gt[inds])**2))),
                                index=[0])
             df_rmse = pd.concat((df_rmse, tmp))
 
@@ -496,21 +494,6 @@ for i, (roi, vals) in enumerate(recon_e1_no_decay_roi_means.items()):
                         verticalalignment='bottom',
                         fontsize='x-small')
 
-for i, (roi, vals) in enumerate(iffts_e1_roi_means.items()):
-    if noise_metric == 1:
-        x = vals.std(0)
-    else:
-        x = np.array([z[roi_inds[roi]].mean() for z in iffts_e1_std])
-
-    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
-    axs[i].plot(x, y, 'o-', label='REGR+IFFT')
-
-    for j in range(len(x)):
-        axs[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
-                        horizontalalignment='center',
-                        verticalalignment='bottom',
-                        fontsize='x-small')
-
 for i, (roi, vals) in enumerate(agr_e1_no_decay_roi_means.items()):
     if noise_metric == 1:
         x = vals.std(0)
@@ -550,6 +533,21 @@ for i, (roi, vals) in enumerate(agr_both_echos_w_decay1_roi_means.items()):
     y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
     axs[i].plot(x, y, 'o-', label=f'AGRdm, br={beta_rs[1]:.1E}')
 
+for i, (roi, vals) in enumerate(iffts_e1_roi_means.items()):
+    if noise_metric == 1:
+        x = vals.std(0)
+    else:
+        x = np.array([z[roi_inds[roi]].mean() for z in iffts_e1_std])
+
+    y = 100 * (vals.mean(0) - true_means[roi]) / true_means[roi]
+    axs[i].plot(x, y, 'o-', label='REGR+IFFT')
+
+    for j in range(len(x)):
+        axs[i].annotate(f'{betas_anatomical[j]:.1E}', (x[j], y[j]),
+                        horizontalalignment='center',
+                        verticalalignment='bottom',
+                        fontsize='x-small')
+
 for i, axx in enumerate(axs):
     axx.grid(ls=':')
     axx.axhline(0, color='k')
@@ -578,6 +576,7 @@ df_rmse.reset_index(inplace=True)
 strip_kwargs = dict(size=2., dodge=True, palette='tab10')
 box_kwargs = dict(showfliers=False,
                   showbox=False,
+                  palette='tab10',
                   showcaps=False,
                   showmeans=True,
                   meanline=True,
@@ -669,7 +668,7 @@ for i in range(3):
                            cmap='Greys_r',
                            vmin=0,
                            vmax=vmax)
-    ax3d[i, 0].set_ylabel(f'$\\sigma$ = {sm_sigs[i]:.1E}')
+    ax3d[i, 0].set_ylabel(f'FWHM = {(2.35*sm_sigs[i]*(220/128)):.1f}mm')
     i10 = ax3d[i, 1].imshow(iffts_e1_mean[i, ..., sl].T - gt[:, :, sl].T,
                             origin='lower',
                             cmap='seismic',
