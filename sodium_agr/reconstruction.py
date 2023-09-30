@@ -18,9 +18,9 @@ ndarray = Union[np.ndarray, cp.ndarray]
 
 def channelwise_ifft_recon(data: np.ndarray,
                            k: np.ndarray,
+                           dcf: np.ndarray,
                            grid_shape=(64, 64, 64),
-                           field_of_view_cm=22.,
-                           **kwargs) -> np.ndarray:
+                           field_of_view_cm=22.) -> np.ndarray:
     """Channelwise gridding + IFFT recon of multi-coil data
 
     Parameters
@@ -30,12 +30,12 @@ def channelwise_ifft_recon(data: np.ndarray,
     k : np.ndarray
         array containing the kspace coordinates of the readouts in 1/cm
         shape (num_time_points, num_readouts, 3)
+    dcf : np.ndarray
+        sampling density compensation factor of shape (num_time_points, num_readouts)
     grid_shape : tuple, optional
         shape of the image grid , by default (64, 64, 64)
     field_of_view_cm : _type_, optional
         the field of view in cm, by default 22.
-    **kwargs:
-        additional keyword arguments passed to sigpy.gridding
 
     Returns
     -------
@@ -45,28 +45,13 @@ def channelwise_ifft_recon(data: np.ndarray,
 
     # transfer k-space trajectory to GPU and convert to unitless
     k_d = cp.asarray(k.reshape(-1, 3)) * field_of_view_cm
-
-    samp_dens = sigpy.gridding(cp.ones(k_d.shape[0], dtype=data.dtype), k_d,
-                               grid_shape, **kwargs)
-    kernel_gridded = sigpy.gridding(cp.ones(1, dtype=data.dtype),
-                                    cp.zeros((1, 3), dtype=k_d.dtype),
-                                    grid_shape, **kwargs)
-
-    ifft_op = sigpy.linop.IFFT(grid_shape)
-    kernel_ifft_d = ifft_op(kernel_gridded)
-
     x_ifft_d = cp.zeros((data.shape[0], ) + grid_shape, dtype=data.dtype)
 
+    dcf_d = cp.asarray(dcf.ravel())
     for i, d in enumerate(data):
         # transfer data to GPU
         d_d = cp.asarray(d.ravel())
-
-        data_gridded = sigpy.gridding(d_d, k_d, grid_shape, **kwargs)
-
-        data_gridded_corr = data_gridded.copy()
-        data_gridded_corr[samp_dens > 0] /= samp_dens[samp_dens > 0]
-
-        x_ifft_d[i, ...] = ifft_op(data_gridded_corr) / kernel_ifft_d
+        x_ifft_d[i, ...] = sigpy.nufft_adjoint(d_d * dcf_d, k_d, grid_shape)
 
     return cp.asnumpy(x_ifft_d)
 

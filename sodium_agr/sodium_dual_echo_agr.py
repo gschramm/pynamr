@@ -209,6 +209,16 @@ if rotation == 0:
 # (contains more points compared to data points)
 k = k[:data_echo_1.shape[1], ...]
 
+# calculate the point until the TPI readout is linear for
+# the density compensation
+abs_k = np.linalg.norm(k, axis=-1)
+dk = abs_k[1:, 0] - abs_k[:-1, 0]
+# get the index until which the readout is linear
+i_twist = np.where(dk >= 0.99 * dk[5:].max())[0].max()
+# density compensation factor for TPI
+dcf = np.clip(abs_k**2, None, abs_k[i_twist]**2)
+dcf /= dcf.max()
+
 # show the k-space trajectory
 if show_kspace_trajectory:
     fig = plt.figure()
@@ -234,12 +244,14 @@ if not ifft_file.exists():
     # calculate channel-wise IFFT
     iffts_1 = channelwise_ifft_recon(data_echo_1,
                                      k,
-                                     field_of_view_cm=field_of_view_cm,
-                                     width=2)
+                                     dcf,
+                                     grid_shape=(64, 64, 64),
+                                     field_of_view_cm=field_of_view_cm)
     iffts_2 = channelwise_ifft_recon(data_echo_2,
                                      k,
-                                     field_of_view_cm=field_of_view_cm,
-                                     width=2)
+                                     dcf,
+                                     grid_shape=(64, 64, 64),
+                                     field_of_view_cm=field_of_view_cm)
 
     _, coil_combined_ifft_1 = calculate_csm_inati_iter(iffts_1, smoothing=7)
     _, coil_combined_ifft_2 = calculate_csm_inati_iter(iffts_2, smoothing=7)
