@@ -1,7 +1,7 @@
 import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
-from scipy.ndimage import find_objects, binary_dilation, binary_erosion
+from scipy.ndimage import find_objects, binary_dilation, binary_erosion, gaussian_filter, convolve, label, center_of_mass
 import SimpleITK as sitk
 import pandas as pd
 
@@ -100,19 +100,6 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
                                            final_transform,
                                            missing=1.0)
 
-    #    #------------------------------------------------------------------------------
-    #    # export to nifti
-    #    edir = pdir / 'export'
-    #    edir.mkdir(exist_ok=True)
-    #
-    #    nib.save(nib.Nifti1Image(t1.astype(np.float32), t1_nii.affine),
-    #             edir / 'T1.nii')
-    #    nib.save(nib.Nifti1Image(conv, t1_nii.affine), edir / 'CR.nii')
-    #    nib.save(nib.Nifti1Image(agr_wo_decay, t1_nii.affine), edir / 'AGR.nii')
-    #    nib.save(nib.Nifti1Image(agr_w_decay, t1_nii.affine), edir / 'AGRdm.nii')
-    #    nib.save(nib.Nifti1Image(est_ratio, t1_nii.affine),
-    #             edir / 'est_ratio_r.nii')
-
     #------------------------------------------------------------------------------
     # flip all images to LPS
 
@@ -154,12 +141,41 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     roi_inds['WM'] = np.where(wm_mask)
     roi_inds['brainstem'] = np.where(brainstem_mask)
 
-    # normalize the images to the 135 mmol/L in the ventricles
-    # for the conv recon of the 1st recon
+    # normalize the images to the 145 mmol/L in the eyes
 
-    norm_fac = 135 / conv[np.where(binary_erosion(ventricle_mask,
-                                                  iterations=2))].mean()
+    vent_inds = np.where(binary_erosion(ventricle_mask, iterations=2))
 
+    if ip == 0:
+        eye_coords = np.array([[103,60,94],[168,65,94]])
+    elif ip == 1:
+        eye_coords = np.array([[99,57,82],[164,54,79]])
+    elif ip == 2:
+        eye_coords = np.array([[88,70,61],[150,64,63]])
+
+    x = np.arange(256)
+    y = np.arange(256)
+    z = np.arange(192)
+
+    X,Y,Z = np.meshgrid(x,y,z, indexing = 'ij')
+    Rr = np.sqrt((X-eye_coords[0,0])**2 + (Y-eye_coords[0,1])**2 + (Z-eye_coords[0,2])**2)
+    Rl = np.sqrt((X-eye_coords[1,0])**2 + (Y-eye_coords[1,1])**2 + (Z-eye_coords[1,2])**2)
+
+    Ir = (Rr <= 5).astype(float)
+    Il = (Rl <= 5).astype(float)
+
+    ref_value = 145.
+    norm_inds_eyes = np.where((Ir + Il) > 0)
+
+    #print(agr_w_decay[vent_inds].mean())
+    #print(agr_w_decay[norm_inds_eyes].mean())
+    #print('')
+    #import pymirc.viewer as pv
+    #vi = pv.ThreeAxisViewer(agr_w_decay, Ir + Il, imshow_kwargs = dict(vmax = 3.5))
+    #tmp = input('>')
+
+    norm_fac = ref_value / agr_w_decay[norm_inds_eyes].mean()
+
+    # scale the images 
     conv *= norm_fac
     conv_2 *= norm_fac
     agr_wo_decay *= norm_fac
@@ -184,9 +200,7 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
 
     bbox = find_objects(t1 > 0.1 * np.percentile(t1, 99.9))[0]
 
-    #vmax = np.percentile(agr_w_decay, 99.99)
-    vmax = 210.
-    #vmax_T2star = np.percentile(eff_T2star[aparc > 0], 99)
+    vmax = 160.
     vmax_T2star = 50.
     tmax = np.percentile(t1, 99.9)
 
@@ -446,6 +460,7 @@ for ip, (pnum, [slz, sly]) in enumerate(pdict.items()):
     ax[2, 4].set_title('est. eff. T2* (ms)', fontsize='small')
 
     fig.tight_layout(pad=1.8)
+    fig.savefig(f'siemens_{ip+1}.png')
     fig.show()
 
 #------------------------------------------------------------------------------
@@ -483,3 +498,4 @@ for axx in ax2.ravel():
 
 fig2.tight_layout()
 fig2.show()
+fig2.savefig(f'siemens_quant.pdf')
