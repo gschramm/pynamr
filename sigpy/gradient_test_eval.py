@@ -48,15 +48,18 @@ zoomfac = gt.shape[0] / 128
 # account for scaling factor due to data simulation and recon on different grids
 scaling_fac = np.sqrt(zoomfac**3)
 
-seeds = [x for x in range(1,76)] + [x for x in range(77,101)]
+#seeds = [x for x in range(1,101)]
+seeds = [x for x in range(1,23)]
 
 # arrays for noise-free recons
 noise_free_gf_1 = np.zeros((len(betas),) + gt.shape)
 noise_free_gf_3 = np.zeros((len(betas),) + gt.shape)
 
+decay_model_suffix = '_no_decay_model'
+
 for ib, beta in enumerate(betas):
-    noise_free_gf_1[ib,...] = zoom3d(np.abs(np.load(odir / f'recon_quad_prior_gf_01_nl_0.0E+00_beta_{beta:.1E}_s_001.npy')) / scaling_fac, zoomfac)
-    noise_free_gf_3[ib,...] = zoom3d(np.abs(np.load(odir / f'recon_quad_prior_gf_03_nl_0.0E+00_beta_{beta:.1E}_s_001.npy')) / scaling_fac, zoomfac)
+    noise_free_gf_1[ib,...] = zoom3d(np.abs(np.load(odir / f'recon_quad_prior_gf_01_nl_0.0E+00_beta_{beta:.1E}{decay_suffix}_s_001.npy')) / scaling_fac, zoomfac)
+    noise_free_gf_3[ib,...] = zoom3d(np.abs(np.load(odir / f'recon_quad_prior_gf_03_nl_0.0E+00_beta_{beta:.1E}{decay_suffix}_s_001.npy')) / scaling_fac, zoomfac)
 
 # calculate the bias of the noise_free recons
 

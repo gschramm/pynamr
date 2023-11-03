@@ -275,7 +275,7 @@ del nufft_echo2_no_decay
 G = (1 / np.sqrt(12)) * sigpy.linop.FiniteDifference(ishape, axes=None)
 
 if no_decay_model:
-    decay_suffix = '_no_decay_model'
+    decay_model_suffix = '_no_decay_model'
     A = nufft_echo1_no_decay
 else:
     decay_suffix = ''
@@ -304,7 +304,7 @@ for ib, beta in enumerate(betas):
 
     # convert flat pseudo complex array to complex
     recon = np.squeeze(res[0].view(dtype=np.complex128)).reshape(A.ishape)
-    np.save(odir / f'recon_quad_prior_gf_{gradient_factor:02}_nl_{noise_level:.1E}_beta_{beta:.1E}{decay_suffix}_s_{seed:03}', recon)
+    np.save(odir / f'recon_quad_prior_gf_{gradient_factor:02}_nl_{noise_level:.1E}_beta_{beta:.1E}{decay_model_suffix}_s_{seed:03}', recon)
 
     recons[ib,...] = recon
 
