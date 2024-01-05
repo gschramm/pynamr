@@ -1,0 +1,20 @@
+{
+  "TE05c0_filename": "/abs_path/to/TE05_kw0.co",
+  "TE5c0_filename": "/abs_path/to/TE5_kw0.co",
+  "TE05soskw0_filename": "/abs_path/to/TE05_kw0.sos",
+  "TE05soskw1_filename": "/abs_path/to/TE05_kw1.sos",
+  "MPRAGE_filename": "/abs_path/to/mprage.nii",
+  "recon_dir": "/abs_path/to/recon_dir",
+  "data_shape": [
+    64,
+    64,
+    64
+  ],
+  "recon_shape": [
+    128,
+    128,
+    128
+  ],
+  "sodium_fov_mm": 220.0,
+  "alignment_filter_sigma": 1.3
+}

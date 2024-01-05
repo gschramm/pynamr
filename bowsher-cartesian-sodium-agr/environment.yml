@@ -1,0 +1,15 @@
+name: bowsher-cartesian-sodium-agr
+
+channels:
+- conda-forge
+
+dependencies:
+- cupy
+- numpy
+- scipy
+- matplotlib
+- simpleitk
+- nibabel
+- scipy
+- h5py
+- pymirc

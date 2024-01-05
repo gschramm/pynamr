@@ -1,0 +1,11 @@
+{
+  "niter": 10,
+  "n_outer": 15,
+  "bet_recon": 2.0,
+  "bet_gam": 5,
+  "nnearest": 4,
+  "nneigh": 80,
+  "no_anat_prior": false,
+  "mr_name": "T1_N4_corrected_aligned.npy",
+  "method": 0
+}
