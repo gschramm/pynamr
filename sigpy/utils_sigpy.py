@@ -5,13 +5,13 @@ import math
 import numpy as np
 import cupy as cp
 
-from typing import Union
-from utils import kb_rolloff
+from typing import Union, Tuple
+from utils import kb_rolloff, real_to_complex, complex_to_real
+
 
 class NUFFTT2starDualEchoModel:
-
     def __init__(self,
-                 ishape: tuple[int, int, int],
+                 ishape: Tuple[int, int, int],
                  k_1_cm: np.ndarray,
                  field_of_view_cm: float = 22.,
                  acq_sampling_time_ms: float = 0.016,
@@ -133,7 +133,7 @@ class NUFFTT2starDualEchoModel:
         self._dual_echo_data = value
 
     def get_operators_wo_decay_model(
-            self) -> tuple[sigpy.linop.Linop, sigpy.linop.Linop]:
+            self) -> Tuple[sigpy.linop.Linop, sigpy.linop.Linop]:
         op1 = self._scale * sigpy.linop.NUFFT(
             self._ishape, cp.vstack(self._coords), **self._nufft_kwargs)
 
@@ -158,7 +158,7 @@ class NUFFTT2starDualEchoModel:
 
     def get_operators_w_decay_model(
             self,
-            r: cp.ndarray) -> tuple[sigpy.linop.Linop, sigpy.linop.Linop]:
+            r: cp.ndarray) -> Tuple[sigpy.linop.Linop, sigpy.linop.Linop]:
         """NUFFT operators for dual echo including mono-exponential decay model
 
         Parameters
@@ -186,13 +186,13 @@ class NUFFTT2starDualEchoModel:
 
             op1s.append(
                 sigpy.linop.NUFFT(self._ishape, self._coords[i], **
-                                  self._nufft_kwargs) *
-                sigpy.linop.Multiply(self._ishape, r**n_1))
+                                  self._nufft_kwargs) * sigpy.linop.Multiply(
+                                      self._ishape, r**n_1))
 
             op2s.append(
                 sigpy.linop.NUFFT(self._ishape, self._coords[i], **
-                                  self._nufft_kwargs) *
-                sigpy.linop.Multiply(self._ishape, r**n_2))
+                                  self._nufft_kwargs) * sigpy.linop.Multiply(
+                                      self._ishape, r**n_2))
 
         operator1 = self._scale * sigpy.linop.Vstack(op1s)
         operator2 = self._scale * sigpy.linop.Vstack(op2s)
@@ -272,16 +272,16 @@ class NUFFTT2starDualEchoModel:
                    (self._echo_time_2_ms - self._echo_time_1_ms))
 
             f1s.append(
-                sigpy.linop.Multiply(self._ishape,
-                                     n_1 * (r**(n_1 - 1)) * self._x.conj()) *
-                sigpy.linop.NUFFT(self._ishape, self._coords[i], **
-                                  self._nufft_kwargs).H)
+                sigpy.linop.Multiply(
+                    self._ishape,
+                    n_1 * (r**(n_1 - 1)) * self._x.conj()) * sigpy.linop.NUFFT(
+                        self._ishape, self._coords[i], **self._nufft_kwargs).H)
 
             f2s.append(
-                sigpy.linop.Multiply(self._ishape,
-                                     n_2 * (r**(n_2 - 1)) * self._x.conj()) *
-                sigpy.linop.NUFFT(self._ishape, self._coords[i], **
-                                  self._nufft_kwargs).H)
+                sigpy.linop.Multiply(
+                    self._ishape,
+                    n_2 * (r**(n_2 - 1)) * self._x.conj()) * sigpy.linop.NUFFT(
+                        self._ishape, self._coords[i], **self._nufft_kwargs).H)
 
         f1s = self._scale * sigpy.linop.Hstack(f1s)
         f2s = self._scale * sigpy.linop.Hstack(f2s)
@@ -299,7 +299,7 @@ class NUFFTT2starDualEchoModel:
         return cp.real(h_op(diff))
 
 
-def projected_gradient_operator(ishape: tuple[int, ...],
+def projected_gradient_operator(ishape: Tuple[int, ...],
                                 prior_image: cp.ndarray,
                                 eta: float = 0.) -> sigpy.linop.Linop:
     """Projected gradient operator as defined in https://doi.org/10.1137/15M1047325.
@@ -347,39 +347,37 @@ def projected_gradient_operator(ishape: tuple[int, ...],
 
     return PG
 
-class NUFFT_TPI_BiexpModel:
 
+class NUFFT_T2Biexp_Model:
     def __init__(self,
-                 ishape: tuple[int, int, int],
-                 k_1_cm: np.ndarray,
+                 ishape: Tuple[int, int, int],
+                 k_coords_n: np.ndarray,
                  T2star_short_map: np.ndarray,
                  T2star_long_map: np.ndarray,
-                 field_of_view_cm: float = 22.,
                  acq_sampling_time_ms: float = 0.01,
                  time_bin_width_ms: float = 0.25,
                  echo_time_ms: float = 0.5) -> None:
-        """sigpy simple forward TPI NUFFT operator including bi-exp. T2* decay modeling
+        """Forward NUFFT sigpy operator including bi-exp. T2* decay modeling
+           like in density-weighted Na MRI
 
         Parameters
         ----------
         ishape : tuple[int, int, int]
             shape of the input image
-        k_1_cm : np.ndarray
-            input kx, ky, kz coordinates - shape: (num_samples, num_readouts, 3)
-            units 1/cm
+        k_coords_n : np.ndarray (num_samples, num_readouts, 3)
+            input kx, ky, kz coordinates in range [-n/2, n/2[
         T2star_short_map: np.ndarray
             spatial map of short T2* component
         T2star_long_map: np.ndarray
             spatial map of long T2* component
-        field_of_view_cm : float, optional
-            field of view in cm, by default 220.
         acq_sampling_time_ms : float, optional
-            samplignt time during acquisition in ms, by default 0.01
+            temporal sampling dt during readout in ms
         time_bin_width_ms : float, optional
-            time bin width for modeling T2* decay, by default 0.25
-        echo_time_1_ms : float, optional
-            first echo time in ms, by default 0.5
+            readout time quantization bin for modeling T2* decay
+        echo_time_ms : float, optional
+            echo time in ms, by default 0.5
         """
+
         self._ishape = ishape
 
         self._acq_sampling_time_ms = acq_sampling_time_ms
@@ -387,29 +385,35 @@ class NUFFT_TPI_BiexpModel:
         self._echo_time_ms = echo_time_ms
 
         self._time_bins_inds = np.array_split(
-            np.arange(k_1_cm.shape[0]),
-            math.ceil(k_1_cm.shape[0] /
+            np.arange(k_coords_n.shape[0]),
+            math.ceil(k_coords_n.shape[0] /
                       (self._time_bin_width_ms / self._acq_sampling_time_ms)))
 
         self._coords = []
 
         # sort coordinates into time bins
         for _, time_bin_inds in enumerate(self._time_bins_inds):
-            chunk_coords_1_cm = k_1_cm[time_bin_inds, :, :].reshape(
-                -1, k_1_cm.shape[-1])
+            chunk_coords_n = k_coords_n[time_bin_inds, :, :].reshape(
+                -1, k_coords_n.shape[-1])
 
-            self._coords.append(chunk_coords_1_cm * field_of_view_cm)
+            self._coords.append(chunk_coords_n)
 
         # send T2* maps to GPU
         self.T2star_short_map = cp.asarray(T2star_short_map)
         self.T2star_long_map = cp.asarray(T2star_long_map)
 
     def get_operator_wo_decay_model(self) -> sigpy.linop.Linop:
+        """Simple NUFFT forward operator
+
+        Returns
+        -------
+        sigpy.linop.Linop
+        """
         op = sigpy.linop.NUFFT(self._ishape, cp.vstack(self._coords))
         return op
 
     def get_operator_w_decay_model(self) -> sigpy.linop.Linop:
-        """NUFFT operators for TPI including bi-exponential decay model
+        """NUFFT forward operator with bi-exponential T2* decay modeling
 
         Returns
         -------
@@ -423,7 +427,7 @@ class NUFFT_TPI_BiexpModel:
 
             # fixed ratio between short and long component
             decay = 0.6 * cp.exp(-readout_time_ms / self.T2star_short_map)
-            decay +=  0.4 * cp.exp(-readout_time_ms / self.T2star_long_map)
+            decay += 0.4 * cp.exp(-readout_time_ms / self.T2star_long_map)
             ops.append(
                 sigpy.linop.NUFFT(self._ishape, self._coords[i]) *
                 sigpy.linop.Multiply(self._ishape, decay))
@@ -432,26 +436,27 @@ class NUFFT_TPI_BiexpModel:
 
         return op
 
-def recon_empirical_grid_and_ifft(k_data: cp.ndarray, nufft_k: cp.ndarray, grid_shape: tuple) -> cp.ndarray:
-    """
-        Empirical gridding + IFFT reconstruction:
-        sigpy gridding function, Kaiser-Bessel kernel with optimal parameters (Jackson et al.)
-        No explicit sampling density correction
-        Empirical normalization including sampling density and interpolation coefficients
 
-        Parameters
-        ----------
-        k_data : 1d cupy array
-            input flattened nufft k-space data
-        nufft_k : cupy array of shape (nb_samples, 3)
-            corresponding flattened k-space coordinates as used in sigpy nufft
-        grid_shape : tuple
-            the grid shape
+def recon_empirical_grid_and_ifft(k_data: cp.ndarray, nufft_k: cp.ndarray,
+                                  grid_shape: tuple) -> cp.ndarray:
+    """Empirical gridding + IFFT reconstruction:
+       sigpy gridding function, Kaiser-Bessel kernel with optimal parameters (Jackson et al.)
+       No explicit sampling density correction
+       Empirical normalization including sampling density and interpolation coefficients
 
-        Returns
-        ----------
-        recon : cupy array of grid_shape shape, unscaled reconstructed image
+       Parameters
+       ----------
+       k_data : 1d cupy array
+           input flattened nufft k-space data
+       nufft_k : cupy array of shape (nb_samples, 3)
+           corresponding flattened k-space coordinates as used in sigpy nufft
+       grid_shape : tuple
+           the grid shape
 
+       Returns
+       ----------
+       recon : cupy array of grid_shape shape
+           unscaled reconstructed image
     """
 
     # interpolation kernel parameters
@@ -460,21 +465,18 @@ def recon_empirical_grid_and_ifft(k_data: cp.ndarray, nufft_k: cp.ndarray, grid_
     param = 9.14
 
     # grid data
-    data_gridded = sigpy.gridding(k_data,
-                                 nufft_k,
-                                 grid_shape,
-                                 kernel=kernel,
-                                 width=width,
-                                 param=param)
+    data_gridded = sigpy.gridding(
+        k_data, nufft_k, grid_shape, kernel=kernel, width=width, param=param)
 
     # normalization coefficients taking empirically into account
     # sampling density and interpolation coefficients
-    norm_coefs = sigpy.gridding(cp.ones_like(k_data),
-                           nufft_k,
-                           grid_shape,
-                           kernel=kernel,
-                           width=width,
-                           param=param)
+    norm_coefs = sigpy.gridding(
+        cp.ones_like(k_data),
+        nufft_k,
+        grid_shape,
+        kernel=kernel,
+        width=width,
+        param=param)
     data_gridded_corr = data_gridded
     data_gridded_corr[norm_coefs > 0] /= norm_coefs[norm_coefs > 0]
 
@@ -496,107 +498,180 @@ def recon_empirical_grid_and_ifft(k_data: cp.ndarray, nufft_k: cp.ndarray, grid_
     R = cp.sqrt(TMP_X**2 + TMP_Y**2 + TMP_Z**2)
     R = cp.clip(R, 0, tmp_x.max())
     #TODO: understand why factor 1.6 is needed when regridding in 3D
-    interpolation_correction_field = kb_rolloff(1.6*R, param)
+    interpolation_correction_field = kb_rolloff(1.6 * R, param)
     interpolation_correction_field /= interpolation_correction_field.max()
     recon = recon / interpolation_correction_field
 
     return recon
 
-     
 
-def recon_gridding(k_data: cp.ndarray,
-                   nufft_k_coords: cp.ndarray,
+def recon_gridding(k_data: cp.ndarray, nufft_k_coords: cp.ndarray,
                    grid_shape: tuple,
                    sample_density_corr: cp.ndarray) -> cp.ndarray:
-    """
-        Recon using standard gridding with known sampling density:
-        Sampling density compensation + gridding (sigpy nufft adjoint) + IFFT
+    """Recon using standard gridding with known sampling density:
+       Sampling density compensation + gridding (sigpy nufft adjoint) + IFFT
 
-        Parameters
-        ----------
-        k_data : 1d cupy array, input flattened nufft k-space data
-        nufft_k_coords : cupy array of shape (nb_samples, 3)
-                            corresponding flattened k-space coordinates as used in sigpy nufft
-        grid_shape : tuple
-                        the Cartesian grid shape
-        sample_density_corr : cupy array of k-space data shape
-                                 multiplicative sampling density compensation
+       Parameters
+       ----------
+       k_data : 1d cupy array
+                   input flattened nufft k-space data
+       nufft_k_coords : cupy array of shape (nb_samples, 3)
+                           corresponding flattened k-space coordinates as used in sigpy nufft
+       grid_shape : tuple
+                       the Cartesian grid shape
+       sample_density_corr : cupy array of k-space data shape
+                                multiplicative sampling density compensation
 
-        Returns
-        ----------
-        recon : cupy array of grid_shape shape, reconstructed image
-
+       Returns
+       ----------
+       recon : cupy array of grid_shape shape
+           reconstructed image
     """
 
     # sampling density compensation
     k_data_corrected = k_data * sample_density_corr
 
     # nufft adjoint
-    recon = sigpy.nufft_adjoint(k_data_corrected,
-                                 nufft_k_coords,
-                                 grid_shape)
-
+    recon = sigpy.nufft_adjoint(k_data_corrected, nufft_k_coords, grid_shape)
     return recon
 
 
-def recon_tpi_iterative_nufft(k_data: cp.ndarray,
-                          recon_shape,
-                          k_1_cm,
-                          field_of_view_cm = 22.,
-                          acq_sampling_time_ms = 0.01,
-                          time_bin_width_ms = 0.25,
-                          echo_time_ms = 0.5,
-                          beta_reg = 0.) -> cp.ndarray:
-    """
-        Simplest possible iterative recon of raw TPI data:
-        default sigpy MLS conjugate gradient + Tikhonov regularization
+class LossL2:
+    def __init__(self, result_shape: tuple, data: cp.ndarray, A, P=None):
+        """L2 loss (objective) function with data fidelity and regularization
+           designed for scipy.optimize.minimize and cupy operators
 
-        Parameters
-        ----------
-        k_data : cupy array,
-            raw TPI data
-        recon_shape : tuple[int, int, int]
-            shape of the input image
-        k_1_cm : np.ndarray
-            input kx, ky, kz coordinates - shape: (num_samples, num_readouts, 3)
-            units 1/cm
-        field_of_view_cm : float, optional
-            field of view in cm, by default 220.
-        acq_sampling_time_ms : float, optional
-            samplignt time during acquisition in ms, by default 0.01
-        time_bin_width_ms : float, optional
-            time bin width for modeling T2* decay, by default 0.25
-        echo_time_ms : float, optional
-            echo time in ms, by default 0.5
-        beta_reg : float, optional
-            Tikhonov regularization parameter
+           Parameters
+           ----------
+           result_shape : tuple
+               reconstructed image shape
+           data : 1D cupy array
+               measured (acquired) data
+           A : sigpy or cupy
+               forward model (image to data) operator
+           P : sigpy or cupy
+               regularization (penalty) operator
+        """
 
-        Returns
-        ----------
-        recon : cupy array of grid_shape shape
-            reconstructed image
+        self.result_shape = result_shape
+        self.data = data
+        self.A = A
+        self.P = P
 
-    """
+    def loss(self, x_flat: np.ndarray, beta: float = 0.):
+        """Total loss 
 
-    # we don't know the decay
-    nodecay_T2 = 1e7 * np.ones(recon_shape, np.float64)
-    acq_model = NUFFT_TPI_BiexpModel(recon_shape,
-                                     k_1_cm,
-                                     nodecay_T2,
-                                     nodecay_T2,
-                                     field_of_view_cm=field_of_view_cm,
-                                     acq_sampling_time_ms=acq_sampling_time_ms,
-                                     time_bin_width_ms=time_bin_width_ms,
-                                     echo_time_ms=echo_time_ms)
+           Parameters
+           ----------
+           x_flat : 1D np.ndarray
+               current estimate
+           beta : float
+               regularization weight
 
-    # forward operator based on TPI trajectory
-    A = acq_model.get_operator_wo_decay_model()
+           Returns
+           ----------
+           total : float
+               total loss value
+        """
 
-    # conjugate gradient recon with Tikhonov regularization
-    app = sigpy.app.LinearLeastSquares(A, k_data, lamda=beta_reg)
-    recon = app.run()
+        x_flat = real_to_complex(x_flat)
+        x_flat = cp.asarray(x_flat)
+        x = x_flat.reshape(self.result_shape)
+        diff = self.A(x) - self.data
+        total = cp.sum(cp.square(cp.abs(diff)))
+        if self.P is not None:
+            total += beta * cp.sum(cp.square(cp.abs(self.P(x))))
+        total = cp.asnumpy(total)
+        return total
 
-    return recon
+    def loss_grad(self, x_flat: np.ndarray, beta: float = 0.):
+        """Gradient of the loss function 
 
+           Parameters
+           ----------
+           x_flat : 1D np.ndarray
+               current estimate
+           beta : float
+               regularization weight
 
+           Returns
+           ----------
+           total gradient : np.ndarray of result_shape
+        """
 
+        x_flat = real_to_complex(x_flat)
+        x_flat = cp.asarray(x_flat)
+        x = x_flat.reshape(self.result_shape)
+        total_grad = 2 * self.A.H(self.A(x) - self.data)
+        if self.P is not None:
+            total_grad += beta * 2 * self.P.H(self.P(x))
+        total_grad = total_grad.ravel()
+        total_grad = cp.asnumpy(total_grad)
+        total_grad = complex_to_real(total_grad)
+        return total_grad
+
+    def check_grad(self, rng, beta: float = 0.):
+        """Check gradient computation numerically 
+
+           Parameters
+           ----------
+           rng : numpy random number generator
+           beta : float
+               regularization weight
+        """
+
+        # real part
+        eps = 1e-7
+        im = rng.random(np.prod(self.result_shape) * 2)
+        p1 = self.loss(im, beta)
+        im_eps = im.copy()
+        im_eps = real_to_complex(im)
+        im_eps = im_eps.reshape(self.result_shape)
+        indices = [
+            rng.integers(low=d // 10, high=d - d // 10)
+            for d in self.result_shape
+        ]
+        indices = tuple(indices)
+        im_eps[indices] += eps
+        im_eps = complex_to_real(im_eps)
+        im_eps = im_eps.ravel()
+        p2 = self.loss(im_eps, beta)
+        g_approx = (p2 - p1) / eps
+
+        g = self.loss_grad(im, beta)
+        g = real_to_complex(g)
+        g = g.reshape(self.result_shape)
+
+        test = np.isclose(g[indices].real, g_approx, rtol=1e-2)
+        if (not test):
+            print(
+                f'loss grad check failed for real part: {g[indices].real}, {g_approx}'
+            )
+
+        # imag part
+        eps = 1e-7j
+        im = rng.random(np.prod(self.result_shape) * 2)
+        p1 = self.loss(im, beta)
+        im_eps = im.copy()
+        im_eps = real_to_complex(im)
+        im_eps = im_eps.reshape(self.result_shape)
+        indices = [
+            rng.integers(low=d // 10, high=d - d // 10)
+            for d in self.result_shape
+        ]
+        indices = tuple(indices)
+        im_eps[indices] += eps
+        im_eps = complex_to_real(im_eps)
+        im_eps = im_eps.ravel()
+        p2 = self.loss(im_eps, beta)
+        g_approx = (p2 - p1) / eps.imag
+
+        g = self.loss_grad(im, beta)
+        g = real_to_complex(g)
+        g = g.reshape(self.result_shape)
+
+        test = np.isclose(g[indices].imag, g_approx, rtol=1e-2)
+        if (not test):
+            print(
+                f'loss grad check failed for imag part: {g[indices].imag}, {g_approx}'
+            )

@@ -7,12 +7,13 @@ import cupy as cp
 
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
+from scipy.interpolate import interp1d
+
 import nibabel as nib
 import math
-from typing import Union, Sequence
+from typing import Union, Sequence, Tuple
 
 from pymirc.image_operations import aff_transform, zoom3d
-#from pynamr.utils import TPIReadOutTime, RadialKSpacePartitioner
 
 import SimpleITK as sitk
 
@@ -58,10 +59,8 @@ def read_single_tpi_gradient_file(gradient_file: str,
                                   gamma_by_2pi: float = 1126.2,
                                   num_header_elements: int = 6):
 
-    header = np.fromfile(gradient_file,
-                         dtype=np.int16,
-                         offset=0,
-                         count=num_header_elements)
+    header = np.fromfile(
+        gradient_file, dtype=np.int16, offset=0, count=num_header_elements)
 
     # number of cones
     num_cones = int(header[0])
@@ -75,16 +74,17 @@ def read_single_tpi_gradient_file(gradient_file: str,
     max_gradient = float(header[3]) / 100
 
     # number of readouts per cone
-    num_readouts_per_cone = np.fromfile(gradient_file,
-                                        dtype=np.int16,
-                                        offset=num_header_elements * 2,
-                                        count=num_cones)
+    num_readouts_per_cone = np.fromfile(
+        gradient_file,
+        dtype=np.int16,
+        offset=num_header_elements * 2,
+        count=num_cones)
 
-    gradient_array = np.fromfile(gradient_file,
-                                 dtype=np.int16,
-                                 offset=(num_header_elements + num_cones) * 2,
-                                 count=num_cones * num_points).reshape(
-                                     num_cones, num_points)
+    gradient_array = np.fromfile(
+        gradient_file,
+        dtype=np.int16,
+        offset=(num_header_elements + num_cones) * 2,
+        count=num_cones * num_points).reshape(num_cones, num_points)
 
     # calculate k_array in (1/cm)
     k_array = np.cumsum(
@@ -120,10 +120,11 @@ def read_tpi_gradient_files(file_base: str,
     for i_cone in range(header[0]):
         num_readouts = num_readouts_per_cone[i_cone]
 
-        phis = np.linspace(phi0s[i_cone],
-                           2 * np.pi + phi0s[i_cone],
-                           num_readouts,
-                           endpoint=False)
+        phis = np.linspace(
+            phi0s[i_cone],
+            2 * np.pi + phi0s[i_cone],
+            num_readouts,
+            endpoint=False)
 
         for ir in range(num_readouts):
             kx_rotated[ir + num_readouts_cumsum[i_cone], :] = np.cos(
@@ -172,32 +173,290 @@ def show_tpi_readout(kx,
     fig.show()
 
 
+def radial_goldenmean_kspace_coords_1_cm(
+        gradient_strength: float = 0.16,  #G/cm
+        k_max_1_cm: float = 2.9,  #1/cm
+        dt: float = 1e-5,  #s
+        nb_spokes: int = 3162):
+    """Build an array of k-space coordinates [1/cm] for a 3D golden-means radial pulse sequence
+
+        Parameters
+        ----------
+
+        gradient_strength: float
+            TPI maximum gradient in G/cm
+        k_max_1_cm: float
+            maximum frequency
+        dt: float
+            ADC temporal sampling period
+        nb_spokes: int
+            number of spokes from the center to the edge of k-space
+
+        Returns
+        ----------
+
+        k_1_cm: np.ndarray of shape (num_time_samples, num_readouts, num_spatial_dims)
+            k-space coordinates with unit 1/cm
+    """
+
+    phi_1 = 0.4656
+    phi_2 = 0.6823
+    gamma_by_2pi = 1126.2
+
+    dk = gamma_by_2pi * dt * gradient_strength  #1/cm
+    nb_samples_per_spoke = int(np.ceil(k_max_1_cm / dk))
+    k_1_cm = np.zeros((nb_samples_per_spoke, nb_spokes // 2, 3), np.float64)
+
+    r = np.linspace(dk, k_max_1_cm, num=nb_samples_per_spoke)
+    # half sphere
+    for s in range(nb_spokes // 2):
+        azimuth_angle = 2 * np.pi * ((s * phi_2) % 1)
+        polar_angle = np.arccos((s * phi_1) % 1)
+        k_1_cm[:, s, :] = np.array([
+            r * np.sin(polar_angle) * np.cos(azimuth_angle),
+            r * np.sin(polar_angle) * np.sin(azimuth_angle),
+            r * np.cos(polar_angle)
+        ]).T
+
+    # add the other half of the sphere
+    k_1_cm = np.concatenate([k_1_cm, -k_1_cm], axis=1)
+    return k_1_cm
+
+
+def radial_random_kspace_coords_1_cm(
+        gradient_strength: float = 0.16,  #G/cm
+        k_max_1_cm: float = 2.9,  #1/cm
+        dt: float = 1e-5,  #s
+        nb_spokes: int = 3162):
+    """Build an array of k-space coordinates [1/cm] for a radial pulse sequence
+        by sampling randomly from uniform distributions for the cosine of the polar angle and for the azimuthal angle
+
+        Parameters
+        ----------
+
+        gradient_strength: float 
+            TPI maximum gradient in G/cm
+        k_max_1_cm: float
+            maximum frequency
+        dt: float
+            ADC temporal sampling period
+        nb_spokes: int
+            number of spokes from the center to the edge of k-space
+
+        Returns
+        ----------
+
+        k_1_cm: np.ndarray of shape (num_time_samples, num_readouts, num_spatial_dims)
+            k-space coordinates with unit 1/cm
+    """
+
+    gamma_by_2pi = 1126.2
+
+    dk = gamma_by_2pi * dt * gradient_strength  #1/cm
+    nb_samples_per_spoke = int(np.ceil(k_max_1_cm / dk))
+    k_1_cm = np.zeros((nb_samples_per_spoke, nb_spokes, 3), np.float64)
+
+    r = np.linspace(dk, k_max_1_cm, num=nb_samples_per_spoke)
+    # half sphere
+    for s in range(nb_spokes):
+        azimuth_angle = np.random.uniform(0, 2 * np.pi)
+        polar_angle = np.arccos(np.random.uniform(-1, 1))
+        k_1_cm[:, s, :] = np.array([
+            r * np.sin(polar_angle) * np.cos(azimuth_angle),
+            r * np.sin(polar_angle) * np.sin(azimuth_angle),
+            r * np.cos(polar_angle)
+        ]).T
+
+    return k_1_cm
+
+
+def radial_density_adapted_kspace_coords_1_cm(
+        gradient_strength: float = 0.16,  #G/cm
+        k_max_1_cm: float = 2.9,  #1/cm
+        dt: float = 1e-5,  #s
+        nb_spokes: int = 3162,
+        p: float = 0.4):
+    """Build an array of k-space coordinates [1/cm] for a 3D golden-means radial pulse sequence
+
+        Parameters
+        ----------
+
+        gradient_strength: float
+            TPI maximum gradient in G/cm
+        k_max_1_cm: float
+            maximum frequency
+        dt: float
+            ADC temporal sampling period
+        nb_spokes: int
+            number of spokes from the center to the edge of k-space
+
+        Returns
+        ----------
+
+        k_1_cm: np.ndarray of shape (num_time_samples, num_readouts, num_spatial_dims)
+            k-space coordinates with unit 1/cm
+    """
+
+    phi_1 = 0.4656
+    phi_2 = 0.6823
+    gamma_by_2pi = 1126.2
+
+    dk = gamma_by_2pi * dt * gradient_strength  #1/cm
+    #    nb_samples_per_spoke = int(np.ceil(k_max_1_cm/dk))
+
+    k_0 = p * k_max_1_cm
+    t_0 = k_0 / (gamma_by_2pi * gradient_strength)
+
+    t_max = t_0 + (k_max_1_cm**3 - k_0**3) / (
+        3 * gamma_by_2pi * k_0**2 * gradient_strength)
+    nb_samples_per_spoke = int(np.ceil(t_max / dt))
+    t = np.linspace(dt, t_max, num=nb_samples_per_spoke)
+
+    #    grad = k_0**2 * gradient_strength * (3 * gamma_by_2pi * k_0**2 * gradient_strength * (t-t_0) + k_0**3)**(-2/3)
+
+    r_lin = np.linspace(dk, k_0, num=int(np.ceil(k_0 / dk)))
+    r_da = np.power(
+        3 * gamma_by_2pi * k_0**2 * gradient_strength *
+        (t[int(np.ceil(t_0 / dt)):] - t_0) + k_0**3, 1 / 3)
+    r = np.concatenate([r_lin, r_da])
+    k_1_cm = np.zeros((nb_samples_per_spoke, nb_spokes // 2, 3), np.float64)
+    # half sphere
+    for s in range(nb_spokes // 2):
+        azimuth_angle = 2 * np.pi * ((s * phi_2) % 1)
+        polar_angle = np.arccos((s * phi_1) % 1)
+        k_1_cm[:, s, :] = np.array([
+            r * np.sin(polar_angle) * np.cos(azimuth_angle),
+            r * np.sin(polar_angle) * np.sin(azimuth_angle),
+            r * np.cos(polar_angle)
+        ]).T
+
+    # add the other half of the sphere
+    k_1_cm = np.concatenate([k_1_cm, -k_1_cm], axis=1)
+    return k_1_cm
+
+
+def tpi_kspace_coords_1_cm_scanner(
+        gradient_strength: float = 16,
+        data_root_dir: str = None,
+        fill_to_grad16_readout_time: bool = False) -> np.ndarray:
+    """Build an array of k-space coordinates [1/cm] for the spectrally weigthed TPI pulse sequence
+
+        Parameters
+        ----------
+
+        gradient_strength: int
+            TPI maximum gradient in 10^{-2} G/cm
+        data_root_dir: str
+            folder containing gradient trace files
+        fill_to_grad16_readout_time : bool
+            extend the trajectory (continue sampling) until reaching the same readout time as for grad 16
+
+        Returns
+        ----------
+
+        k_1_cm: np.ndarray of shape (num_time_samples, num_readouts, num_spatial_dims)
+            k-space coordinates with unit 1/cm
+    """
+    # find trajectory gradient file
+    if gradient_strength in [16, 8, 4, 2]:
+        gradient_file: str = str(
+            Path(data_root_dir) / 'tpi_gradients/n28p4dt10g16_23Na_v1')
+    elif gradient_strength == 24:
+        gradient_file: str = str(
+            Path(data_root_dir) / 'tpi_gradients/n28p4dt10g24f23')
+    elif gradient_strength == 32 or gradient_strength == 64:
+        gradient_file: str = str(
+            Path(data_root_dir) / 'tpi_gradients/n28p4dt10g32f23')
+    elif gradient_strength == 48:
+        gradient_file: str = str(
+            Path(data_root_dir) / 'tpi_gradients/n28p4dt10g48f23')
+    else:
+        raise ValueError
+
+    # read the k-space trajectories from file
+    # they have physical units 1/cm
+    # kx.shape = (num_readouts, num_time_samples)
+    kx, ky, kz, header, n_readouts_per_cone = read_tpi_gradient_files(
+        gradient_file)
+    #show_tpi_readout(kx, ky, kz, header, n_readouts_per_cone)
+
+    # artificial gradient strength 8 based on 2x oversampling in time of the gradient 16 trace
+    # because no gradient 8 trace available yet
+    if gradient_strength in [16, 8, 4, 2]:
+        num_time_pts = kx.shape[1]
+        interp_time = interp1d(np.arange(num_time_pts), kx, axis=1)
+        oversample = np.arange(0, num_time_pts - 0.9, gradient_strength / 16)
+        kx = interp_time(oversample)
+        interp_time = interp1d(np.arange(num_time_pts), ky, axis=1)
+        ky = interp_time(oversample)
+        interp_time = interp1d(np.arange(num_time_pts), kz, axis=1)
+        kz = interp_time(oversample)
+    # artificial gradient strength 64 based on 2x undersampling in time of the gradient 32 trace
+    # because no gradient 64 trace available yet
+    elif gradient_strength == 64:
+        kx = kx[:, ::2]
+        ky = ky[:, ::2]
+        kz = kz[:, ::2]
+
+    # group k-space coordinates
+    k_1_cm = np.stack([kx, ky, kz], axis=-1)
+    # reshape as (num_time_samples, num_readouts, space_dim)
+    k_1_cm = np.transpose(k_1_cm, (1, 0, 2))
+
+    # readout time kept the same as for grad 16
+    # filled by going back and forth along traj
+    if fill_to_grad16_readout_time:
+        if gradient_strength == 32:
+            k_1_cm = np.concatenate([k_1_cm, k_1_cm[::-1, :, :]], axis=0)
+        elif gradient_strength == 48:
+            k_1_cm = np.concatenate([k_1_cm, k_1_cm[::-1, :, :], k_1_cm],
+                                    axis=0)
+        elif gradient_strength == 64:
+            k_1_cm = np.concatenate(
+                [k_1_cm, k_1_cm[::-1, :, :], k_1_cm, k_1_cm[::-1, :, :]],
+                axis=0)
+
+    # the gradient files only contain a half sphere
+    k_1_cm = np.concatenate([k_1_cm, -k_1_cm], axis=1)
+
+    k_1_cm_abs = np.linalg.norm(k_1_cm, axis=2)
+    #print(f'readout kmax .: {k_1_cm_abs.max():.2f} 1/cm')
+
+    return k_1_cm
+
+
 #---------------------------------------------------------------------------------
 #---------------------------------------------------------------------------------
 #---------------------------------------------------------------------------------
 
 
 def setup_brainweb_phantom(
-    simulation_matrix_size: int,
-    phantom_data_path: Path,
-    field_of_view_cm: float = 22.,
-    csf_na_concentration: float = 3.0,
-    gm_na_concentration: float = 1.5,
-    wm_na_concentration: float = 1.0,
-    other_na_concentration: float = 0.75,
-    T2long_ms_csf: float = 50.,
-    T2long_ms_gm: float = 15.,
-    T2long_ms_wm: float = 18.,
-    T2long_ms_other: float = 15.,
-    T2short_ms_csf: float = 50.,
-    T2short_ms_gm: float = 8.,
-    T2short_ms_wm: float = 9.,
-    T2short_ms_other: float = 8.,
-    add_anatomical_mismatch: bool = False,
-    add_T2star_bias: bool = False,
-    pathology:
-    str = 'none',  # none or combinations of big-lesion, small-lesion, cos, gm, wm, gwm
-    pathology_change_perc: float = 0.):
+        simulation_matrix_size: int,
+        phantom_data_path: Path,
+        field_of_view_cm: float = 22.,
+        csf_na_concentration: float = 3.0,
+        gm_na_concentration: float = 1.5,
+        wm_na_concentration: float = 1.0,
+        other_na_concentration: float = 0.75,
+        T2long_ms_csf: float = 50.,
+        T2long_ms_gm: float = 15.,
+        T2long_ms_wm: float = 18.,
+        T2long_ms_other: float = 15.,
+        T2short_ms_csf: float = 50.,
+        T2short_ms_gm: float = 8.,
+        T2short_ms_wm: float = 9.,
+        T2short_ms_other: float = 8.,
+        add_anatomical_mismatch: bool = False,
+        add_T2star_bias: bool = False,
+        pathology:
+        str = 'none',  # none or relevant combinations of [lesion, cos, gm, wm, gwm, multi] or glioma
+        pathology_size_perc:
+        float = 0.,  # size in percentage of image size (first dimension), not relevant for glioma
+        pathology_change_perc:
+        float = 0.,  # change in percentage with respect to underlying normal tissue, not relevant for cosine part
+        pathology_center_perc: np.ndarray = np.array(
+            [0., 0., 0.])  # not relevant for glioma
+):
 
     simulation_voxel_size_mm: float = 10 * field_of_view_cm / simulation_matrix_size
 
@@ -208,8 +467,8 @@ def setup_brainweb_phantom(
     # pad to 220mm FOV
     lab_voxelsize = label_nii.header['pixdim'][1]
     lab = label_nii.get_fdata()
-    pad_size_220 = ((220 - np.array(lab.shape) * lab_voxelsize) /
-                    lab_voxelsize / 2).astype(int)
+    pad_size_220 = ((220 - np.array(lab.shape) * lab_voxelsize) / lab_voxelsize
+                    / 2).astype(int)
     pad_size_220 = ((pad_size_220[0], pad_size_220[0]),
                     (pad_size_220[1], pad_size_220[1]), (pad_size_220[2],
                                                          pad_size_220[2]))
@@ -240,49 +499,9 @@ def setup_brainweb_phantom(
     img[eye1_inds] = csf_na_concentration
     img[eye2_inds] = csf_na_concentration
 
-    # add pathology if required
-    # only in the foreground, only for Na "concentration"
-    if pathology != 'none' and pathology_change_perc > 0.:
-        patho_mask = img > 0.
-        patho_only = np.ones(img.shape, img.dtype)
-        if 'gwm' in pathology:
-            patho_mask *= (lab == 2) + (lab == 3)
-        elif 'gm' in pathology:
-            patho_mask *= (lab == 2)
-        elif 'wm' in pathology:
-            patho_mask *= (lab == 3)
-        if 'cos' in pathology:
-            cos_1d = cos_im_for_tpi(img.shape)
-            patho_only = patho_only * np.broadcast_to(cos_1d, img.shape)
-        if 'lesion' in pathology:
-            if 'small' in pathology:
-                radius = img.shape[0] // 20
-                center = img.shape[0] // 2 + 2 * radius
-            elif 'big' in pathology:
-                radius = img.shape[0] // 10
-                center = img.shape[0] // 2 + radius
-            else:
-                radius = img.shape[0] // 20
-                center = img.shape[0] // 2 + radius
-            # build indices for a sphere with given radius and center
-            ind = np.arange(img.shape[0])
-            k0, k1, k2 = np.meshgrid(ind, ind, ind)
-            k_abs = np.sqrt((k0 - center)**2 + (k1 - center)**2 +
-                            (k2 - center)**2)
-            patho_mask *= k_abs < radius
-
-        # the pathological sodium concentration is the maximum normal intensity in the same area
-        # increased by the given percentage
-        ref_intensity = np.max(img[patho_mask])
-        patho_intensity = ref_intensity * pathology_change_perc / 100.
-
-        # add the pathology only in the mask area
-        img[patho_mask] += patho_only[patho_mask] * patho_intensity
-
     # set up array for Gamma (ratio between 2nd and 1st echo)
-    T2short_ms = np.full(lab.shape,
-                         0.5 * np.finfo(np.float32).max,
-                         dtype=np.float32)
+    T2short_ms = np.full(
+        lab.shape, 0.5 * np.finfo(np.float32).max, dtype=np.float32)
     T2short_ms[csf_inds] = T2short_ms_csf
     T2short_ms[gm_inds] = T2short_ms_gm
     T2short_ms[wm_inds] = T2short_ms_wm
@@ -290,9 +509,8 @@ def setup_brainweb_phantom(
     T2short_ms[eye1_inds] = T2short_ms_csf
     T2short_ms[eye2_inds] = T2short_ms_csf
 
-    T2long_ms = np.full(lab.shape,
-                        0.5 * np.finfo(np.float32).max,
-                        dtype=np.float32)
+    T2long_ms = np.full(
+        lab.shape, 0.5 * np.finfo(np.float32).max, dtype=np.float32)
     T2long_ms[csf_inds] = T2long_ms_csf
     T2long_ms[gm_inds] = T2long_ms_gm
     T2long_ms[wm_inds] = T2long_ms_wm
@@ -308,6 +526,94 @@ def setup_brainweb_phantom(
     # add eye contrast
     t1[eye1_inds] *= 0.5
     t1[eye2_inds] *= 0.5
+
+    # add pathology if required
+    if pathology == 'glioma' and pathology_change_perc > 0.:
+        glioma_mask = np.fromfile(phantom_data_path / 'glioma_labshape.raw',
+                                  int).reshape(img.shape)
+        img[glioma_mask == 1] = 0.9 * csf_na_concentration
+        glioma_ring = pathology_change_perc * wm_na_concentration / 100
+        img[glioma_mask == 2] = glioma_ring
+        # modify T2 values, same for before and after treatment
+        T2short_ms[glioma_mask == 1] = T2short_ms_csf
+        T2long_ms[glioma_mask == 1] = T2long_ms_csf
+        T2short_ms[glioma_mask == 2] = T2short_ms_wm
+        T2long_ms[glioma_mask == 2] = T2long_ms_wm
+    elif pathology != 'none':
+        # pathology mask init
+        patho_mask = img > 0.
+        # pathology intensity init
+        patho_only = np.ones(img.shape, img.dtype)
+        if 'gwm' in pathology:
+            patho_mask *= (lab == 2) + (lab == 3)
+        elif 'gm' in pathology:
+            patho_mask *= (lab == 2)
+        elif 'wm' in pathology:
+            patho_mask *= (lab == 3)
+        if 'cos' in pathology:
+            cos_im = cos_im_for_tpi(img.shape)
+            patho_only = patho_only * cos_im
+        if 'lesion' in pathology:
+            if 'multi' in pathology:
+                # many random spherical lesions
+                nb_lesions = 20
+                rng = np.random.default_rng(42)
+                radius_init = 0.5 * pathology_size_perc * img.shape[0] / 100.
+                radii = rng.random(nb_lesions) * 2. * radius_init
+                # centers
+                centers = rng.random(nb_lesions) * img.shape[0] // 3
+                # mask containing all the lesions
+                temp_mask = np.zeros_like(patho_mask)
+                for l in range(nb_lesions):
+                    k0, k1, k2 = np.meshgrid(
+                        np.arange(img.shape[0]),
+                        np.arange(img.shape[1]),
+                        np.arange(img.shape[2]),
+                        indexing='ij')
+                    k_abs = np.sqrt((k0 - img.shape[0] // 2 - centers[l])**2 +
+                                    (k1 - img.shape[1] // 2 - centers[l])**2 +
+                                    (k2 - img.shape[2] // 2 - centers[l])**2)
+                    temp_mask += k_abs < radii[l]
+                patho_mask *= temp_mask
+            else:
+                #                if pathology_center == 'nearcenter':
+                #                    # center of lesion, a bit shifted from the image center
+                #                    center = (img.shape[0] // 2 + img.shape[0] // 10, ) * 3
+                #                elif pathology_center == 'gyri':
+                #                    # around gyri
+                #                    center = [300, 128, 208]
+                #                elif pathology_center == 'offcenter':
+                #                    # further away from the center
+                #                    center = [280, 220, 260]
+
+                center = tuple(
+                    np.multiply(pathology_center_perc / 100.,
+                                np.array(img.shape)))
+
+                # spherical lesion
+                radius = 0.5 * pathology_size_perc * img.shape[0] / 100.
+                # mask for a sphere with given radius and center
+                k0, k1, k2 = np.meshgrid(
+                    np.arange(img.shape[0]),
+                    np.arange(img.shape[1]),
+                    np.arange(img.shape[2]),
+                    indexing='ij')
+                k_abs = np.sqrt((k0 - center[0])**2 + (k1 - center[1])**2 +
+                                (k2 - center[2])**2)
+                patho_mask *= k_abs < radius
+
+        if 'cos' in pathology:
+            # the amplitude of the cosine is chosen as the maximum amplitude
+            # that does not make the image intensity become negative
+            patho_intensity = np.min(img[patho_mask])
+        else:
+            # the pathological sodium concentration is the maximum normal concentration in the same area
+            # increased by the given percentage
+            ref_intensity = np.max(img[patho_mask])
+            patho_intensity = ref_intensity * pathology_change_perc / 100.
+
+        # add the pathology only in the mask area
+        img[patho_mask] += patho_only[patho_mask] * patho_intensity
 
     # add mismatches
     if add_anatomical_mismatch:
@@ -335,17 +641,12 @@ def setup_brainweb_phantom(
     return img_extrapolated, t1_extrapolated, T2short_ms_extrapolated, T2long_ms_extrapolated
 
 
-def setup_blob_phantom(
-    simulation_matrix_size: int,
-    radius: float = 0.25,
-    T2short: float = 0.5 * np.finfo(np.float32).max,
-    T2long: float = 0.5 * np.finfo(np.float32).max,
-    longerT2ring: bool = False,
-    pathology:
-    str = 'none',  # none, cos, big-lesion, small-lesion, or combinations thereof
-    pathology_change_perc: float = 0.):
+def setup_blob_phantom(simulation_matrix_size: int,
+                       radius: float = 0.25,
+                       T2short: float = 0.5 * np.finfo(np.float32).max,
+                       T2long: float = 0.5 * np.finfo(np.float32).max):
     """simple central blob phantom to test normalization factor between nufft data and IFFT
-        and study other effects (ideal observer analysis, influence of T2 nonuniformity, etc.)"""
+        and study other effects ( influence of T2 nonuniformity, etc.)"""
 
     img_shape = 3 * (simulation_matrix_size, )
 
@@ -365,62 +666,22 @@ def setup_blob_phantom(
     T2short_im = np.full(img_shape, T2short)
     T2long_im = np.full(img_shape, T2long)
 
-    if longerT2ring:
-        # add a ring of CSF like T2* values inside the cylinder
-        inner = radius * 0.8
-        T2short_im[np.logical_and(R < radius, R
-                                  > inner)] = 50  #0.5*np.finfo(np.float32).max
-        T2long_im[np.logical_and(R < radius, R
-                                 > inner)] = 50  #0.5*np.finfo(np.float32).max
-
-    # add pathology if required
-    # only in the foreground, only for Na "concentration"
-    if pathology != 'none' and pathology_change_perc > 0.:
-        patho_mask = img > 0.
-        patho_only = np.ones(img.shape, img.dtype)
-        if 'cos' in pathology:
-            cos_1d = cos_im_for_tpi(img.shape)
-            patho_only = patho_only * np.broadcast_to(cos_1d, img.shape)
-        if 'lesion' in pathology:
-            if 'small' in pathology:
-                radius = img.shape[0] // 20
-                center = img.shape[0] // 2 + 2 * radius
-            elif 'big' in pathology:
-                radius = img.shape[0] // 10
-                center = img.shape[0] // 2 + radius
-            else:
-                radius = img.shape[0] // 20
-                center = img.shape[0] // 2 + radius
-
-            # build indices for a sphere with given radius and center
-            ind = np.arange(img.shape[0])
-            k0, k1, k2 = np.meshgrid(ind, ind, ind)
-            k_abs = np.sqrt((k0 - center)**2 + (k1 - center)**2 +
-                            (k2 - center)**2)
-            patho_mask *= k_abs < radius
-
-        # the pathological sodium concentration is the maximum normal intensity in the same area
-        # increased by the given percentage
-        ref_intensity = np.max(img[patho_mask])
-        patho_intensity = ref_intensity * pathology_change_perc / 100.
-
-        # add the pathology only in the mask area
-        img[patho_mask] += patho_only[patho_mask] * patho_intensity
-
     return img, t1, T2short_im, T2long_im
 
 
-def cos_im_for_tpi(im_shape: tuple) -> np.ndarray:
-    """ Build 1D cosine based on hard coded maximum TPI frequency, field of view,
-        and given input image cubic matrix size
+def cos_im_for_tpi(im_shape: tuple,
+                   kmax_1_cm: float = 1.45,
+                   field_of_view_cm: float = 22.,
+                   nb_deltak_from_max: float = 6.) -> np.ndarray:
+    """ Build cosine image based on a high frequency acquired with TPI
+
+    Returns: single frequency cosine image with shape identical to input image shape
     """
 
-    kmax_1_cm = 1.45
-    field_of_view_cm = 22.
     n = im_shape[-1]
 
-    # spatial frequency of the cosine: N - 1 (one before maximum discretized frequency)
-    real_freq = kmax_1_cm - 1. / field_of_view_cm  # 1/cm
+    # spatial frequency of the cosine: N - nb_deltak_from_max
+    real_freq = kmax_1_cm - nb_deltak_from_max / field_of_view_cm  # 1/cm
     vox_size = field_of_view_cm / n
     period = 1. / real_freq
     period_nb_vox = period / vox_size
@@ -446,16 +707,15 @@ def crop_kspace_data(data: np.ndarray,
     if center:
         cropped = data[in_shape[0] // 2 - out_shape[0] // 2:in_shape[0] // 2 +
                        out_shape[0] // 2, in_shape[1] // 2 -
-                       out_shape[1] // 2:in_shape[1] // 2 + out_shape[1] // 2,
-                       in_shape[2] // 2 - out_shape[2] // 2:in_shape[2] // 2 +
-                       out_shape[2] // 2]
+                       out_shape[1] // 2:in_shape[1] // 2 +
+                       out_shape[1] // 2, in_shape[2] // 2 -
+                       out_shape[2] // 2:in_shape[2] // 2 + out_shape[2] // 2]
     else:
         temp = np.fft.fftshift(data)
         temp = temp[in_shape[0] // 2 - out_shape[0] // 2:in_shape[0] // 2 +
-                    out_shape[0] // 2, in_shape[1] // 2 -
-                    out_shape[1] // 2:in_shape[1] // 2 + out_shape[1] // 2,
-                    in_shape[2] // 2 - out_shape[2] // 2:in_shape[2] // 2 +
-                    out_shape[2] // 2]
+                    out_shape[0] // 2, in_shape[1] // 2 - out_shape[1] //
+                    2:in_shape[1] // 2 + out_shape[1] // 2, in_shape[2] // 2 -
+                    out_shape[2] // 2:in_shape[2] // 2 + out_shape[2] // 2]
         cropped = np.fft.fftshift(temp)
 
     # normalization factor for preserving the same image scale
@@ -504,38 +764,35 @@ def trilinear_kspace_interpolation(non_uniform_data, kx, ky, kz, matrix_size,
 
             toAdd = non_uniform_data[i]
 
-            if (kx_shifted_low >= 0) and (ky_shifted_low
-                                          >= 0) and (kz_shifted_low >= 0):
+            if (kx_shifted_low >= 0) and (ky_shifted_low >=
+                                          0) and (kz_shifted_low >= 0):
 
-                output[kx_shifted_low, ky_shifted_low,
-                       kz_shifted_low] += (1 - dkx) * (1 - dky) * (1 -
-                                                                   dkz) * toAdd
+                output[kx_shifted_low, ky_shifted_low, kz_shifted_low] += (
+                    1 - dkx) * (1 - dky) * (1 - dkz) * toAdd
 
-                output[kx_shifted_high, ky_shifted_low,
-                       kz_shifted_low] += (dkx) * (1 - dky) * (1 - dkz) * toAdd
+                output[kx_shifted_high, ky_shifted_low, kz_shifted_low] += (
+                    dkx) * (1 - dky) * (1 - dkz) * toAdd
 
-                output[kx_shifted_low, ky_shifted_high,
-                       kz_shifted_low] += (1 - dkx) * (dky) * (1 - dkz) * toAdd
+                output[kx_shifted_low, ky_shifted_high, kz_shifted_low] += (
+                    1 - dkx) * (dky) * (1 - dkz) * toAdd
 
-                output[kx_shifted_high, ky_shifted_high,
-                       kz_shifted_low] += (dkx) * (dky) * (1 - dkz) * toAdd
+                output[kx_shifted_high, ky_shifted_high, kz_shifted_low] += (
+                    dkx) * (dky) * (1 - dkz) * toAdd
 
-                output[kx_shifted_low, ky_shifted_low,
-                       kz_shifted_high] += (1 - dkx) * (1 -
-                                                        dky) * (dkz) * toAdd
+                output[kx_shifted_low, ky_shifted_low, kz_shifted_high] += (
+                    1 - dkx) * (1 - dky) * (dkz) * toAdd
 
-                output[kx_shifted_high, ky_shifted_low,
-                       kz_shifted_high] += (dkx) * (1 - dky) * (dkz) * toAdd
+                output[kx_shifted_high, ky_shifted_low, kz_shifted_high] += (
+                    dkx) * (1 - dky) * (dkz) * toAdd
 
-                output[kx_shifted_low, ky_shifted_high,
-                       kz_shifted_high] += (1 - dkx) * (dky) * (dkz) * toAdd
+                output[kx_shifted_low, ky_shifted_high, kz_shifted_high] += (
+                    1 - dkx) * (dky) * (dkz) * toAdd
 
-                output[kx_shifted_high, ky_shifted_high,
-                       kz_shifted_high] += (dkx) * (dky) * (dkz) * toAdd
+                output[kx_shifted_high, ky_shifted_high, kz_shifted_high] += (
+                    dkx) * (dky) * (dkz) * toAdd
 
 
 class TriliniearKSpaceRegridder:
-
     def __init__(self,
                  matrix_size: int,
                  delta_k: float,
@@ -575,9 +832,10 @@ class TriliniearKSpaceRegridder:
                                        self._delta_k, self._kmax,
                                        self._sampling_weights)
 
-        self._central_weight = self._sampling_weights[self._matrix_size // 2,
-                                                      self._matrix_size // 2,
-                                                      self._matrix_size // 2]
+        self._central_weight = self._sampling_weights[self._matrix_size //
+                                                      2, self._matrix_size //
+                                                      2, self._matrix_size //
+                                                      2]
 
         if self._normalize_central_weight:
             self._sampling_weights /= self._central_weight
@@ -737,8 +995,8 @@ def align_images(fixed_image: np.ndarray,
         registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
 
         # Don't optimize in-place, we would possibly like to run this cell multiple times.
-        registration_method.SetInitialTransform(initial_transform,
-                                                inPlace=False)
+        registration_method.SetInitialTransform(
+            initial_transform, inPlace=False)
 
         final_transform = registration_method.Execute(
             sitk.Cast(fixed_sitk_image, sitk.sitkFloat32),
@@ -753,11 +1011,9 @@ def align_images(fixed_image: np.ndarray,
                 f"Final metric value: {registration_method.GetMetricValue()}")
             print(f"Final parameters: {final_transform.GetParameters()}")
 
-    moving_sitk_image_resampled = sitk.Resample(moving_sitk_image,
-                                                fixed_sitk_image,
-                                                final_transform,
-                                                sitk.sitkLinear, 0.0,
-                                                moving_sitk_image.GetPixelID())
+    moving_sitk_image_resampled = sitk.Resample(
+        moving_sitk_image, fixed_sitk_image, final_transform, sitk.sitkLinear,
+        0.0, moving_sitk_image.GetPixelID())
 
     moving_image_aligned = sitk_image_to_numpy_volume(
         moving_sitk_image_resampled)
@@ -800,41 +1056,34 @@ def read_GE_ak_wav(fname: str):
     desc = np.fromfile(fname, dtype=np.int8, offset=offset, count=256)
     offset += desc.size * desc.itemsize
 
-    N["gpts"] = np.fromfile(fname,
-                            dtype=np.dtype('>u2'),
-                            offset=offset,
-                            count=1)[0]
+    N["gpts"] = np.fromfile(
+        fname, dtype=np.dtype('>u2'), offset=offset, count=1)[0]
     offset += N["gpts"].size * N["gpts"].itemsize
 
-    N["groups"] = np.fromfile(fname,
-                              dtype=np.dtype('>u2'),
-                              offset=offset,
-                              count=1)[0]
+    N["groups"] = np.fromfile(
+        fname, dtype=np.dtype('>u2'), offset=offset, count=1)[0]
     offset += N["groups"].size * N["groups"].itemsize
 
-    N["intl"] = np.fromfile(fname,
-                            dtype=np.dtype('>u2'),
-                            offset=offset,
-                            count=N["groups"])
+    N["intl"] = np.fromfile(
+        fname, dtype=np.dtype('>u2'), offset=offset, count=N["groups"])
     offset += N["intl"].size * N["intl"].itemsize
 
-    N["params"] = np.fromfile(fname,
-                              dtype=np.dtype('>u2'),
-                              offset=256 + 4 + N["groups"] * 2,
-                              count=1)[0]
+    N["params"] = np.fromfile(
+        fname,
+        dtype=np.dtype('>u2'),
+        offset=256 + 4 + N["groups"] * 2,
+        count=1)[0]
     offset += N["params"].size * N["params"].itemsize
 
-    params = np.fromfile(fname,
-                         dtype=np.dtype('>f8'),
-                         offset=offset,
-                         count=N["params"])
+    params = np.fromfile(
+        fname, dtype=np.dtype('>f8'), offset=offset, count=N["params"])
     offset += params.size * params.itemsize
 
     wave = np.fromfile(fname, dtype=np.dtype('>i2'), offset=offset)
     offset += wave.size * wave.itemsize
 
-    grad = np.swapaxes(wave.reshape((N["groups"], N["intl"][0], N["gpts"])), 0,
-                       2)
+    grad = np.swapaxes(
+        wave.reshape((N["groups"], N["intl"][0], N["gpts"])), 0, 2)
 
     # set stop bit to 0
     grad[-1, ...] = 0
@@ -851,14 +1100,15 @@ def read_GE_ak_wav(fname: str):
     return grad, bw, fov, desc, N, params
 
 
-def simpleForward_TPI_FFT(image: cp.ndarray,
-                          T2map_short: cp.ndarray,
-                          T2map_long: cp.ndarray,
-                          acquired_grid_n: int,
-                          echo_time_ms: float,
-                          num_time_bins: int,
-                          acc: float = 1.) -> [cp.ndarray, cp.ndarray]:
-    """Simple forward TPI operator using FFT approximation, assuming bi exp decay
+def tpi_t2biexp_fft(
+        image: cp.ndarray,
+        T2map_short: cp.ndarray,
+        T2map_long: cp.ndarray,
+        acquired_grid_n: int,
+        echo_time_ms: float,
+        num_time_bins: int,
+        shorter_readout_factor: float = 1.) -> [cp.ndarray, cp.ndarray]:
+    """Forward TPI operator using FFT approximation, assuming bi-exponential T2* decay
 
         Parameters
         ----------
@@ -868,7 +1118,7 @@ def simpleForward_TPI_FFT(image: cp.ndarray,
         acquired_grid_n: matrix size, assuming cubic matrix
         echo_time_ms : float
         num_time_bins: int, number of time bins
-        acc : time acceleration of the hard coded TPI with max grad=0.16G/cm
+        shorter_readout_factor : shorter readout time wrt the hard coded TPI with max grad=0.16G/cm
 
         Returns
         ----------
@@ -880,11 +1130,10 @@ def simpleForward_TPI_FFT(image: cp.ndarray,
     ishape = image.shape
     # hard coded equation for TPI readout time
     # as a function of the distance from k-space center
-    t = TPIReadOutTime()
     pad_factor = ishape[0] // acquired_grid_n
     k = RadialKSpacePartitioner(ishape, num_time_bins, pad_factor)
 
-    time_bins = t(k.k) / acc
+    time_bins = tpi_readout_time_from_k(k.k) / shorter_readout_factor
     k_inds = k.k_inds
     k_mask = cp.asarray(k.kmask)
 
@@ -899,3 +1148,246 @@ def simpleForward_TPI_FFT(image: cp.ndarray,
         data[k_inds[i]] += cp.fft.fftn(image * decay, norm='ortho')[k_inds[i]]
 
     return data, k_mask
+
+
+def tpi_readout_time_from_k(k):
+    """Mapping of k-space vector magnitude to readout time (ms) for TPI sequence
+       with hard-coded fixed parameters, max readout gradient = 0.16 G/cm
+    """
+
+    eta: float = 0.9830
+    c1: float = 0.54
+    c2: float = 0.46
+    alpha_sw_tpi: float = 18.95
+    beta_sw_tpi: float = -0.5171
+    t0_sw: float = 0.0018
+
+    # the point until the readout is linear
+    m = 1126 * 0.16
+
+    k_lin = t0_sw * m
+
+    i1 = np.where(k <= k_lin)
+    i2 = np.where(k > k_lin)
+
+    t = np.zeros(k.shape)
+
+    t[i1] = k[i1] / m
+    t[i2] = t0_sw + ((c2 * (k[i2]**3) - (
+        (c1 / eta) * np.exp(-eta * (k[i2]**3))) - beta_sw_tpi) /
+                     (3 * alpha_sw_tpi))
+
+    # convert to ms
+    t *= 1000
+
+    return t
+
+
+class RadialKSpacePartitioner:
+    """Partition Cartesion volume of kspace points into a number of equidistant shells
+
+        Parameters
+        ----------
+
+        data_shape : k-space dimensions
+
+        pad_factor : ratio of maximum spatial frequency in the output k-space and k_edge
+                     the frequencies larger than k_edge are set to zero
+
+        n_bins : number of equidistant shells
+
+        k_edge : real maximum spatial frequency reached by the pulse sequence
+
+
+        Returns
+        -------
+        Stores the indices of k-space points for each shell in a (possibly padded) k-space, sampling mask,
+        k-space vector magnitudes for each shell
+    """
+
+    def __init__(self,
+                 data_shape: Tuple,
+                 n_bins: int,
+                 pad_factor: float = 1.,
+                 k_edge: float = 1.8 * 0.8197) -> None:
+
+        self._n_bins = n_bins
+        self._k_edge = k_edge
+
+        # the coordinates of k-space data voxels
+        k0, k1, k2 = np.meshgrid(
+            np.linspace(
+                -pad_factor * k_edge,
+                pad_factor * k_edge,
+                data_shape[0],
+                endpoint=False),
+            np.linspace(
+                -pad_factor * k_edge,
+                pad_factor * k_edge,
+                data_shape[1],
+                endpoint=False),
+            np.linspace(
+                -pad_factor * k_edge,
+                pad_factor * k_edge,
+                data_shape[2],
+                endpoint=False))
+
+        # k-space vector magnitude for each k-space voxel
+        abs_k = np.sqrt(k0**2 + k1**2 + k2**2)
+        abs_k = np.fft.fftshift(abs_k)
+
+        # shells edges
+        k_1d = np.linspace(0, k_edge, n_bins + 1)
+
+        # k-space sample indices per shell
+        self._k_inds = []
+        # sampling mask
+
+        self._kmask = np.zeros(data_shape, dtype=np.uint8)
+        # k vector magnitude per shell
+        self._k = np.zeros(n_bins)
+
+        for i in range(n_bins):
+            rinds = np.where(
+                np.logical_and(abs_k >= k_1d[i], abs_k < k_1d[i + 1]))
+            self._k_inds.append(rinds)
+            self.kmask[rinds] = 1
+            self._k[i] = 0.5 * (k_1d[i] + k_1d[i + 1])
+
+        # convert mutable list to tuple
+        self._k_inds = tuple(self._k_inds)
+
+    @property
+    def kmask(self) -> np.ndarray:
+        return self._kmask
+
+    @property
+    def k(self) -> np.ndarray:
+        return self._k
+
+    @property
+    def k_edge(self) -> float:
+        return self._k_edge
+
+    @property
+    def n_bins(self) -> int:
+        return self._n_bins
+
+    @property
+    def k_inds(self) -> Tuple[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        return self._k_inds
+
+
+def ideal_observer_statistic(data: np.ndarray, expect_normal: np.ndarray,
+                             expect_pathological: np.ndarray,
+                             noise_var: float):
+    """Ideal observer statistic for known background/foreground task
+    Assumption: multivariate Gaussian data with constant diagonal covariance matrix (iid Gaussian noise)
+
+    Parameters
+    ----------
+
+    data : np.ndarray
+        measured noisy data
+    expect_normal : np.ndarray
+        data expectation for normal subject
+    expect_pathological : np.ndarray
+        data expectation for pathological subject
+    noise_var : float
+        noise variance (scalar), idd Gaussian noise
+
+    Returns
+    -------
+
+    ideal observer statistic (likelihood ratio between two hypotheses) : scalar
+    """
+
+    expect_normal = np.hstack(
+        [expect_normal.ravel().real,
+         expect_normal.ravel().imag])
+    expect_pathological = np.hstack(
+        [expect_pathological.ravel().real,
+         expect_pathological.ravel().imag])
+    expect_task = expect_pathological - expect_normal
+
+    data = np.hstack([data.ravel().real, data.ravel().imag])
+
+    # simplified formula for iid noise
+    lk_ratio = expect_task * data / noise_var
+    lk_ratio = np.sum(lk_ratio)
+
+    return lk_ratio
+
+
+def ideal_observer_snr(expect_normal: np.ndarray,
+                       expect_pathological: np.ndarray, noise_var: float):
+    """Overall SNR of multivariate Gaussian data with constant diagonal covariance matrix (iid Gaussian noise)
+    SNR of ideal observer for known background/foreground and noise cov
+
+    Parameters
+    ----------
+
+    expect_normal : np.ndarray
+        data expectation for normal subject
+    expect_pathological : np.ndarray
+        data expectation for pathological subject
+    noise_var : float
+        noise variance (scalar), idd Gaussian noise
+
+    Returns
+    -------
+
+    Ideal observer SNR (squared version) : scalar
+    """
+
+    # as data may be complex, unravel real and imaginary components
+    # real and imaginary components are assumed to have the same iid Gaussian
+    # noise
+    expect_normal = np.hstack(
+        [expect_normal.ravel().real,
+         expect_normal.ravel().imag])
+    expect_pathological = np.hstack(
+        [expect_pathological.ravel().real,
+         expect_pathological.ravel().imag])
+
+    # expected pathological features
+    expect_task = expect_pathological - expect_normal
+
+    # simplified formula for iid noise
+    snr_square = expect_task**2 / noise_var
+
+    snr = np.sqrt(np.sum(snr_square))
+
+    return snr
+
+
+def real_to_complex(z):
+    """Convert 1D array with concatenated real datatype representation into complex datatype
+
+       Parameters
+       ----------
+       z : real 1D numpy.ndarray
+           concatenated real and imaginary components
+
+       Returns
+       ----------
+       complex 1D numpy.ndarray
+    """
+
+    return z[:len(z) // 2] + 1j * z[len(z) // 2:]
+
+
+def complex_to_real(z):
+    """Convert 1D array with complex datatype into concatenated real datatype representation
+
+       Parameters
+       ----------
+       z : complex 1D numpy.ndarray
+
+       Returns
+       ----------
+       real 1D numpy.ndarray
+           concatenated real and imaginary components
+    """
+
+    return np.concatenate((np.real(z), np.imag(z)))
