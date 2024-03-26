@@ -174,17 +174,18 @@ def show_tpi_readout(kx,
 
 
 def radial_goldenmean_kspace_coords_1_cm(
-        gradient_strength: float = 0.16,  #G/cm
-        k_max_1_cm: float = 2.9,  #1/cm
+        gradient_strength: int = 16,
+        k_max_1_cm: float = 1.45,  #1/cm
         dt: float = 1e-5,  #s
-        nb_spokes: int = 3162):
+        nb_spokes: int = 10000,
+        fill_to_grad08_readout_time: bool = False):
     """Build an array of k-space coordinates [1/cm] for a 3D golden-means radial pulse sequence
 
         Parameters
         ----------
 
-        gradient_strength: float
-            TPI maximum gradient in G/cm
+        gradient_strength: int 
+            TPI maximum gradient in e-2 G/cm
         k_max_1_cm: float
             maximum frequency
         dt: float
@@ -199,11 +200,13 @@ def radial_goldenmean_kspace_coords_1_cm(
             k-space coordinates with unit 1/cm
     """
 
+    # 2D golden angles
     phi_1 = 0.4656
     phi_2 = 0.6823
     gamma_by_2pi = 1126.2
+    grad_g_cm = gradient_strength / 100.
 
-    dk = gamma_by_2pi * dt * gradient_strength  #1/cm
+    dk = gamma_by_2pi * dt * grad_g_cm  #1/cm
     nb_samples_per_spoke = int(np.ceil(k_max_1_cm / dk))
     k_1_cm = np.zeros((nb_samples_per_spoke, nb_spokes // 2, 3), np.float64)
 
@@ -218,24 +221,33 @@ def radial_goldenmean_kspace_coords_1_cm(
             r * np.cos(polar_angle)
         ]).T
 
+    # readout time kept the same as for grad 0.08G/cm (32ms)
+    # filled by going back and forth along traj
+    if fill_to_grad08_readout_time:
+        if gradient_strength == 16:
+            k_1_cm = np.concatenate([k_1_cm, k_1_cm[::-1, :, :]], axis=0)
+        elif gradient_strength == 32:
+            k_1_cm = np.concatenate([k_1_cm, k_1_cm[::-1, :, :], k_1_cm, k_1_cm[::-1, :, :]],
+                                    axis=0)
+
     # add the other half of the sphere
     k_1_cm = np.concatenate([k_1_cm, -k_1_cm], axis=1)
     return k_1_cm
 
 
 def radial_random_kspace_coords_1_cm(
-        gradient_strength: float = 0.16,  #G/cm
-        k_max_1_cm: float = 2.9,  #1/cm
+        gradient_strength: int = 16,  #10-2 G/cm
+        k_max_1_cm: float = 1.45,  #1/cm
         dt: float = 1e-5,  #s
-        nb_spokes: int = 3162):
+        nb_spokes: int = 10000):
     """Build an array of k-space coordinates [1/cm] for a radial pulse sequence
         by sampling randomly from uniform distributions for the cosine of the polar angle and for the azimuthal angle
 
         Parameters
         ----------
 
-        gradient_strength: float 
-            TPI maximum gradient in G/cm
+        gradient_strength: int
+            TPI maximum gradient in e-2 G/cm
         k_max_1_cm: float
             maximum frequency
         dt: float
@@ -251,8 +263,9 @@ def radial_random_kspace_coords_1_cm(
     """
 
     gamma_by_2pi = 1126.2
+    grad_g_cm = gradient_strength / 100.
 
-    dk = gamma_by_2pi * dt * gradient_strength  #1/cm
+    dk = gamma_by_2pi * dt * grad_g_cm  #1/cm
     nb_samples_per_spoke = int(np.ceil(k_max_1_cm / dk))
     k_1_cm = np.zeros((nb_samples_per_spoke, nb_spokes, 3), np.float64)
 
@@ -271,24 +284,27 @@ def radial_random_kspace_coords_1_cm(
 
 
 def radial_density_adapted_kspace_coords_1_cm(
-        gradient_strength: float = 0.16,  #G/cm
-        k_max_1_cm: float = 2.9,  #1/cm
+        gradient_strength: int = 16,
+        k_max_1_cm: float = 1.45,  #1/cm
         dt: float = 1e-5,  #s
-        nb_spokes: int = 3162,
+        nb_spokes: int = 10000,
         p: float = 0.4):
     """Build an array of k-space coordinates [1/cm] for a 3D golden-means radial pulse sequence
+       and density adapted sampling
 
         Parameters
         ----------
 
-        gradient_strength: float
-            TPI maximum gradient in G/cm
+        gradient_strength: int
+            TPI maximum gradient in e-2 G/cm, more convenient for a category
         k_max_1_cm: float
             maximum frequency
         dt: float
             ADC temporal sampling period
         nb_spokes: int
             number of spokes from the center to the edge of k-space
+        p: float
+            fraction of k_max sampled radially
 
         Returns
         ----------
@@ -297,26 +313,25 @@ def radial_density_adapted_kspace_coords_1_cm(
             k-space coordinates with unit 1/cm
     """
 
+    # golden angles
     phi_1 = 0.4656
     phi_2 = 0.6823
     gamma_by_2pi = 1126.2
+    grad_g_cm = gradient_strength / 100.
 
-    dk = gamma_by_2pi * dt * gradient_strength  #1/cm
-    #    nb_samples_per_spoke = int(np.ceil(k_max_1_cm/dk))
+    dk = gamma_by_2pi * dt * grad_g_cm  # G/cm
 
     k_0 = p * k_max_1_cm
-    t_0 = k_0 / (gamma_by_2pi * gradient_strength)
+    t_0 = k_0 / (gamma_by_2pi * grad_g_cm)
 
     t_max = t_0 + (k_max_1_cm**3 - k_0**3) / (
-        3 * gamma_by_2pi * k_0**2 * gradient_strength)
+        3 * gamma_by_2pi * k_0**2 * grad_g_cm)
     nb_samples_per_spoke = int(np.ceil(t_max / dt))
     t = np.linspace(dt, t_max, num=nb_samples_per_spoke)
 
-    #    grad = k_0**2 * gradient_strength * (3 * gamma_by_2pi * k_0**2 * gradient_strength * (t-t_0) + k_0**3)**(-2/3)
-
     r_lin = np.linspace(dk, k_0, num=int(np.ceil(k_0 / dk)))
     r_da = np.power(
-        3 * gamma_by_2pi * k_0**2 * gradient_strength *
+        3 * gamma_by_2pi * k_0**2 * grad_g_cm *
         (t[int(np.ceil(t_0 / dt)):] - t_0) + k_0**3, 1 / 3)
     r = np.concatenate([r_lin, r_da])
     k_1_cm = np.zeros((nb_samples_per_spoke, nb_spokes // 2, 3), np.float64)
@@ -336,7 +351,7 @@ def radial_density_adapted_kspace_coords_1_cm(
 
 
 def tpi_kspace_coords_1_cm_scanner(
-        gradient_strength: float = 16,
+        gradient_strength: int = 16,
         data_root_dir: str = None,
         fill_to_grad16_readout_time: bool = False) -> np.ndarray:
     """Build an array of k-space coordinates [1/cm] for the spectrally weigthed TPI pulse sequence
@@ -411,6 +426,17 @@ def tpi_kspace_coords_1_cm_scanner(
         elif gradient_strength == 48:
             k_1_cm = np.concatenate([k_1_cm, k_1_cm[::-1, :, :], k_1_cm],
                                     axis=0)
+
+#            chunk = 400
+#            repeats = k_1_cm.shape[0] * 2 // chunk
+#            k_1_cm = np.concatenate([k_1_cm, np.repeat(k_1_cm[-chunk:], repeats, axis=0)],
+#                                    axis=0)
+
+#            end_points = k_1_cm[-1,:,:]
+#            new_end_points = end_points * 2.
+#            addition = np.linspace(end_points, new_end_points, 2 * k_1_cm.shape[0])
+#            k_1_cm = np.concatenate([k_1_cm, addition], axis=0)
+
         elif gradient_strength == 64:
             k_1_cm = np.concatenate(
                 [k_1_cm, k_1_cm[::-1, :, :], k_1_cm, k_1_cm[::-1, :, :]],
@@ -576,16 +602,6 @@ def setup_brainweb_phantom(
                     temp_mask += k_abs < radii[l]
                 patho_mask *= temp_mask
             else:
-                #                if pathology_center == 'nearcenter':
-                #                    # center of lesion, a bit shifted from the image center
-                #                    center = (img.shape[0] // 2 + img.shape[0] // 10, ) * 3
-                #                elif pathology_center == 'gyri':
-                #                    # around gyri
-                #                    center = [300, 128, 208]
-                #                elif pathology_center == 'offcenter':
-                #                    # further away from the center
-                #                    center = [280, 220, 260]
-
                 center = tuple(
                     np.multiply(pathology_center_perc / 100.,
                                 np.array(img.shape)))

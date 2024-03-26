@@ -12,6 +12,7 @@ import matplotlib as mpl
 import matplotlib.ticker as ticker
 import json
 import time
+import re as re
 from scipy.ndimage import binary_dilation, binary_erosion
 from scipy.signal import find_peaks
 from skimage.morphology import binary_dilation
@@ -50,7 +51,7 @@ parser.add_argument(
     type=str,
     default='none',
     choices=[
-        'glioma+lesion_gwm_cos',  # for glioma_treatment+lesion_gwm_cos
+        'glioma+lesion_gwm_cos',  # for glioma_treatment+lesion_gwm_cos, though glioma_treatment+none would be better/cleaner
         'lesion3.2+lesion4.6+lesion6.6'  # for lesion1.6+lesion3+lesion5
     ])
 
@@ -148,26 +149,30 @@ print(seeds)
 example_realiz = seeds[0]
 
 # analysis: parameterization of reconstructed images
-params = ['grad', 'beta', 'type']
+params = ['grad', 'beta', 'recon_type']
 
-# analysis: rois and criteria for evaluation
+# analysis: rois setup
 # general_rois = ['wm', 'gm', 'csf']
 if pathologies == 'glioma+lesion_gwm_cos' or pathologies == 'glioma_treatment+lesion_gwm_cos':
     glioma_patho = sub_patho[0]
-    rois = [glioma_patho + '_ring', glioma_patho + '_core']
-    criteria = [
-        glioma_patho + '_core', glioma_patho + '_ring',
-        glioma_patho + '_ring_contrast_wm', 'cos_wm_ampl'
-    ] + [p + '_im_obs' for p in sub_patho]
-    if load_baseline_realiz:
-        criteria += [glioma_patho + '_ring_contrast_baseline']
-else:
-    rois = sub_patho.copy()
-    criteria = rois + [r + '_contrast_wm'
-                       for r in rois] + [p + '_im_obs' for p in sub_patho]
-    if load_baseline_realiz:
-        # difference compared to the baseline
-        criteria += [r + '_contrast_baseline' for r in rois]
+    # rois for which the contrast wrt to ref wm and baseline should be computed
+    rois_for_contrast = [glioma_patho + '_ring', glioma_patho + '_core']
+    # renaming for nicer final display, applied to final metrics
+    roi_rename_dict = {'treatment': 'trtm'}
+elif pathologies == 'lesion1.6+lesion3+lesion5' or pathologies == 'lesion3.2+lesion4.6+lesion6.6':
+    rois_for_contrast = sub_patho.copy()
+    # renaming from matrix size percentage to mm
+    roi_rename_dict = {
+        'lesion1\.6(?=\s?_?)': 'lesion3.4',
+        'lesion3(?=\s?_?[^\.])': 'lesion6',
+        '^lesion3$': 'lesion6',
+        'lesion5(?=\s?_?)': 'lesion11'
+    }
+
+# all ROIs for bias/std/snr of ROI mean
+# the ROIs are not necessarily identical to individual pathology masks
+# the same ROIs are used for the baseline images if loaded
+rois_all = rois_for_contrast + ['ref_wm']
 
 #------------------------------------------------------------------------------
 # load images and masks needed for analysis
@@ -184,10 +189,8 @@ zoom_factor = sim_n // recon_n
 
 # load the masks (nifti oriented)
 masks = dict()
-for r in rois:
+for r in rois_all:
     masks[r] = np.load(phantom_path / f'{r}_{sim_n}.npy')[::-1, ::-1]
-# reference normal white matter region for computing contrasts
-ref_wm_roi_mask = np.load(phantom_path / f'ref_wm_roi_{sim_n}.npy')[::-1, ::-1]
 
 # load also noiseless recons, baseline noiseless recons
 recon_noiseless_path: Path = data_root_dir / f"final_recon_brainweb_patho_{pathologies}_noise{0.:.1E}{'_no_decay' if no_decay else ''}"
@@ -262,10 +265,14 @@ for p_ind, p in enumerate(sub_patho):
 
 # metrics on the true image
 true = dict()
-for r in rois:
+for r in rois_all:
     true[r] = true_na_image[masks[r]].mean()
-    true[r + '_contrast_wm'] = true_na_image[
-        masks[r]].mean() - true_na_image[ref_wm_roi_mask].mean()
+    if load_baseline_realiz:
+        true[r + '_baseline'] = true_na_image_baseline[masks[r]].mean()
+
+for r in rois_for_contrast:
+    true[r + '_contrast_wm'] = true_na_image[masks[r]].mean() - true_na_image[
+        masks['ref_wm']].mean()
     if load_baseline_realiz:
         true[r + '_contrast_baseline'] = true[r] - true_na_image_baseline[
             masks[r]].mean()
@@ -287,6 +294,7 @@ if load_baseline_realiz:
     recon_realiz_var_baseline = np.zeros((nb_grad, nb_beta, *sim_shape),
                                          np.float64)
 
+# cosine lesion special case
 if 'cos' in pathologies:
     recon_cos_wm_prof_z = np.zeros(
         (nb_realiz, nb_grad, nb_beta, np.size(true_cos_wm_prof_z_diff)),
@@ -294,7 +302,7 @@ if 'cos' in pathologies:
 
 df_list = []
 m = 0
-# load images, compute criteria and store results into the database
+# load images, compute metrics and store results into the database
 # too many images for storing all the realizations into an array
 for b, beta in enumerate(betas):
     for g, grad in enumerate(grads):
@@ -302,7 +310,7 @@ for b, beta in enumerate(betas):
             temp = pd.DataFrame(index=[m])
 
             # iterative recon with decay model
-            temp['type'] = recon_type
+            temp['recon_type'] = recon_type
             temp['grad'] = grad
             # noise realization
             temp['seed'] = seed
@@ -311,17 +319,14 @@ for b, beta in enumerate(betas):
 
             file_name = f'recon_te1{recon_desc}_beta{beta:.1E}_it200_grad{grad}_seed{seed}.npz'
             recon_file = recon_path / file_name
-            temp['recon_file'] = recon_file
 
             # work with magnitude images
             recon = np.abs(np.load(recon_file)['recon'])
             # for the quantification interpolate the reconstructed
             # image to the simulation grid
             recon_interp = zoom3d(recon, zoom_factor)
-
             if load_baseline_realiz:
                 recon_file_baseline = recon_path_baseline / file_name
-                temp['recon_file_baseline'] = recon_file_baseline
                 recon_baseline = np.abs(np.load(recon_file_baseline)['recon'])
                 recon_interp_baseline = zoom3d(recon_baseline, zoom_factor)
 
@@ -332,30 +337,40 @@ for b, beta in enumerate(betas):
             # compute the mean over realizations
             recon_realiz_mean[g, b] += recon_interp
             recon_realiz_var[g, b] += np.multiply(recon_interp, recon_interp)
-
             if load_baseline_realiz:
                 recon_realiz_mean_baseline[g, b] += recon_interp_baseline
                 recon_realiz_var_baseline[g, b] += np.multiply(
                     recon_interp_baseline, recon_interp_baseline)
 
-            # differences wrt to the normal white matter roi
-            ref_wm_roi_mean = recon_interp[ref_wm_roi_mask].mean()
-            for r in rois:
-                roi_mean = recon_interp[masks[r]].mean()
-                temp[r] = float(roi_mean)
-                temp[r + '_contrast_wm'] = float(roi_mean - ref_wm_roi_mean)
+            # compute ROI means
+            for roi in rois_all:
+                roi_mean = recon_interp[masks[roi]].mean()
+                temp[roi] = float(roi_mean)
+                if load_baseline_realiz and roi != 'ref_wm':
+                    roi_mean_baseline = recon_interp_baseline[
+                        masks[roi]].mean()
+                    temp[roi + '_baseline'] = float(roi_mean_baseline)
+
+            # compute contrast wrt to normal ref wm and baseline if loaded
+            # the ROI masks are identical for the current ROI and its baseline
+            ref_wm_roi_mean = recon_interp[masks['ref_wm']].mean()
+            for roi in rois_for_contrast:
+                roi_mean = recon_interp[masks[roi]].mean()
+                temp[roi + '_contrast_wm'] = float(roi_mean - ref_wm_roi_mean)
                 if load_baseline_realiz:
-                    roi_mean_baseline = recon_interp_baseline[masks[r]].mean()
-                    temp[r + '_contrast_baseline'] = float(temp[r] -
-                                                           roi_mean_baseline)
+                    roi_mean_baseline = recon_interp_baseline[
+                        masks[roi]].mean()
+                    temp[roi + '_contrast_baseline'] = float(roi_mean -
+                                                             roi_mean_baseline)
+
             # naive image observer
             for p in sub_patho:
                 temp[p + '_im_obs'] = np.sum(
                     np.multiply(im_obs_template[p][g, b][im_obs_masks[p]],
                                 recon_interp[im_obs_masks[p]]))
 
+            # cosine special case
             if 'cos' in pathologies:
-                # cos lesion
                 cos_wm_prof_z = profile_z_roi(recon_interp, cos_wm_mask)
                 temp['cos_wm_ampl'] = np.mean(
                     cos_wm_prof_z[cos_wm_peaks]) - np.mean(
@@ -389,11 +404,11 @@ for b, beta in enumerate(betas):
 df = pd.concat(df_list)
 
 # sort
-df.sort_values(['beta', 'grad', 'seed', 'type'], inplace=True)
+df.sort_values(['beta', 'grad', 'seed', 'recon_type'], inplace=True)
 df.reset_index(inplace=True, drop=True)
 
 # convert colums to categorical
-cats = ['grad', 'beta', 'seed', 'type']
+cats = ['grad', 'beta', 'seed', 'recon_type']
 df[cats] = df[cats].astype('category')
 
 # there should be a single entry for each possible combination of categories
@@ -540,16 +555,18 @@ truth_fig.tight_layout()
 truth_fig.suptitle('Truth \n noiseless recon', fontsize='small')
 plt.savefig(save_dir / 'truth_noiseless_recon.png', bbox_inches='tight')
 
-truth_fig, truth_ax = plt.subplots(1, len(sub_patho), figsize=(4, 9))
+truth_fig, truth_ax = plt.subplots(1, len(sub_patho), figsize=(9, 4))
 for a, t in enumerate(true_na_image_viz):
     truth_ax[a].imshow(t, **ims_na)
     truth_ax[a].axis('off')
 plt.savefig(save_dir / f'truth_patho_{pathologies}.png', bbox_inches='tight')
 
 for a, t in enumerate(true_na_image_viz):
-    truth_fig, truth_ax = plt.subplots(figsize=(2, 4.5))
+    truth_fig, truth_ax = plt.subplots(figsize=(4, 4))
     truth_ax.imshow(t, **ims_na)
     truth_ax.axis('off')
+    #    # arrow for lesion3
+    #    plt.arrow(123,123,15,-7, width=0.8, head_width = 5, color='r')
     plt.savefig(
         save_dir / f'truth_patho_{sub_patho[a]}.png', bbox_inches='tight')
 
@@ -590,6 +607,63 @@ if 'cos' in pathologies:
     plt.savefig(save_dir / f'cos_wm_prof_z.pdf', bbox_inches='tight')
 
 # ----------------------------------------------------------------
+# display illustrations for the report
+
+v = []
+# example realization
+ims = [
+    true_na_image, recon_example[0, 1], recon_example[1, 1],
+    recon_example[2, 1]
+]
+v.append(
+    pv.ThreeAxisViewer(
+        ims, imshow_kwargs=ims_na, rowlabels=['', '', '', ''], ls=''))
+plt.savefig(
+    save_dir / f'brainweb{recon_desc}_recons_grads_annot.png',
+    bbox_inches='tight')
+# noiseless
+ims = [
+    true_na_image, recon_noiseless[0, 1], recon_noiseless[1, 1],
+    recon_noiseless[2, 1]
+]
+v.append(
+    pv.ThreeAxisViewer(
+        ims,
+        imshow_kwargs=ims_na,
+        rowlabels=['True', 'Grad 0.16', 'Grad 0.32', 'Grad 0.48'],
+        ls=''))
+plt.savefig(
+    save_dir / f'brainweb{recon_desc}_noiseless_recons_grads_annot.png',
+    bbox_inches='tight')
+
+## adjoint recon
+#recon_adjoint_noiseless = np.zeros((nb_grad, *true_na_image.shape), np.float64)
+#recon_adjoint = np.zeros((nb_grad, *true_na_image.shape), np.float64)
+#for g, grad in enumerate(grads):
+#    path = recon_noiseless_path / f'recon_te1_adjoint_grad{grad}_seed191664964.npz'
+#    recon = np.abs(np.load(path)['recon'])
+#    # for the quantification interpolate the reconstructed
+#    # image to the simulation grid
+#    recon_interp = zoom3d(recon, zoom_factor)
+#    recon_adjoint_noiseless[g] = recon_interp
+#
+#    path = recon_path / f'recon_te1_adjoint_grad{grad}_seed191664964.npz'
+#    recon = np.abs(np.load(path)['recon'])
+#    # for the quantification interpolate the reconstructed
+#    # image to the simulation grid
+#    recon_interp = zoom3d(recon, zoom_factor)
+#    recon_adjoint[g] = recon_interp
+## example realization
+#ims_na_adjoint =[{'cmap':'viridis', 'vmax':true_na_image.max(), 'vmin':0.}] + [{'cmap':'viridis', 'vmax':im.max(), 'vmin':0.} for im in recon_adjoint_noiseless]
+#ims = [true_na_image, recon_adjoint[0], recon_adjoint[1], recon_adjoint[2]]
+#v.append(pv.ThreeAxisViewer(ims, imshow_kwargs=ims_na_adjoint, rowlabels=['','','',''], ls=''))
+#plt.savefig(save_dir / f'brainweb_adjoint_recons_grads_annot.png', bbox_inches='tight')
+## noiseless
+#ims = [true_na_image, recon_adjoint_noiseless[0], recon_adjoint_noiseless[1], recon_adjoint_noiseless[2]]
+#v.append(pv.ThreeAxisViewer(ims, imshow_kwargs=ims_na_adjoint, rowlabels=['True', 'Grad 0.16', 'Grad 0.32', 'Grad 0.48'], ls=''))
+#plt.savefig(save_dir / f'brainweb_adjoint_noiseless_recons_grads_annot.png', bbox_inches='tight')
+
+# ----------------------------------------------------------------
 # init seaborn
 sns.set_context('notebook')
 sns.set(font_scale=1.5)
@@ -598,7 +672,13 @@ sns.set_style('ticks')
 # -----------------------------------------------------------------------------
 # Compute and display metrics
 
-df_stats = df[params + criteria].copy()
+# keep only columns with quantitative metrics
+# to be able to perform mean/std aggregate operations
+df_stats = df.drop(columns='seed').copy()
+# list of quantitative metrics to be further processed and analyzed
+metrics = df_stats.columns.to_list()
+for p in params:
+    metrics.remove(p)
 # the number of rows for each group should be = number of seeds/realizations
 ddf = df_stats.groupby(params)
 # compute the mean and stddev
@@ -608,17 +688,83 @@ df_stats = df_stats.reset_index()
 # flatten the columns multiindex for use with FacetGrid
 df_stats.columns = [' '.join(col).strip() for col in df_stats.columns.values]
 
-# compute bias/std in perc and rename criteria
-for i, c in enumerate(criteria):
+# compute bias/std in perc and snr for metrics when applicable
+# doesn't make sense for image observer
+# the snr of the contrast is the cnr
+for i, c in enumerate(metrics):
     df_stats[c + ' snr'] = df_stats[c + ' mean']**2 / df_stats[c + ' std']**2
     if 'im_obs' not in c:
         df_stats[c + ' bias[%]'] = 100 * (
-            df_stats[c + ' mean'].values - true[c]) / true[c]
-        df_stats[c + ' std[%]'] = 100 * df_stats[c + ' std'].values / true[c]
+            df_stats[c + ' mean'].values - true[c]) / np.abs(true[c])
+        df_stats[c + ' std[%]'] = 100 * df_stats[c + ' std'].values / np.abs(
+            true[c])
 
-for col in criteria:
+#-------------------------------------------------------------------------------------
+# Addition
+# compute less noisy estimates of the CNR:
+# compute the contrasts from noiseless images
+# estimate the var using the sum of individual ROI vars
+df_stats_orig = df_stats.copy()
+for r, roi in enumerate(rois_for_contrast):
+    for b, beta in enumerate(betas):
+        for g, grad in enumerate(grads):
+            roi_mean = recon_noiseless[g, b][masks[roi]].mean()
+            ref_wm_roi_mean = recon_noiseless[g, b][masks['ref_wm']].mean()
+            df_stats.loc[(df_stats['grad'] == grad) &
+                         (df_stats['beta'] == beta), roi +
+                         '_contrast_wm mean'] = float(roi_mean -
+                                                      ref_wm_roi_mean)
+            if load_baseline_realiz:
+                roi_mean_baseline = recon_noiseless_baseline[g, b][
+                    masks[roi]].mean()
+                df_stats.loc[(df_stats['grad'] == grad) &
+                             (df_stats['beta'] == beta), roi +
+                             '_contrast_baseline mean'] = float(
+                                 roi_mean - roi_mean_baseline)
 
-    # show plots of snr for comparing gradients
+    # compute an estimate of the std dev of the contrast
+    var_sum = np.square(df_stats[roi + ' std'].values) + np.square(
+        df_stats['ref_wm std'].values)
+    df_stats[roi + '_contrast_wm std'] = np.sqrt(var_sum / 2.)
+
+    # compute bias, snr
+    metric = roi + '_contrast_wm'
+    df_stats[
+        metric +
+        ' snr'] = df_stats[metric + ' mean']**2 / df_stats[metric + ' std']**2
+    df_stats[metric + ' bias[%]'] = 100 * (df_stats[metric + ' mean'].values -
+                                           true[metric]) / np.abs(true[metric])
+    df_stats[metric + ' std[%]'] = 100 * (
+        df_stats[metric + ' std'].values) / np.abs(true[metric])
+
+    if load_baseline_realiz:
+        # compute an estimate of the std dev of the contrast
+        var_sum = np.square(df_stats[roi + ' std'].values) + np.square(
+            df_stats[roi + '_baseline std'].values)
+        df_stats[roi + '_contrast_baseline std'] = np.sqrt(var_sum / 2.)
+        # compute snr and bias
+        metric = roi + '_contrast_baseline'
+        df_stats[metric + ' snr'] = df_stats[metric + ' mean']**2 / df_stats[
+            metric + ' std']**2
+        df_stats[metric + ' bias[%]'] = 100 * (
+            df_stats[metric + ' mean'].values - true[metric]) / np.abs(
+                true[metric])
+        df_stats[metric + ' std[%]'] = 100 * (
+            df_stats[metric + ' std'].values) / np.abs(true[metric])
+
+# rename columns for display
+# shorten some column names
+df_stats.rename(columns=lambda x: re.sub('contrast', 'cntr', x), inplace=True)
+df_stats.rename(columns=lambda x: re.sub('baseline', 'bsln', x), inplace=True)
+metrics = [re.sub('contrast', 'cntr', x) for x in metrics]
+metrics = [re.sub('baseline', 'bsln', x) for x in metrics]
+for old, new in roi_rename_dict.items():
+    metrics = [re.sub(old, new, x) for x in metrics]
+    df_stats.rename(columns=lambda x: re.sub(old, new, x), inplace=True)
+
+# display
+for col in metrics:
+    # show plots of snr/cnr for comparing gradients
     grid = sns.relplot(
         data=df_stats,
         kind='line',
@@ -647,7 +793,7 @@ for col in criteria:
     if 'im_obs' in col:
         continue
 
-    # show plots of snr for comparing gradients
+    # show plots of snr vs bias for comparing gradients
     grid = sns.relplot(
         data=df_stats,
         kind='line',

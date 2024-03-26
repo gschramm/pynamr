@@ -60,8 +60,7 @@ beta = args.beta
 recon_type = args.recon_type
 pathologies = args.pathologies
 
-rng = np.random.default_rng(seed)
-np.random.seed(seed)
+rng = cp.random.default_rng(seed)
 
 #---------------------------------------------------------------
 # fixed parameters
@@ -112,9 +111,8 @@ kmax64_1_cm = 1 / (2 * field_of_view_cm / 64)
 with open('.simulation_config.json', 'r') as f:
     data_root_dir: str = json.load(f)['data_root_dir']
 
-sim_dir = Path(data_root_dir) / (
-    f'final_sim_{phantom}_patho_{pathologies}' +
-    ('_no_decay' if no_decay else ''))
+sim_dir = Path(data_root_dir) / (f'final_sim_{phantom}_patho_{pathologies}' +
+                                 ('_no_decay' if no_decay else ''))
 sim_dir.mkdir(exist_ok=True, parents=True)
 
 recon_dir = Path(data_root_dir) / (
@@ -391,20 +389,20 @@ for g, grad in enumerate(gradient_strengths):
 
     # add noise to the data
     nl = noise_level * cp.abs(data_echo_1.max())
-    data_echo_1 += nl * (cp.random.randn(*data_echo_1.shape) +
-                         1j * cp.random.randn(*data_echo_1.shape))
-    data_echo_2 += nl * (cp.random.randn(*data_echo_2.shape) +
-                         1j * cp.random.randn(*data_echo_2.shape))
+    data_echo_1 += nl * (rng.standard_normal(data_echo_1.shape) +
+                         1j * rng.standard_normal(data_echo_1.shape))
+    data_echo_2 += nl * (rng.standard_normal(data_echo_2.shape) +
+                         1j * rng.standard_normal(data_echo_2.shape))
 
     d1 = data_echo_1.reshape(k_1_cm.shape[:-1])
     d2 = data_echo_2.reshape(k_1_cm.shape[:-1])
 
-#--------------------------------------------------------------------------
-#--------------------------------------------------------------------------
-# iterative image reconstruction block
+    #--------------------------------------------------------------------------
+    #--------------------------------------------------------------------------
+    # iterative image reconstruction block
 
-#------------------------------------------------------
-# NUFFT recon
+    #------------------------------------------------------
+    # NUFFT recon
     acq_model = NUFFTT2starDualEchoModel(
         ishape,
         k_1_cm,

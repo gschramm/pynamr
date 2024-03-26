@@ -71,6 +71,13 @@ parser.add_argument(
     help=
     ' simple_iter is NUFFT with 1-neighbour quadratic regularization, decay_model_iter is the same with the bi-exp T2* decay model'
 )
+parser.add_argument(
+    '--const_readout_time',
+    action='store_true',
+    help=
+    'keep the readout time constant (=the slowest tpi readout) by going back and forth along trajectories'
+)
+
 
 args = parser.parse_args()
 
@@ -89,11 +96,11 @@ patho_center_perc = args.patho_center_perc
 pathology = args.pathology
 traj = args.traj
 recon_type = args.recon_type
+const_readout_time = args.const_readout_time
 
 #---------------------------------------------------------------
 # init
-rng = np.random.default_rng(42)
-np.random.seed(seed)
+cp.random.seed(seed)
 patho_center_perc = np.fromstring(patho_center_perc, dtype=np.float32, sep=',')
 
 # not great, special case for simulating a glioma after treatment
@@ -108,18 +115,19 @@ phantom = 'brainweb'
 
 # gradients
 if traj == 'sw-tpi':
-    gradient_strengths = [16, 32, 48]
+    gradient_strengths = [16, 48]
 elif traj == 'radial_golden' or traj == 'radial_random':
-    gradient_strengths = [16, 8]
+    gradient_strengths = [16, 8, 32]
 elif traj == 'radial_da':
     gradient_strengths = [16, 32, 48]
 
 # image shape for data simulation
 sim_shape = (256, 256, 256)
-num_sim_chunks = 100
+num_sim_chunks = 200
 
 # image shape for iterative recons
-ishape = (128, 128, 128)
+#ishape = (128, 128, 128)
+ishape = (64, 64, 64)
 # grid shape for IFFTs
 grid_shape = (64, 64, 64)
 
@@ -163,13 +171,15 @@ patho_desc = f'_size{patho_size_perc:.1f}_change{int(patho_change_perc)}_center{
 
 sim_dir = Path(data_root_dir) / (f'sim_{phantom}_patho_{pathology}{patho_desc}'
                                  + ('_no_decay' if no_decay else '') +
-                                 (f'_traj{traj}' if traj != 'sw_tpi' else ''))
+                                 (f'_traj_{traj}' if traj != 'sw_tpi' else '') +
+                                 (f'_const_readout' if const_readout_time else ''))
 sim_dir.mkdir(exist_ok=True, parents=True)
 
 recon_dir = Path(data_root_dir) / (
     f'recon_{phantom}_patho_{pathology}{patho_desc}_noise{noise_level:.1E}' +
     ('_no_decay' if no_decay else '') +
-    (f'_traj{traj}' if traj != 'sw_tpi' else ''))
+    (f'_traj_{traj}' if traj != 'sw_tpi' else '') +
+    (f'_const_readout' if const_readout_time else ''))
 recon_dir.mkdir(exist_ok=True, parents=True)
 
 # init for vizualization
@@ -282,13 +292,18 @@ for g, grad in enumerate(gradient_strengths):
 
     # trajectory
     if traj == 'sw-tpi':
-        k_1_cm = tpi_kspace_coords_1_cm_scanner(grad, data_root_dir)
+        k_1_cm = tpi_kspace_coords_1_cm_scanner(grad, data_root_dir, fill_to_grad16_readout_time=const_readout_time)
     elif traj == 'radial_golden':
-        k_1_cm = radial_goldenmean_kspace_coords_1_cm(grad / 100.)
+        k_1_cm = radial_goldenmean_kspace_coords_1_cm(grad, fill_to_grad08_readout_time=const_readout_time)
     elif traj == 'radial_random':
-        k_1_cm = radial_random_kspace_coords_1_cm(grad / 100.)
+        k_1_cm = radial_random_kspace_coords_1_cm(grad)
     elif traj == 'radial_da':
-        k_1_cm = radial_density_adapted_kspace_coords_1_cm(gradient_strength=grad/100., k_max_1_cm=kmax64_1_cm, dt=dt_us, nb_spokes=3162, p=p)
+        k_1_cm = radial_density_adapted_kspace_coords_1_cm(
+            gradient_strength=grad,
+            k_max_1_cm=kmax64_1_cm,
+            dt=dt_us,
+            nb_spokes=3162,
+            p=p)
 
     k_1_cm_abs = np.linalg.norm(k_1_cm, axis=2)
     #    print(f'readout kmax .: {k_1_cm_abs.max():.2f} 1/cm')
@@ -535,6 +550,9 @@ for g, grad in enumerate(gradient_strengths):
         recon_te1_bfgs[g] = cp.asarray(recon / img_scale)
 
         cp.savez(outfile1, recon=recon_te1_bfgs[g])
+        del A
+        del acq_model
+        del loss 
     else:
         saved_res = cp.load(outfile1)
         recon_te1_bfgs[g] = saved_res['recon']

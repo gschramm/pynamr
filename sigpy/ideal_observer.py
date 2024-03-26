@@ -1,15 +1,10 @@
 """ Ideal observer study for comparing different max gradients for TPI:
     more noise vs less decay tradeoff
 
-    Phantoms:
-    - brainweb
-
     Data simulation implementation using:
-    - NUFFT and real gradient files
-    - approximative FFT (does not take into account the lower noise in the radial center)
-
-    The code could be nicer and more general but large matrix sizes for the simulation
-    require some tweaks for avoiding GPU RAM overflow
+    - Brainweb
+    - sigpy NUFFT and real gradient files
+    - approximative FFT (does not take into account the lower effective noise in the radial center)
 """
 
 import argparse
@@ -25,7 +20,7 @@ import scipy.optimize as sci_opt
 from matplotlib import pyplot as plt
 
 import pymirc.viewer as pv
-from utils import setup_brainweb_phantom, ideal_observer_statistic, ideal_observer_snr, tpi_kspace_coords_1_cm_scanner, tpi_t2biexp_fft, real_to_complex, complex_to_real, crop_kspace_data
+from utils import setup_brainweb_phantom, ideal_observer_statistic, ideal_observer_snr, tpi_kspace_coords_1_cm_scanner, tpi_t2biexp_fft, real_to_complex, complex_to_real, crop_kspace_data, radial_goldenmean_kspace_coords_1_cm, radial_density_adapted_kspace_coords_1_cm, radial_random_kspace_coords_1_cm
 from utils_sigpy import NUFFT_T2Biexp_Model, LossL2
 from functools import partial
 
@@ -44,7 +39,11 @@ parser.add_argument(
     '--patho_size_perc',
     type=float,
     help='pathology max size in percentage of FOV in 1D')
-parser.add_argument('--patho_center_perc', type=str, help='pathology center')
+parser.add_argument(
+    '--patho_center_perc',
+    type=str,
+    default='60,50,60',
+    help='pathology center as a list')
 parser.add_argument(
     '--ft', type=str, default='nufft', choices=['fft', 'nufft'])
 parser.add_argument(
@@ -74,6 +73,11 @@ parser.add_argument(
     type=int,
     default=10,
     help='number of simulation (data) chunks for avoiding GPU memory overflow')
+parser.add_argument(
+    '--traj',
+    type=str,
+    default='sw-tpi',
+    choices=['sw-tpi', 'radial_golden', 'radial_random', 'radial_da'])
 
 args = parser.parse_args()
 
@@ -89,13 +93,12 @@ const_readout_time = args.const_readout_time
 no_recon = args.no_recon
 test = args.test
 num_sim_chunks = args.num_sim_chunks
+traj = args.traj
 
 # ---------------------------------------------------------------
 # init
 #TODO check params consistency, like patho_res test incompatible with glioma or cosine
-if patho_center_perc != None:
-    patho_center_perc = np.fromstring(
-        patho_center_perc, dtype=np.float32, sep=',')
+patho_center_perc = np.fromstring(patho_center_perc, dtype=np.float32, sep=',')
 
 # ---------------------------------------------------------------
 # init
@@ -107,8 +110,14 @@ plt.rcParams.update({'font.size': 14})
 
 # ---------------------------------------------------------------
 # fixed parameters
+# gradients
+if traj == 'sw-tpi':
+    gradient_strengths = [16, 48]
+elif traj == 'radial_golden' or traj == 'radial_random':
+    gradient_strengths = [16, 8]
+elif traj == 'radial_da':
+    gradient_strengths = [16, 32, 48]
 
-gradient_strengths = [16, 32, 48]
 nb_grads = len(gradient_strengths)
 pulse_seq = 'tpi'
 
@@ -130,7 +139,7 @@ gamma_by_2pi_MHz_T: float = 11.262
 
 # kmax for 64 matrix (edge)
 kmax64_1_cm = 1 / (2 * field_of_view_cm / 64)
-
+p = 0.4
 # echo times in ms
 echo_time_ms = 0.5  # 0.455
 
@@ -313,9 +322,22 @@ for g, grad in enumerate(gradient_strengths):
 
     # simulation using nufft
     if ft == 'nufft':
-        # k-space coordinates from gradient trace files in 1/cm
-        k_coords_1_cm = tpi_kspace_coords_1_cm_scanner(grad, data_root_dir,
-                                                       const_readout_time)
+        # trajectory
+        if traj == 'sw-tpi':
+            k_coords_1_cm = tpi_kspace_coords_1_cm_scanner(
+                grad, data_root_dir, fill_to_grad16_readout_time=const_readout_time)
+        elif traj == 'radial_golden':
+            k_coords_1_cm = radial_goldenmean_kspace_coords_1_cm(grad, fill_to_grad08_readout_time=const_readout_time)
+        elif traj == 'radial_random':
+            k_coords_1_cm = radial_random_kspace_coords_1_cm(grad)
+        elif traj == 'radial_da':
+            k_coords_1_cm = radial_density_adapted_kspace_coords_1_cm(
+                gradient_strength=grad,
+                k_max_1_cm=kmax64_1_cm,
+                dt=dt_us,
+                nb_spokes=3162,
+                p=p)
+
         k_coords_1_cm_for_check.append(k_coords_1_cm)
         # coords wrt to discrete grid
         k_coords_n = k_coords_1_cm * field_of_view_cm
@@ -585,7 +607,7 @@ elif ft == 'nufft':
     recon_expect_w_change = []
     recon_expect_baseline = []
     recon_w_change = []
-    max_num_iter = 100
+    max_num_iter = 200
 
     for g, grad in enumerate(gradient_strengths):
         # normalization factor to account for different matrix sizes between sim and recon,
@@ -639,7 +661,8 @@ v.append(
 # show differences of recons from noiseless data with change wrt first grad
 show_args = [{
     'cmap': 'viridis',
-    'vmax': im_max
+    'vmax': im_max,
+    'vmin': im_min
 }] + [{
     'cmap': 'bwr',
     'vmax': im_max,
@@ -651,7 +674,8 @@ v.append(
 # show differences scaled with adjusted min max
 show_args = [{
     'cmap': 'viridis',
-    'vmax': im_max
+    'vmax': im_max,
+    'vmin': im_min
 }] + [{
     'cmap': 'bwr',
     'vmax': 0.1 * im_max,
@@ -666,7 +690,8 @@ v.append(
     pv.ThreeAxisViewer([*ims],
                        imshow_kwargs={
                            'cmap': 'viridis',
-                           'vmax': im_max
+                           'vmax': im_max,
+                           'vmin': im_min
                        }))
 # with smoothing
 ims = [cp.asnumpy(x) for x in recon_w_change]
@@ -676,5 +701,6 @@ v.append(
     pv.ThreeAxisViewer([*ims],
                        imshow_kwargs={
                            'cmap': 'viridis',
-                           'vmax': im_max
+                           'vmax': im_max,
+                           'vmin': im_min
                        }))
