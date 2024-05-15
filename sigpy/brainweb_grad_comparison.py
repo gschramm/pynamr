@@ -1,8 +1,17 @@
-""" Comparison of different TPI gradients:
-    - simulation using brainweb with added custom pathology, sigpy NUFFT with added bi-exp T2* decay model
+""" Total sodium concentration Na MRI simulation and reconstruction used for studying different maximum gradient pulse sequence parameter values
+
+    - simulation using BrainWeb with added custom pathology, sigpy NUFFT with added bi-exp T2* decay model
+
     - regularized NUFFT iterative reconstruction using scipy optimization and sigpy operators,
       with or without decay modeling, gridding recon
+
     - 1 type of SW-TPI trajectory from gradient trace files, support for some radial-based trajectories, not very general
+
+---
+Usage example: 
+
+brainweb_grad_comparison --pathology lesion_wm --patho_size_perc 5 --patho_center_perc 36,48,56 --patho_change_perc 170 --no_recon
+
 """
 
 import argparse
@@ -27,30 +36,48 @@ import matplotlib.pyplot as plt
 #--------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--max_num_iter', type=int, default=200)
-parser.add_argument('--noise_level', type=float, default=1.4e-2)
-parser.add_argument('--no_decay', action='store_true')
-parser.add_argument('--show_im', action='store_true')
-parser.add_argument('--old', action='store_true')
-parser.add_argument('--no_recon', action='store_true')
-parser.add_argument('--no_sim', action='store_true')
+parser.add_argument(
+    '--max_num_iter',
+    type=int,
+    default=200,
+    help="number of iterations for reconstruction")
+parser.add_argument(
+    '--noise_level',
+    type=float,
+    default=1.4e-2,
+    help="noise level relative to the DC component in k-space")
+parser.add_argument(
+    '--no_decay',
+    action='store_true',
+    help="ignore T2* decay when simulating raw data")
+parser.add_argument(
+    '--show_im', action='store_true', help='display images and results')
+parser.add_argument(
+    '--no_recon',
+    action='store_true',
+    help="don't reconstruct simulated raw data")
+parser.add_argument(
+    '--no_sim',
+    action='store_true',
+    help="don't even simulate raw data, just build the numerical phantom")
 parser.add_argument('--seed', type=int, default=1)
-parser.add_argument('--beta', type=float, default=1e-2)
+parser.add_argument(
+    '--beta', type=float, default=1e-2, help="spatial regularization weight")
 parser.add_argument(
     '--patho_change_perc',
     type=float,
     default=0.,
-    help='pathological change in percentage of normal tissue')
+    help='pathological change [percentage of normal tissue]')
 parser.add_argument(
     '--patho_size_perc',
     type=float,
     default=0.,
-    help='pathology max size in percentage of FOV in 1D')
+    help='pathology max size [percentage of first dimension FOV]')
 parser.add_argument(
     '--patho_center_perc',
     type=str,
     default='60,50,60',
-    help='pathology center in percentages')
+    help='pathology center [percentage of FOV for each dimension]')
 parser.add_argument(
     '--pathology',
     type=str,
@@ -75,9 +102,8 @@ parser.add_argument(
     '--const_readout_time',
     action='store_true',
     help=
-    'keep the readout time constant (=the slowest tpi readout) by going back and forth along trajectories'
+    'keep the readout time constant (=the slowest available readout) by going back and forth along trajectories'
 )
-
 
 args = parser.parse_args()
 
@@ -169,10 +195,11 @@ with open('.simulation_config.json', 'r') as f:
 # pathology details
 patho_desc = f'_size{patho_size_perc:.1f}_change{int(patho_change_perc)}_center{patho_center_perc[0]:.0}+{patho_center_perc[1]:.0}+{patho_center_perc[2]:.0}' if pathology != 'none' else ''
 
-sim_dir = Path(data_root_dir) / (f'sim_{phantom}_patho_{pathology}{patho_desc}'
-                                 + ('_no_decay' if no_decay else '') +
-                                 (f'_traj_{traj}' if traj != 'sw_tpi' else '') +
-                                 (f'_const_readout' if const_readout_time else ''))
+sim_dir = Path(data_root_dir) / (
+    f'sim_{phantom}_patho_{pathology}{patho_desc}' +
+    ('_no_decay' if no_decay else '') +
+    (f'_traj_{traj}' if traj != 'sw_tpi' else '') +
+    (f'_const_readout' if const_readout_time else ''))
 sim_dir.mkdir(exist_ok=True, parents=True)
 
 recon_dir = Path(data_root_dir) / (
@@ -240,7 +267,7 @@ if not sim_file.exists():
         pathology_change_perc=patho_change_perc,
         pathology_center_perc=patho_center_perc)
 
-    # reorient the phantom so it shows correctly with pymirc viewer
+    # reorient the phantom so it shows in approx DICOM orientation with the pymirc viewer
     x = x[::-1, ::-1]
     T2short_ms = T2short_ms[::-1, ::-1]
     T2long_ms = T2long_ms[::-1, ::-1]
@@ -292,9 +319,13 @@ for g, grad in enumerate(gradient_strengths):
 
     # trajectory
     if traj == 'sw-tpi':
-        k_1_cm = tpi_kspace_coords_1_cm_scanner(grad, data_root_dir, fill_to_grad16_readout_time=const_readout_time)
+        k_1_cm = tpi_kspace_coords_1_cm_scanner(
+            grad,
+            data_root_dir,
+            fill_to_grad16_readout_time=const_readout_time)
     elif traj == 'radial_golden':
-        k_1_cm = radial_goldenmean_kspace_coords_1_cm(grad, fill_to_grad08_readout_time=const_readout_time)
+        k_1_cm = radial_goldenmean_kspace_coords_1_cm(
+            grad, fill_to_grad08_readout_time=const_readout_time)
     elif traj == 'radial_random':
         k_1_cm = radial_random_kspace_coords_1_cm(grad)
     elif traj == 'radial_da':
@@ -552,7 +583,7 @@ for g, grad in enumerate(gradient_strengths):
         cp.savez(outfile1, recon=recon_te1_bfgs[g])
         del A
         del acq_model
-        del loss 
+        del loss
     else:
         saved_res = cp.load(outfile1)
         recon_te1_bfgs[g] = saved_res['recon']

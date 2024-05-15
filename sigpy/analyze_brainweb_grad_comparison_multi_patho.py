@@ -1,7 +1,15 @@
-""" Analyze results from the comparison of different TPI max gradients (brainweb sim + recon):
-    - ROI bias-stddev and SNR/CNR in image space for glioma and cosine lesion
+""" Analyze results from the study of different TPI max gradient values using brainweb_grad_comparison_multi_patho.py
+
+    - ROI bias-stddev and SNR/CNR in image space for glioma, cosine lesion and white matter lesions of different sizes
+
     - several pathologies in the same image to reduce the number of recons,
-    though it adds some complications (e.g. the ideal observer analysis requires a single pathology)
+    though it adds some complications (e.g. the k-space ideal observer analysis requires a single pathology, so not computed here)
+
+---
+Usage example:
+
+analyze_brainweb_grad_comparison_multi_patho.py --pathologies glioma_treatment+lesion_gwm_cos --recon_type decay_model_iter --load_baseline_realiz --baseline_pathologies glioma+lesion_gwm_cos
+
 """
 
 from pathlib import Path
@@ -22,7 +30,6 @@ import pymirc.viewer as pv
 from pymirc.image_operations import zoom3d
 import argparse
 from numpy.random import default_rng
-from utils import ideal_observer_snr
 
 #------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
@@ -34,9 +41,16 @@ parser.add_argument(
         'simple_iter', 'decay_model_iter', 'highres_prior_decay_model_iter',
         'highres_prior_simple_iter'
     ])
-parser.add_argument('--load_baseline_realiz', action='store_true')
-parser.add_argument('--no_decay', action='store_true')
-parser.add_argument('--report_mode', action='store_true')
+parser.add_argument(
+    '--load_baseline_realiz',
+    action='store_true',
+    help=
+    "load also recons from noise realizations for the specified baseline pathologies"
+)
+parser.add_argument(
+    '--no_decay',
+    action='store_true',
+    help="ignore T2* decay when simulating raw data")
 parser.add_argument('--nb_seeds', type=int, default=100)
 parser.add_argument(
     '--pathologies',
@@ -60,7 +74,6 @@ args = parser.parse_args()
 recon_type = args.recon_type
 load_baseline_realiz = args.load_baseline_realiz
 no_decay = args.no_decay
-report_mode = args.report_mode
 nb_seeds = args.nb_seeds
 pathologies = args.pathologies
 baseline_pathologies = args.baseline_pathologies

@@ -1,10 +1,15 @@
-""" Ideal observer study for comparing different max gradients for TPI:
-    more noise vs less decay tradeoff
+""" K-space ideal observer study for comparing different max gradients for total sodium concentration Na MRI
 
-    Data simulation implementation using:
-    - Brainweb
-    - sigpy NUFFT and real gradient files
-    - approximative FFT (does not take into account the lower effective noise in the radial center)
+    - Brainweb with added custom pathology
+    - either sigpy NUFFT, biexp T2* decay and real TPI gradient files (minimal forward model)
+    - or approximative FFT and biexp T2* decay (does not take into account the lower effective noise in the radial center)
+
+---
+Usage example:
+
+ideal_observer --pathology lesion_wm --patho_size_perc 5 --patho_center_perc 36,48,56 --patho_change_perc 170 --no_recon
+
+
 """
 
 import argparse
@@ -112,7 +117,7 @@ plt.rcParams.update({'font.size': 14})
 # fixed parameters
 # gradients
 if traj == 'sw-tpi':
-    gradient_strengths = [16, 48]
+    gradient_strengths = [16, 32, 48]
 elif traj == 'radial_golden' or traj == 'radial_random':
     gradient_strengths = [16, 8]
 elif traj == 'radial_da':
@@ -325,9 +330,12 @@ for g, grad in enumerate(gradient_strengths):
         # trajectory
         if traj == 'sw-tpi':
             k_coords_1_cm = tpi_kspace_coords_1_cm_scanner(
-                grad, data_root_dir, fill_to_grad16_readout_time=const_readout_time)
+                grad,
+                data_root_dir,
+                fill_to_grad16_readout_time=const_readout_time)
         elif traj == 'radial_golden':
-            k_coords_1_cm = radial_goldenmean_kspace_coords_1_cm(grad, fill_to_grad08_readout_time=const_readout_time)
+            k_coords_1_cm = radial_goldenmean_kspace_coords_1_cm(
+                grad, fill_to_grad08_readout_time=const_readout_time)
         elif traj == 'radial_random':
             k_coords_1_cm = radial_random_kspace_coords_1_cm(grad)
         elif traj == 'radial_da':

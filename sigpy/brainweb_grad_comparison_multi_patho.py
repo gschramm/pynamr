@@ -1,7 +1,17 @@
-""" Final optimized comparison of different TPI gradients:
-    - simulation using brainweb with added glioma and cosine lesion, gradient trace files, sigpy
+""" Final optimized total sodium concentration Na MRI simulation and reconstruction for studying different TPI maximum gradient values
+
+    - simulation using BrainWeb with specific chosen pathologies, gradient trace files, sigpy NUFFT
+
+    - several hard-coded pathologies in the same numerical phantom for reducing the number of reconstructions: glioma + cos lesion, white matter lesions of different sizes
+
     - regularized iterative reconstruction using scipy L-BFGS-B and sigpy operators,
      with and without decay modeling, with and without the structural higher resolution prior
+
+---
+Usage example for several white matter lesions with different sizes (size given as percentage of FOV):
+
+brainweb_grad_comparison_multi_patho.py --pathologies lesion1.6+lesion3+lesion5 --recon_type highres_prior_decay_model_iter --beta 1e-3 --seed 42
+
 """
 
 import argparse
@@ -24,13 +34,25 @@ from functools import partial
 #--------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--max_num_iter', type=int, default=200)
-parser.add_argument('--noise_level', type=float, default=1.4e-2)
-parser.add_argument('--no_decay', action='store_true')
-parser.add_argument('--show_im', action='store_true')
-parser.add_argument('--old', action='store_true')
+parser.add_argument(
+    '--max_num_iter',
+    type=int,
+    default=200,
+    help="number of iterations for reconstruction")
+parser.add_argument(
+    '--noise_level',
+    type=float,
+    default=1.4e-2,
+    help="noise level relative to the DC component in k-space")
+parser.add_argument(
+    '--no_decay',
+    action='store_true',
+    help="ignore T2* decay when simulating raw data")
+parser.add_argument(
+    '--show_im', action='store_true', help='display images and results')
 parser.add_argument('--seed', type=int, default=1)
-parser.add_argument('--beta', type=float, default=1e-2)
+parser.add_argument(
+    '--beta', type=float, default=1e-2, help="spatial regularization weight")
 parser.add_argument(
     '--recon_type',
     type=str,
@@ -46,7 +68,8 @@ parser.add_argument(
     choices=[
         'glioma+lesion_gwm_cos', 'none', 'glioma_treatment+lesion_gwm_cos',
         'lesion1.6+lesion3+lesion5', 'lesion3.2+lesion4.6+lesion6.6'
-    ])
+    ]
+)  # different pathologies are separated by '+', the number next to the lesion is the lesion size in percentage of FOV (first dim)
 
 args = parser.parse_args()
 
