@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.sparse import coo_array
+
+import math
 from numba import njit, prange
 import sigpy
 
@@ -22,7 +23,7 @@ def nearest_neighbors_3d(img, s, ninds):
       The dimensions of s have to be odd.
 
     ninds: 2d numpy array used for output
-      of shape (np.prod(img.shape), nnearest).
+      of shape (xp.prod(img.shape), nnearest).
       ninds[i,:] contains the indicies of the nearest neighbors of voxel i
 
     Note
@@ -82,43 +83,62 @@ def nearest_neighbors_3d(img, s, ninds):
 class BowsherGradient(sigpy.linop.Linop):
     def __init__(
         self,
-        structural_image: np.ndarray,
-        neighborhood: np.ndarray,
+        structural_image: xp.ndarray,
+        neighborhood: xp.ndarray,
         num_nearest: int,
-        nearest_neighbor_inds: None | np.ndarray = None,
+        nearest_neighbor_inds: None | xp.ndarray = None,
     ) -> None:
         self._structural_image = structural_image
         self._neighborhood = neighborhood
         self._num_nearest = num_nearest
 
+        if isinstance(structural_image, np.ndarray):
+            self._xp = np
+            from scipy.sparse import csc_matrix
+            self._csc_matrix = csc_matrix
+        else:
+            import cupy as cp
+            self._xp = cp
+            from cupyx.scipy.sparse import csc_matrix
+            self._csc_matrix = csc_matrix
+
         if nearest_neighbor_inds is None:
             self._nearest_neighbor_inds = np.zeros(
-                (np.prod(structural_image.shape), num_nearest), dtype=int
+                (math.prod(structural_image.shape), num_nearest), dtype=int
             )
 
-            nearest_neighbors_3d(
-                self._structural_image, self._neighborhood, self._nearest_neighbor_inds
-            )
+            if isinstance(structural_image, np.ndarray):
+                nearest_neighbors_3d(
+                    self._structural_image, self._neighborhood, self._nearest_neighbor_inds
+                )
+            else:
+                nearest_neighbors_3d(
+                    self._xp.asnumpy(self._structural_image), self._xp.asnumpy(self._neighborhood), self._xp.asnumpy(self._nearest_neighbor_inds)
+                )
+                self._nearest_neighbor_inds = self._xp.asarray(self._nearest_neighbor_inds)
+
         else:
             self._nearest_neighbor_inds = nearest_neighbor_inds
 
         num_voxels = structural_image.size
-        tmp = np.arange(num_voxels)
-        diag = coo_array(
-            (np.full(num_voxels, -1, dtype=int), (tmp, tmp)),
+        tmp = self._xp.arange(num_voxels, dtype = float)
+        diag = self._csc_matrix(
+            (self._xp.full(num_voxels, -1, dtype=float), (tmp, tmp)),
             shape=(num_voxels, num_voxels),
         )
 
         self._sparse_fwd_diff_matrices = []
 
         for i in range(num_nearest):
-            off_diag = coo_array(
+            off_diag = self._csc_matrix(
                 (
-                    np.full(num_voxels, 1, dtype=int),
+                    self._xp.full(num_voxels, 1, dtype=float),
                     (tmp, self._nearest_neighbor_inds[:, i]),
                 ),
                 shape=(num_voxels, num_voxels),
             )
+
+
             self._sparse_fwd_diff_matrices.append(diag + off_diag)
 
         super().__init__(
@@ -127,11 +147,11 @@ class BowsherGradient(sigpy.linop.Linop):
         )
 
     @property
-    def structural_image(self) -> np.ndarray:
+    def structural_image(self) -> xp.ndarray:
         return self._structural_image
 
     @property
-    def neighborhood(self) -> np.ndarray:
+    def neighborhood(self) -> xp.ndarray:
         return self._neighborhood
 
     @property
@@ -139,18 +159,18 @@ class BowsherGradient(sigpy.linop.Linop):
         return self._num_nearest
 
     @property
-    def nearest_neighbor_inds(self) -> np.ndarray:
+    def nearest_neighbor_inds(self) -> xp.ndarray:
         return self._nearest_neighbor_inds
 
     @property
     def sparse_fwd_diff_matrices(self) -> list:
         return self._sparse_fwd_diff_matrices
 
-    def _apply(self, x: np.ndarray) -> np.ndarray:
-        y = np.zeros(tuple(self.oshape), dtype = x.dtype)
+    def _apply(self, x: xp.ndarray) -> xp.ndarray:
+        y = self._xp.zeros(tuple(self.oshape), dtype=x.dtype)
 
         for i in range(self.num_nearest):
-            y[i, ...] = np.reshape(
+            y[i, ...] = self._xp.reshape(
                 self.sparse_fwd_diff_matrices[i] @ x.ravel(), self.ishape
             )
 
@@ -168,39 +188,56 @@ class BowsherGradient(sigpy.linop.Linop):
 class AdjointBowsherGradient(sigpy.linop.Linop):
     def __init__(
         self,
-        structural_image: np.ndarray,
-        neighborhood: np.ndarray,
+        structural_image: xp.ndarray,
+        neighborhood: xp.ndarray,
         num_nearest: int,
-        nearest_neighbor_inds: None | np.ndarray = None,
+        nearest_neighbor_inds: None | xp.ndarray = None,
     ) -> None:
         self._structural_image = structural_image
         self._neighborhood = neighborhood
         self._num_nearest = num_nearest
 
+        if isinstance(structural_image, np.ndarray):
+            self._xp = np
+            from scipy.sparse import csc_matrix
+            self._csc_matrix = csc_matrix
+        else:
+            import cupy as cp
+            self._xp = cp
+            from cupyx.scipy.sparse import csc_matrix
+            self._csc_matrix = csc_matrix
+
         if nearest_neighbor_inds is None:
             self._nearest_neighbor_inds = np.zeros(
-                (np.prod(structural_image.shape), num_nearest), dtype=int
+                (math.prod(structural_image.shape), num_nearest), dtype=int
             )
 
-            nearest_neighbors_3d(
-                self._structural_image, self._neighborhood, self._nearest_neighbor_inds
-            )
+            if isinstance(structural_image, np.ndarray):
+                nearest_neighbors_3d(
+                    self._structural_image, self._neighborhood, self._nearest_neighbor_inds
+                )
+            else:
+                nearest_neighbors_3d(
+                    self._xp.asnumpy(self._structural_image), self._xp.asnumpy(self._neighborhood), self._xp.asnumpy(self._nearest_neighbor_inds)
+                )
+                self._nearest_neighbor_inds = self._xp.asarray(self._nearest_neighbor_inds)
+
         else:
             self._nearest_neighbor_inds = nearest_neighbor_inds
 
         num_voxels = structural_image.size
-        tmp = np.arange(num_voxels)
-        diag = coo_array(
-            (np.full(num_voxels, -1, dtype=int), (tmp, tmp)),
+        tmp = self._xp.arange(num_voxels, dtype = float)
+        diag = self._csc_matrix(
+            (self._xp.full(num_voxels, -1, dtype=float), (tmp, tmp)),
             shape=(num_voxels, num_voxels),
         )
 
         self._sparse_fwd_diff_matrices = []
 
         for i in range(num_nearest):
-            off_diag = coo_array(
+            off_diag = self._csc_matrix(
                 (
-                    np.full(num_voxels, 1, dtype=int),
+                    self._xp.full(num_voxels, 1, dtype=float),
                     (tmp, self._nearest_neighbor_inds[:, i]),
                 ),
                 shape=(num_voxels, num_voxels),
@@ -214,11 +251,11 @@ class AdjointBowsherGradient(sigpy.linop.Linop):
         )
 
     @property
-    def structural_image(self) -> np.ndarray:
+    def structural_image(self) -> xp.ndarray:
         return self._structural_image
 
     @property
-    def neighborhood(self) -> np.ndarray:
+    def neighborhood(self) -> xp.ndarray:
         return self._neighborhood
 
     @property
@@ -226,23 +263,23 @@ class AdjointBowsherGradient(sigpy.linop.Linop):
         return self._num_nearest
 
     @property
-    def nearest_neighbor_inds(self) -> np.ndarray:
+    def nearest_neighbor_inds(self) -> xp.ndarray:
         return self._nearest_neighbor_inds
 
     @property
     def sparse_fwd_diff_matrices(self) -> list:
         return self._sparse_fwd_diff_matrices
 
-    def _apply(self, y: np.ndarray) -> np.ndarray:
-        x = np.zeros(tuple(self.oshape), dtype = y.dtype)
+    def _apply(self, y: xp.ndarray) -> xp.ndarray:
+        x = self._xp.zeros(tuple(self.oshape), dtype=y.dtype)
 
         for i in range(self.num_nearest):
-            x += np.reshape(
+            x += self._xp.reshape(
                 self.sparse_fwd_diff_matrices[i] @ y[i, ...].ravel(), self.oshape
             )
 
         return x
-    
+
     def _adjoint_linop(self) -> sigpy.linop.Linop:
         return BowsherGradient(
             self.structural_image,
@@ -253,48 +290,33 @@ class AdjointBowsherGradient(sigpy.linop.Linop):
 
 
 # %%
-np.random.seed(0)
-shape = (128, 126, 127)
-aimg = np.random.rand(*shape)
-
-s = np.ones((3, 3, 3), dtype=np.uint8)
-s[0, 0, 0] = 0
-s[-1, 0, 0] = 0
-s[0, -1, 0] = 0
-s[0, 0, -1] = 0
-s[-1, -1, 0] = 0
-s[-1, 0, -1] = 0
-s[0, -1, -1] = 0
-s[-1, -1, -1] = 0
-
-s[s.shape[0] // 2, s.shape[1] // 2, s.shape[2] // 2] = 0
-
-bow_grad = BowsherGradient(aimg, s, 4)
-
-
-# %%
-x = np.random.rand(*bow_grad.ishape) + 1.0j**np.random.rand(*bow_grad.ishape)
-y = np.random.rand(*bow_grad.oshape) + 1.0j**np.random.rand(*bow_grad.oshape)
-
-x_fwd = bow_grad(x)
-y_adj = bow_grad.H(y)
-
-assert np.isclose(np.sum(x_fwd*y), np.sum(x*y_adj))
-
-# nn = img.size
-# tmp = np.arange(nn)
-# print('setting up sparse matrices')
-# a = coo_array((np.full(nn, -1, dtype=int), (tmp, tmp)), shape=(nn, nn))
-#
-# diff_matrices = []
-#
-# for i in range(ninds.shape[1]):
-#    b = coo_array((np.full(nn, 1, dtype=int), (tmp, ninds[:, i])), shape=(nn, nn))
-#    diff_matrices.append(a + b)
-#
-# print('applying sparse matrices')
-# x0 = np.reshape(diff_matrices[0] @ img.flatten(), shape)
-# x1 = np.reshape(diff_matrices[1] @ img.flatten(), shape)
-# x2 = np.reshape(diff_matrices[2] @ img.flatten(), shape)
-#
-# print('done')
+if __name__ == "__main__":
+    import cupy as cp
+    #import numpy as cp
+    
+    cp.random.seed(0)
+    shape = (128, 127, 126)
+    aimg = cp.random.rand(*shape)
+    
+    s = cp.ones((5, 5, 5), dtype=cp.uint8)
+    s[0, 0, 0] = 0
+    s[-1, 0, 0] = 0
+    s[0, -1, 0] = 0
+    s[0, 0, -1] = 0
+    s[-1, -1, 0] = 0
+    s[-1, 0, -1] = 0
+    s[0, -1, -1] = 0
+    s[-1, -1, -1] = 0
+    
+    s[s.shape[0] // 2, s.shape[1] // 2, s.shape[2] // 2] = 0
+    
+    bow_grad = BowsherGradient(aimg, s, 13)
+    
+    
+    # %%
+    x = cp.random.rand(*bow_grad.ishape) + 1.0j ** cp.random.rand(*bow_grad.ishape)
+    y = cp.random.rand(*bow_grad.oshape) + 1.0j ** cp.random.rand(*bow_grad.oshape)
+    
+    x_fwd = bow_grad(x)
+    y_adj = bow_grad.H(y)
+    assert cp.isclose(cp.sum(x_fwd * y), cp.sum(x * y_adj))
