@@ -347,27 +347,72 @@ if __name__ == "__main__":
     # import numpy as cp
 
     cp.random.seed(0)
-    shape = (128, 127, 126)
-    aimg = cp.random.rand(*shape)
-
-    s = cp.ones((5, 5, 5), dtype=cp.uint8)
-    s[0, 0, 0] = 0
-    s[-1, 0, 0] = 0
-    s[0, -1, 0] = 0
-    s[0, 0, -1] = 0
-    s[-1, -1, 0] = 0
-    s[-1, 0, -1] = 0
-    s[0, -1, -1] = 0
-    s[-1, -1, -1] = 0
-
-    s[s.shape[0] // 2, s.shape[1] // 2, s.shape[2] // 2] = 0
-
-    bow_grad = BowsherGradient(aimg, s, 13)
+    shape = (128, 128, 128)
 
     # %%
-    x = cp.random.rand(*bow_grad.ishape) + 1.0j ** cp.random.rand(*bow_grad.ishape)
-    y = cp.random.rand(*bow_grad.oshape) + 1.0j ** cp.random.rand(*bow_grad.oshape)
+    bg = cp.zeros(shape)
+    bg[16:-16, 16:-16, 16:-16] = 1
 
-    x_fwd = bow_grad(x)
-    y_adj = bow_grad.H(y)
-    assert cp.isclose(cp.sum(x_fwd * y), cp.sum(x * y_adj))
+    center1 = cp.zeros(shape)
+    center1[62:66, 62:66, 62:66] = 1
+
+    center2 = cp.zeros(shape)
+    center2[62:66, 90:94, 62:66] = 1
+
+    x_true = bg + center1 + center2
+    x_noisy = x_true + 0.2 * cp.random.randn(*shape)
+    x_anat = bg + center1 + 0.01 * cp.random.randn(*shape)
+
+    # %%
+
+    s = cp.array(
+        [
+            [
+                [0, 0, 0, 0, 0],
+                [0, 1, 1, 1, 0],
+                [0, 1, 1, 1, 0],
+                [0, 1, 1, 1, 0],
+                [0, 0, 0, 0, 0],
+            ],
+            [
+                [0, 1, 1, 1, 0],
+                [1, 1, 1, 1, 1],
+                [1, 1, 1, 1, 1],
+                [1, 1, 1, 1, 1],
+                [0, 1, 1, 1, 0],
+            ],
+            [
+                [0, 1, 1, 1, 0],
+                [1, 1, 1, 1, 1],
+                [1, 1, 0, 1, 1],
+                [1, 1, 1, 1, 1],
+                [0, 1, 1, 1, 0],
+            ],
+            [
+                [0, 1, 1, 1, 0],
+                [1, 1, 1, 1, 1],
+                [1, 1, 1, 1, 1],
+                [1, 1, 1, 1, 1],
+                [0, 1, 1, 1, 0],
+            ],
+            [
+                [0, 0, 0, 0, 0],
+                [0, 1, 1, 1, 0],
+                [0, 1, 1, 1, 0],
+                [0, 1, 1, 1, 0],
+                [0, 0, 0, 0, 0],
+            ],
+        ]
+    )
+
+    bow_grad = BowsherGradient(x_anat, s, 13)
+
+    # %%
+    A = sigpy.linop.Identity(shape)
+    proxg = sigpy.prox.L2Reg(bow_grad.oshape, lamda=0.3)
+    # proxg = sigpy.prox.L1Reg(bow_grad.oshape, lamda=0.01)
+
+    app = sigpy.app.LinearLeastSquares(
+        A, x_noisy, x=x_noisy.copy(), proxg=proxg, G=bow_grad, max_iter=200
+    )
+    x_denoised = app.run()
