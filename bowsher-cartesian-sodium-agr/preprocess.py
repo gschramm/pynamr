@@ -134,21 +134,15 @@ vi2.fig.savefig(Path(cfg.recon_dir) / "mr_input.png")
 
 n4_path = Path(cfg.recon_dir) / "T1_input_N4_corrected.nii"
 
-if not n4_path.exists():
-    print("running N4 bias correction on the MPRAGE")
-    inputImage = sitk.ReadImage(
-        str(Path(cfg.recon_dir) / "T1_input.nii"), sitk.sitkFloat32
-    )
+print("running N4 bias correction on the MPRAGE")
+inputImage = sitk.ReadImage(str(Path(cfg.recon_dir) / "T1_input.nii"), sitk.sitkFloat32)
 
-    corrector = sitk.N4BiasFieldCorrectionImageFilter()
-    corrected_image = corrector.Execute(
-        inputImage, sitk.OtsuThreshold(inputImage, 0, 1, 200)
-    )
+corrector = sitk.N4BiasFieldCorrectionImageFilter()
+corrected_image = corrector.Execute(
+    inputImage, sitk.OtsuThreshold(inputImage, 0, 1, 200)
+)
 
-    sitk.WriteImage(corrected_image, str(n4_path))
-else:
-    print(f"loading N4 corrected MPRAGE from {n4_path}")
-    corrected_image = sitk.ReadImage(str(n4_path))
+sitk.WriteImage(corrected_image, str(n4_path))
 
 # %%
 # align the N4 corrected MPRAGE image
@@ -156,121 +150,118 @@ else:
 
 aligned_path = Path(cfg.recon_dir) / f"T1_N4_corrected_aligned.npy"
 
-if not aligned_path.exists():
-    print("running MR alignment")
+print("running MR alignment")
 
-    # load the N4 corrected T1 in RAS
-    t1_nii = nib.load(str(Path(cfg.recon_dir) / "T1_input_N4_corrected.nii"))
-    t1_nii = nib.as_closest_canonical(t1_nii)
-    t1 = t1_nii.get_fdata()
-    t1_affine = t1_nii.affine
-    t1_voxsize = t1_nii.header["pixdim"][1:4]
-    t1_origin = t1_affine[:-1, -1]
+# load the N4 corrected T1 in RAS
+t1_nii = nib.load(str(Path(cfg.recon_dir) / "T1_input_N4_corrected.nii"))
+t1_nii = nib.as_closest_canonical(t1_nii)
+t1 = t1_nii.get_fdata()
+t1_affine = t1_nii.affine
+t1_voxsize = t1_nii.header["pixdim"][1:4]
+t1_origin = t1_affine[:-1, -1]
 
-    na_img = np.abs(gaussian_filter(cimg, cfg.alignment_filter_sigma))
-    na_img2 = np.abs(gaussian_filter(cimg2, cfg.alignment_filter_sigma))
+na_img = np.abs(gaussian_filter(cimg, cfg.alignment_filter_sigma))
+na_img2 = np.abs(gaussian_filter(cimg2, cfg.alignment_filter_sigma))
 
-    # interpolate to smaller grid
-    na_img = zoom(
+# interpolate to smaller grid
+na_img = zoom(
+    na_img,
+    np.array(cfg.recon_shape) / np.array(cfg.data_shape),
+    order=1,
+    prefilter=False,
+)
+
+# construct the voxel size for the Na sos image
+na_voxsize = cfg.sodium_fov_mm / np.array(cfg.recon_shape)
+na_origin = np.full(3, -cfg.sodium_fov_mm / 2.0)
+
+# %%
+# SITK alignment using mututla information
+
+fixed_image = numpy_volume_to_sitk_image(
+    na_img.astype(np.float32), na_voxsize, na_origin
+)
+moving_image = numpy_volume_to_sitk_image(t1.astype(np.float32), t1_voxsize, t1_origin)
+
+# Initial Alignment
+initial_transform = sitk.CenteredTransformInitializer(
+    fixed_image,
+    moving_image,
+    sitk.Euler3DTransform(),
+    sitk.CenteredTransformInitializerFilter.GEOMETRY,
+)
+
+# Registration
+registration_method = sitk.ImageRegistrationMethod()
+
+# Similarity metric settings.
+registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
+registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
+registration_method.SetMetricSamplingPercentage(0.1)
+
+registration_method.SetInterpolator(sitk.sitkLinear)
+
+# Optimizer settings.
+registration_method.SetOptimizerAsGradientDescentLineSearch(
+    learningRate=0.3,
+    numberOfIterations=200,
+    convergenceMinimumValue=1e-7,
+    convergenceWindowSize=10,
+)
+
+registration_method.SetOptimizerScalesFromPhysicalShift()
+
+# Setup for the multi-resolution framework.
+registration_method.SetShrinkFactorsPerLevel(shrinkFactors=[4, 2, 1])
+registration_method.SetSmoothingSigmasPerLevel(smoothingSigmas=[2, 1, 0])
+registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
+
+# Don't optimize in-place, we would possibly like to run this cell multiple times.
+registration_method.SetInitialTransform(initial_transform, inPlace=False)
+
+final_transform = registration_method.Execute(
+    sitk.Cast(fixed_image, sitk.sitkFloat32),
+    sitk.Cast(moving_image, sitk.sitkFloat32),
+)
+
+# Post registration analysis
+print(
+    f"Optimizer's stopping condition, {registration_method.GetOptimizerStopConditionDescription()}"
+)
+print(f"Final metric value: {registration_method.GetMetricValue()}")
+print(f"Final parameters: {final_transform.GetParameters()}")
+
+moving_resampled = sitk.Resample(
+    moving_image,
+    fixed_image,
+    final_transform,
+    sitk.sitkLinear,
+    0.0,
+    moving_image.GetPixelID(),
+)
+
+t1_aligned = sitk_image_to_numpy_volume(moving_resampled)
+
+# save aligned T1
+np.save(aligned_path, t1_aligned)
+
+# %%
+# show the aligned images
+
+vi3 = pv.ThreeAxisViewer(
+    [t1_aligned, na_img, t1_aligned],
+    [None, None, na_img],
+    imshow_kwargs=dict(cmap="Greys_r"),
+)
+vi3.fig.savefig(Path(cfg.recon_dir) / "mr_input_N4_corrected_aligned.png")
+
+if debug:
+    np.save(
+        Path(cfg.recon_dir) / "t1_aligned_debug.npy",
+        t1_aligned,
+    )
+    np.save(
+        Path(cfg.recon_dir) / "na_img_debug.npy",
         na_img,
-        np.array(cfg.recon_shape) / np.array(cfg.data_shape),
-        order=1,
-        prefilter=False,
     )
-
-    # construct the voxel size for the Na sos image
-    na_voxsize = cfg.sodium_fov_mm / np.array(cfg.recon_shape)
-    na_origin = np.full(3, -cfg.sodium_fov_mm / 2.0)
-
-    # %%
-    # SITK alignment using mututla information
-
-    fixed_image = numpy_volume_to_sitk_image(
-        na_img.astype(np.float32), na_voxsize, na_origin
-    )
-    moving_image = numpy_volume_to_sitk_image(
-        t1.astype(np.float32), t1_voxsize, t1_origin
-    )
-
-    # Initial Alignment
-    initial_transform = sitk.CenteredTransformInitializer(
-        fixed_image,
-        moving_image,
-        sitk.Euler3DTransform(),
-        sitk.CenteredTransformInitializerFilter.GEOMETRY,
-    )
-
-    # Registration
-    registration_method = sitk.ImageRegistrationMethod()
-
-    # Similarity metric settings.
-    registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
-    registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
-    registration_method.SetMetricSamplingPercentage(0.1)
-
-    registration_method.SetInterpolator(sitk.sitkLinear)
-
-    # Optimizer settings.
-    registration_method.SetOptimizerAsGradientDescentLineSearch(
-        learningRate=0.3,
-        numberOfIterations=200,
-        convergenceMinimumValue=1e-7,
-        convergenceWindowSize=10,
-    )
-
-    registration_method.SetOptimizerScalesFromPhysicalShift()
-
-    # Setup for the multi-resolution framework.
-    registration_method.SetShrinkFactorsPerLevel(shrinkFactors=[4, 2, 1])
-    registration_method.SetSmoothingSigmasPerLevel(smoothingSigmas=[2, 1, 0])
-    registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
-
-    # Don't optimize in-place, we would possibly like to run this cell multiple times.
-    registration_method.SetInitialTransform(initial_transform, inPlace=False)
-
-    final_transform = registration_method.Execute(
-        sitk.Cast(fixed_image, sitk.sitkFloat32),
-        sitk.Cast(moving_image, sitk.sitkFloat32),
-    )
-
-    # Post registration analysis
-    print(
-        f"Optimizer's stopping condition, {registration_method.GetOptimizerStopConditionDescription()}"
-    )
-    print(f"Final metric value: {registration_method.GetMetricValue()}")
-    print(f"Final parameters: {final_transform.GetParameters()}")
-
-    moving_resampled = sitk.Resample(
-        moving_image,
-        fixed_image,
-        final_transform,
-        sitk.sitkLinear,
-        0.0,
-        moving_image.GetPixelID(),
-    )
-
-    t1_aligned = sitk_image_to_numpy_volume(moving_resampled)
-
-    # save aligned T1
-    np.save(aligned_path, t1_aligned)
-
-    # %%
-    # show the aligned images
-
-    vi3 = pv.ThreeAxisViewer(
-        [t1_aligned, na_img, t1_aligned],
-        [None, None, na_img],
-        imshow_kwargs=dict(cmap="Greys_r"),
-    )
-    vi3.fig.savefig(Path(cfg.recon_dir) / "mr_input_N4_corrected_aligned.png")
-
-    if debug:
-        np.save(
-            Path(cfg.recon_dir) / "t1_aligned_debug.npy",
-            t1_aligned,
-        )
-        np.save(
-            Path(cfg.recon_dir) / "na_img_debug.npy",
-            na_img,
-        )
-        np.save(Path(cfg.recon_dir) / "na_img2_debug.npy", na_img2)
+    np.save(Path(cfg.recon_dir) / "na_img2_debug.npy", na_img2)
